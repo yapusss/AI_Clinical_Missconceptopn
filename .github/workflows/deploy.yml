@@ -25,6 +25,12 @@ jobs:
           docker compose down --remove-orphans || true
           docker rm -f backend frontend postgres valkey 2>/dev/null || true
           docker compose up -d --build
+          if ! docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT to_regclass('public.users')" 2>/dev/null | grep -q '^users$'; then
+            echo "users table missing - importing V2 schema"
+            docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U appuser -d appdb < V2_Full_Script.sql
+          else
+            echo "users table present - skipping V2 import"
+          fi
 
       - name: Apply DB migrations
         run: docker compose exec -T backend python manage.py migrate
