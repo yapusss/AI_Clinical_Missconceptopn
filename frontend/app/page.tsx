@@ -39,20 +39,12 @@ export default function Home() {
             </button>
           </div>
         ) : (
-          <div className="mt-10 flex flex-col gap-3.5 sm:flex-row sm:gap-4">
-            <Link
-              href="/login"
-              className="flex-1 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-6 py-3 text-center font-semibold text-white shadow-lg shadow-violet-600/30 transition hover:from-violet-500 hover:to-violet-400 hover:-translate-y-0.5"
-            >
-              Login
-            </Link>
-            <Link
-              href="/register"
-              className="flex-1 rounded-xl border border-white/20 bg-white/10 px-6 py-3 text-center font-semibold text-white backdrop-blur-md transition hover:bg-white/20"
-            >
-              Create account
-            </Link>
-          </div>
+          <Link
+            href="/login"
+            className="mt-10 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-8 py-3 text-center font-semibold text-white shadow-lg shadow-violet-600/30 transition hover:from-violet-500 hover:to-violet-400 hover:-translate-y-0.5"
+          >
+            Login
+          </Link>
         )}
       </main>
     </div>
