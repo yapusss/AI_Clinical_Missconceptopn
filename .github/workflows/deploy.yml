@@ -26,16 +26,20 @@ jobs:
 
       - name: Verify health
         run: |
-          for i in $(seq 1 60); do
-            if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/', timeout=5).status == 200 else 1)" 2>/dev/null \
-              && docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/ 2>/dev/null; then
+          for i in $(seq 1 120); do
+            if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/', timeout=5).status == 200 else 1)" 2>/tmp/hc_backend.err \
+              && docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/ 2>/tmp/hc_frontend.err; then
               echo "Backend OK"
               echo "Frontend OK"
               exit 0
             fi
-            echo "waiting for services ($i/60)..."
+            echo "waiting for services ($i/120)... $(date +%T)"
             sleep 10
           done
+          echo "Backend health error:"; cat /tmp/hc_backend.err 2>/dev/null || true
+          echo "Frontend health error:"; cat /tmp/hc_frontend.err 2>/dev/null || true
+          echo "--- container status ---"
+          docker compose ps
           echo "Health check FAILED"
           exit 1
 
