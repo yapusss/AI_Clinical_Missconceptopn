@@ -146,3 +146,8 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# LLM Inference Configuration (Local llama.cpp or Cloud API)
+LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://127.0.0.1:8080/v1')
+LLM_API_KEY = os.environ.get('LLM_API_KEY', 'local-llama-cpp')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'Ling-3.0-tiny')
