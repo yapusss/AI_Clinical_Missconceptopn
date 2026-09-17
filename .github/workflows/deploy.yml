@@ -23,6 +23,7 @@ jobs:
       - name: Rebuild and restart stack
         run: |
           docker compose down --remove-orphans || true
+          docker rm -f backend frontend postgres valkey 2>/dev/null || true
           docker compose up -d --build
 
       - name: Apply DB migrations

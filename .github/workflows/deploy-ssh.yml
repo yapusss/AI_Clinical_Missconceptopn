@@ -67,6 +67,7 @@ jobs:
           set -e
           cd /home/ubuntu/app
           docker compose down --remove-orphans || true
+          docker rm -f backend frontend postgres valkey 2>/dev/null || true
           docker compose up -d --build
           docker compose exec -T backend python manage.py migrate
           docker compose exec -T backend python manage.py seed_demo_user
