@@ -1,0 +1,77 @@
+name: Deploy to VPS (SSH via Cloudflare Tunnel)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ssh
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CF_HOST: ssh.yavuzz.online
+      VPS_USER: ${{ secrets.VPS_SSH_USER }}
+      DEPLOY_DIR: /home/ubuntu/app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cloudflared
+        run: |
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
+
+      - name: Start Cloudflare TCP proxy for SSH
+        run: |
+          cloudflared access tcp \
+            --hostname $CF_HOST \
+            --url 127.0.0.1:2222 \
+            --service-token-id "${{ secrets.CF_SERVICE_TOKEN_ID }}" \
+            --service-token-secret "${{ secrets.CF_SERVICE_TOKEN_SECRET }}" \
+            --logfile /tmp/cloudflared.log --loglevel info &
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/2222) 2>/dev/null; then
+              echo "proxy ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "--- cloudflared log ---"
+          cat /tmp/cloudflared.log 2>/dev/null || true
+          echo "proxy failed to start"
+          exit 1
+
+      - name: Write SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+      - name: Sync code to VPS
+        run: |
+          rsync -az --delete -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 -i ~/.ssh/id_deploy" \
+            --exclude node_modules --exclude .next --exclude venv --exclude __pycache__ \
+            --exclude .git --exclude "*.pyc" \
+            ./ $VPS_USER@127.0.0.1:$DEPLOY_DIR/
+
+      - name: Deploy stack on VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -p 2222 -i ~/.ssh/id_deploy $VPS_USER@127.0.0.1 'bash -s' <<'EOF'
+          set -e
+          cd /home/ubuntu/app
+          docker compose down --remove-orphans || true
+          docker compose up -d --build
+          docker compose exec -T backend python manage.py migrate
+          docker compose exec -T backend python manage.py seed_demo_user
+          docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/admin/login/', timeout=5).status == 200 else 1)"
+          docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/
+          docker image prune -f || true
+          echo "DEPLOY OK"
+          EOF
