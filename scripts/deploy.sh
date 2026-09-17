@@ -17,8 +17,21 @@ fi
 docker compose exec -T backend python manage.py migrate </dev/null
 docker compose exec -T backend python manage.py seed_demo_user </dev/null
 
-docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/admin/login/', timeout=5).status == 200 else 1)" </dev/null
-docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/ </dev/null
+for i in $(seq 1 60); do
+  if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/admin/login/', timeout=5).status == 200 else 1)" </dev/null 2>/dev/null \
+    && docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/ </dev/null 2>/dev/null; then
+    echo "Backend OK"
+    echo "Frontend OK"
+    break
+  fi
+  echo "waiting for services ($i/60)..."
+  sleep 5
+done
+
+if ! docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/ </dev/null 2>/dev/null; then
+  echo "Frontend health check FAILED"
+  exit 1
+fi
 
 docker image prune -f || true
 echo "DEPLOY OK"
