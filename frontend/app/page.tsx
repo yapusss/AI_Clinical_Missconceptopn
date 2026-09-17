@@ -8,45 +8,49 @@ export default function Home() {
   const { user, loading, logout } = useAuth();
 
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-center py-16 px-16 bg-white dark:bg-black">
-        <h1 className="text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
+    <div className="flex flex-1 items-center justify-center px-4">
+      <main className="w-full max-w-2xl text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-white/20 bg-gradient-to-br from-violet-600 to-cyan-500 shadow-lg">
+          <span className="text-2xl font-bold text-white">AI</span>
+        </div>
+
+        <h1 className="mt-6 bg-gradient-to-r from-violet-300 via-white to-cyan-300 bg-clip-text text-4xl font-semibold tracking-tight text-transparent">
           AI Clinical Misconception
         </h1>
+        <p className="mt-3 max-w-lg text-base text-white/60">
+          Detect, diagnose and correct clinical misconceptions with intelligent
+          assessments.
+        </p>
 
         {loading ? (
-          <p className="mt-6 text-zinc-500">Loading...</p>
+          <p className="mt-10 text-white/50">Loading...</p>
         ) : user ? (
-          <div className="mt-8 w-full max-w-sm rounded-2xl border border-black/10 bg-zinc-50 p-6 text-center dark:border-white/10 dark:bg-zinc-900">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Ingelogd als
-            </p>
-            <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+          <div className="mt-10 w-full max-w-md rounded-3xl border border-white/20 bg-white/10 px-8 py-7 text-center shadow-2xl backdrop-blur-xl">
+            <p className="text-sm text-white/60">Logged in as</p>
+            <p className="mt-1.5 text-2xl font-semibold text-white">
               {user.full_name}
             </p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {user.email}
-            </p>
+            <p className="text-sm text-white/60">{user.email}</p>
             <button
               onClick={logout}
-              className="mt-5 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100"
+              className="mt-6 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 font-medium text-white backdrop-blur-md transition hover:bg-white/20"
             >
-              Logout
+              Log out
             </button>
           </div>
         ) : (
-          <div className="mt-8 flex flex-col gap-3">
+          <div className="mt-10 flex flex-col gap-3.5 sm:flex-row sm:gap-4">
             <Link
               href="/login"
-              className="rounded-lg bg-zinc-900 px-6 py-2 text-center font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100"
+              className="flex-1 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-6 py-3 text-center font-semibold text-white shadow-lg shadow-violet-600/30 transition hover:from-violet-500 hover:to-violet-400 hover:-translate-y-0.5"
             >
               Login
             </Link>
             <Link
               href="/register"
-              className="rounded-lg border border-zinc-300 px-6 py-2 text-center font-medium text-zinc-900 hover:bg-zinc-100 dark:border-white/15 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              className="flex-1 rounded-xl border border-white/20 bg-white/10 px-6 py-3 text-center font-semibold text-white backdrop-blur-md transition hover:bg-white/20"
             >
-              Registreren
+              Create account
             </Link>
           </div>
         )}

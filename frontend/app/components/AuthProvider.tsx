@@ -27,36 +27,31 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+function readStoredToken(): string | null {
+  return typeof window === "undefined" ? null : localStorage.getItem("token");
+}
+
 async function parseError(res: Response): Promise<string> {
   let data: Record<string, unknown> = {};
   try {
     data = (await res.json()) as Record<string, unknown>;
   } catch {
-    return "Server error, probeer later opnieuw.";
+    return "Server error, try again later.";
   }
   if (typeof data.detail === "string") return data.detail;
   for (const value of Object.values(data)) {
     if (Array.isArray(value) && value.length > 0) return String(value[0]);
   }
-  return "Something ging mis.";
+  return "Something went wrong.";
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(readStoredToken);
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => readStoredToken() !== null);
 
   useEffect(() => {
-    const stored = localStorage.getItem("token");
-    if (stored) setToken(stored);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (!token) {
-      setUser(null);
-      return;
-    }
+    if (!token) return;
     let cancelled = false;
     fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` },
@@ -66,13 +61,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return res.json();
       })
       .then((data: User) => {
-        if (!cancelled) setUser(data);
+        if (!cancelled) {
+          setUser(data);
+          setLoading(false);
+        }
       })
       .catch(() => {
         if (!cancelled) {
           localStorage.removeItem("token");
           setToken(null);
           setUser(null);
+          setLoading(false);
         }
       });
     return () => {
@@ -92,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("token", data.token);
       setToken(data.token);
       setUser(data.user);
+      setLoading(false);
     },
     [],
   );
@@ -108,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("token", data.token);
       setToken(data.token);
       setUser(data.user);
+      setLoading(false);
     },
     [],
   );
@@ -122,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("token");
     setToken(null);
     setUser(null);
+    setLoading(false);
   }, [token]);
 
   return (
