@@ -13,9 +13,14 @@ jobs:
   deploy:
     runs-on: [self-hosted, linux]
     timeout-minutes: 30
+    env:
+      VPS_HOST: 192.168.1.10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Print deploy target
+        run: 'echo "Deploying to self-hosted runner on VPS host: $VPS_HOST"'
 
       - name: Rebuild and restart stack
         run: |
