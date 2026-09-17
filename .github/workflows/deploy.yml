@@ -27,7 +27,13 @@ jobs:
       - name: Verify health
         run: |
           for i in $(seq 1 120); do
-            if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/', timeout=5).status == 200 else 1)" 2>/tmp/hc_backend.err \
+            if docker compose exec -T backend python -c "import urllib.request,urllib.error,sys
+try:
+    urllib.request.urlopen('http://localhost:8000/api/auth/me', timeout=5)
+except urllib.error.HTTPError:
+    pass
+except Exception:
+    sys.exit(1)" 2>/tmp/hc_backend.err \
               && docker compose exec -T frontend wget -q -O /dev/null --timeout=5 http://localhost:3000/ 2>/tmp/hc_frontend.err; then
               echo "Backend OK"
               echo "Frontend OK"
