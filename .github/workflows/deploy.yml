@@ -21,11 +21,22 @@ jobs:
       - name: Apply DB migrations
         run: docker compose exec -T backend python manage.py migrate
 
+      - name: Seed demo user
+        run: docker compose exec -T backend python manage.py seed_demo_user
+
       - name: Verify health
         run: |
-          sleep 5
-          curl -sf http://localhost:8000 > /dev/null && echo "Backend OK" || (echo "Backend FAILED"; exit 1)
-          curl -sf http://localhost:3000 > /dev/null && echo "Frontend OK" || (echo "Frontend FAILED"; exit 1)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000 > /dev/null && curl -sf http://localhost:3000 > /dev/null; then
+              echo "Backend OK"
+              echo "Frontend OK"
+              exit 0
+            fi
+            echo "waiting for services ($i/30)..."
+            sleep 10
+          done
+          echo "Health check FAILED"
+          exit 1
 
       - name: Prune old images
         run: docker image prune -f || true
