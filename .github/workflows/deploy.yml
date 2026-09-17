@@ -1,0 +1,31 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rebuild and restart stack
+        run: |
+          docker compose down --remove-orphans || true
+          docker compose up -d --build
+
+      - name: Apply DB migrations
+        run: docker compose exec -T backend python manage.py migrate
+
+      - name: Verify health
+        run: |
+          sleep 5
+          curl -sf http://localhost:8000 > /dev/null && echo "Backend OK" || (echo "Backend FAILED"; exit 1)
+          curl -sf http://localhost:3000 > /dev/null && echo "Frontend OK" || (echo "Frontend FAILED"; exit 1)
+
+      - name: Prune old images
+        run: docker image prune -f || true
