@@ -26,12 +26,19 @@ SECRET_KEY = 'django-insecure-i7igmeuw(plzca7cowd6u+ep3tdz($^11el9!#+(wzne!66k17
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'backend']
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'https://acm.yavuzz.online',
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'api.authentication.TokenAuthentication',
+    ],
+}
 
 
 # Application definition
