@@ -15,7 +15,7 @@ else
 fi
 
 docker compose exec -T backend python manage.py migrate </dev/null
-docker compose exec -T backend python manage.py seed_demo_user </dev/null
+docker compose exec -T backend python manage.py seed_demo_data </dev/null
 
 for i in $(seq 1 60); do
   if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/admin/login/', timeout=5).status == 200 else 1)" </dev/null 2>/dev/null \
