@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
 import { Icon } from "../components/Icon";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { user, loading, login } = useAuth();
   const router = useRouter();
   const [identitas, setIdentitas] = useState("");
   const [kataSandi, setKataSandi] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!loading && user) router.replace("/select-role");
+  }, [user, loading, router]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -22,7 +26,6 @@ export default function LoginPage() {
     try {
       await login(identitas, kataSandi);
       router.push("/select-role");
-      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {
