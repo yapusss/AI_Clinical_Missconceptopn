@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
+import { AppSidebar } from "../components/AppSidebar";
 import { Icon } from "../components/Icon";
 import type { IconName } from "../components/Icon";
 
@@ -63,6 +64,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [selectedRole] = useState<string | null>(() => {
     const q = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("role");
     const stored = typeof window === "undefined" ? null : localStorage.getItem("selected_role");
@@ -179,10 +181,30 @@ export default function DashboardPage() {
 
   const mySubjects = (summary.my_subjects as SubjectSummary[]) ?? [];
 
+  const handleMenuSelect = (item: "dashboard" | "questions" | "settings" | "profile") => {
+    if (item === "dashboard") {
+      router.replace(`/dashboard?role=${primaryRole}`);
+      return;
+    }
+    if (item === "profile") {
+      router.push("/profile");
+      return;
+    }
+    setNotice(`${item === "questions" ? "Modul Soal" : "Settings"} akan segera tersedia.`);
+  };
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body text-on-surface">
-      <div className="mx-auto w-full max-w-6xl px-6">
-        <header className="flex items-center justify-between py-5">
+      <AppSidebar
+        role={primaryRole}
+        activeItem="dashboard"
+        userName={user.full_name}
+        onSelect={handleMenuSelect}
+        onLogout={handleLogout}
+      />
+      <div className="min-h-screen lg:pl-72">
+        <div className="mx-auto w-full max-w-6xl px-6">
+          <header className="flex items-center justify-between py-5">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
               <Icon name="school" className="h-6 w-6" />
@@ -200,15 +222,8 @@ export default function DashboardPage() {
             <span className="hidden rounded-full border border-outline-variant/30 bg-surface-container-lowest/80 px-3 py-1.5 text-xs font-medium text-on-surface sm:inline">
               {user.full_name}
             </span>
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-xs font-semibold text-on-surface-variant transition-colors hover:bg-error-container hover:text-on-error-container"
-            >
-              <Icon name="logout" className="h-4 w-4" />
-              Keluar
-            </button>
           </div>
-        </header>
+          </header>
 
         <div className="mb-6 flex items-center gap-2">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-fixed/60 text-primary">
@@ -228,6 +243,15 @@ export default function DashboardPage() {
             className="mb-6 rounded-lg border border-error/40 bg-error-container px-3.5 py-2.5 text-sm text-on-error-container"
           >
             {error}
+          </div>
+        )}
+
+        {notice && (
+          <div
+            role="status"
+            className="mb-6 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 px-3.5 py-2.5 text-sm text-primary"
+          >
+            {notice}
           </div>
         )}
 
@@ -291,6 +315,7 @@ export default function DashboardPage() {
             )}
           </section>
         </div>
+      </div>
       </div>
     </main>
   );

@@ -21,6 +21,7 @@ export type User = {
   full_name: string;
   is_active: boolean;
   is_superuser: boolean;
+  created_at?: string;
   roles?: RoleInfo[];
 };
 
@@ -68,22 +69,12 @@ async function parseError(res: Response): Promise<string> {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(readStoredToken);
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [storageReady, setStorageReady] = useState(false);
+  const [loading, setLoading] = useState<boolean>(() => readStoredToken() !== null);
 
   useEffect(() => {
-    setToken(readStoredToken());
-    setStorageReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    if (!token) return;
     let cancelled = false;
     fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` },
@@ -109,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, storageReady]);
+  }, [token]);
 
   const login = useCallback(
     async (email: string, password: string, remember = true) => {
