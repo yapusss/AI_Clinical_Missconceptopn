@@ -103,11 +103,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string, remember = true) => {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch {
+        throw new Error(
+          "Tidak dapat menghubungi server. Pastikan layanan backend sedang berjalan.",
+        );
+      }
       if (!res.ok) throw new Error(await parseError(res));
       const data = (await res.json()) as { token: string; user: User };
       storeToken(data.token, remember);
