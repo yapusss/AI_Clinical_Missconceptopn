@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
+import { Icon } from "../components/Icon";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -40,7 +41,7 @@ export default function LoginPage() {
       <header className="relative z-10 mx-auto flex w-full max-w-[1680px] items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
-            <span aria-hidden className="material-symbols-outlined text-[24px]">school</span>
+            <Icon name="school" className="h-6 w-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -66,7 +67,7 @@ export default function LoginPage() {
             href="#bantuan"
             className="flex items-center gap-1.5 py-1 text-on-surface-variant transition-colors hover:text-primary"
           >
-            <span aria-hidden className="material-symbols-outlined text-[18px]">help</span>
+            <Icon name="help" className="h-[18px] w-[18px]" />
             <span>Bantuan &amp; FAQ</span>
           </a>
         </div>
@@ -78,7 +79,7 @@ export default function LoginPage() {
           <div className="glass-tier-2 rounded-xl p-8 transition-all duration-200 sm:p-10">
             <div className="mb-8 text-center sm:text-left">
               <div className="mb-3 inline-flex items-center gap-1.5 rounded-md border border-primary-fixed-dim bg-primary-fixed/50 px-2.5 py-1 text-primary">
-                <span aria-hidden className="material-symbols-outlined text-[15px]">verified_user</span>
+                <Icon name="verified_user" className="h-[15px] w-[15px]" />
                 <span className="text-xs font-semibold">Autentikasi Sivitas Akademika</span>
               </div>
               <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
@@ -100,7 +101,7 @@ export default function LoginPage() {
                 </label>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
-                    <span aria-hidden className="material-symbols-outlined text-[20px]">badge</span>
+                    <Icon name="badge" className="h-5 w-5" />
                   </div>
                   <input
                     id="identitas"
@@ -133,7 +134,7 @@ export default function LoginPage() {
                 </div>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
-                    <span aria-hidden className="material-symbols-outlined text-[20px]">lock</span>
+                    <Icon name="lock" className="h-5 w-5" />
                   </div>
                   <input
                     id="kata_sandi"
@@ -152,9 +153,10 @@ export default function LoginPage() {
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute inset-y-0 right-0 flex items-center pr-3 text-outline outline-none hover:text-on-surface"
                   >
-                    <span aria-hidden className="material-symbols-outlined text-[20px]">
-                      {showPassword ? "visibility_off" : "visibility"}
-                    </span>
+                    <Icon
+                      name={showPassword ? "visibility_off" : "visibility"}
+                      className="h-5 w-5"
+                    />
                   </button>
                 </div>
               </div>
@@ -188,12 +190,10 @@ export default function LoginPage() {
                   className="group flex w-full items-center justify-center gap-2 rounded-lg bg-primary-container px-4 py-2.5 text-sm font-semibold text-on-primary shadow-sm transition-all duration-150 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-60"
                 >
                   <span>{submitting ? "Pangatut..." : "Masuk ke Akun"}</span>
-                  <span
-                    aria-hidden
-                    className="material-symbols-outlined text-[18px] transition-transform group-hover:translate-x-0.5"
-                  >
-                    arrow_forward
-                  </span>
+                  <Icon
+                    name="arrow_forward"
+                    className="h-[18px] w-[18px] transition-transform group-hover:translate-x-0.5"
+                  />
                 </button>
               </div>
             </form>
@@ -211,7 +211,7 @@ export default function LoginPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-8 w-8 items-center justify-center rounded bg-surface-container-high text-primary">
-                    <span aria-hidden className="material-symbols-outlined text-[18px]">key</span>
+                    <Icon name="key" className="h-[18px] w-[18px]" />
                   </div>
                   <div>
                     <h4 className="text-sm font-semibold text-on-surface">
@@ -227,7 +227,7 @@ export default function LoginPage() {
                   className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-container hover:text-primary-container"
                 >
                   <span>Token CBT</span>
-                  <span aria-hidden className="material-symbols-outlined text-[16px]">chevron_right</span>
+                  <Icon name="chevron_right" className="h-4 w-4" />
                 </a>
               </div>
             </div>
@@ -235,9 +235,7 @@ export default function LoginPage() {
 
           <div className="mt-6 flex flex-col items-center space-y-2 text-center">
             <div className="inline-flex items-center gap-2 text-xs text-on-surface-variant">
-              <span aria-hidden className="material-symbols-outlined text-[16px] text-tertiary-container">
-                lock
-              </span>
+              <Icon name="lock" className="h-4 w-4 text-tertiary-container" />
               <span>Koneksi Terenkripsi TLS 1.3 End-to-End • Sertifikasi ISO 27001</span>
             </div>
             <p className="max-w-sm text-xs text-outline">
@@ -259,7 +257,7 @@ export default function LoginPage() {
             Kebijakan Privasi
           </a>
           <a href="#status" className="flex items-center gap-1 transition-colors hover:text-primary">
-            <span aria-hidden className="material-symbols-outlined text-[16px]">verified_user</span>
+            <Icon name="verified_user" className="h-4 w-4" />
             <span>Pusat Integritas</span>
           </a>
         </div>
