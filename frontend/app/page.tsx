@@ -32,7 +32,7 @@ export default function Home() {
             </p>
             <p className="text-sm text-white/60">{user.email}</p>
             <Link
-              href="/dashboard"
+              href="/select-role"
               className="mt-6 block rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-4 py-2.5 font-semibold text-white shadow-lg shadow-violet-600/30 transition hover:from-violet-500 hover:to-violet-400 hover:-translate-y-0.5"
             >
               Buka Dashboard

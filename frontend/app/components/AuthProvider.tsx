@@ -9,12 +9,19 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
+export type RoleInfo = {
+  role: string;
+  subject_slug: string;
+  subject_name: string;
+};
+
 export type User = {
   id: string;
   email: string;
   full_name: string;
   is_active: boolean;
   is_superuser: boolean;
+  roles?: RoleInfo[];
 };
 
 type AuthContextType = {

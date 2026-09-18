@@ -58,6 +58,11 @@ export default function DashboardPage() {
   const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
+  const [selectedRole] = useState<string | null>(() => {
+    const q = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("role");
+    const stored = typeof window === "undefined" ? null : localStorage.getItem("selected_role");
+    return q ?? stored;
+  });
 
   useEffect(() => {
     if (loading) return;
@@ -96,7 +101,8 @@ export default function DashboardPage() {
 
   const isAdmin = user.is_superuser;
   const roles = data?.roles ?? [];
-  const primaryRole = isAdmin ? "ADMIN" : (roles[0]?.role ?? "GENERAL");
+  const fallbackRole = isAdmin ? "ADMIN" : (roles[0]?.role ?? "GENERAL");
+  const primaryRole = selectedRole ?? fallbackRole;
   const meta = ROLE_META[primaryRole] ?? ROLE_META.GENERAL;
   const summary = data?.summary ?? {};
 
