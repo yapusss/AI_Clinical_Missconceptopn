@@ -31,9 +31,15 @@ export default function Home() {
               {user.full_name}
             </p>
             <p className="text-sm text-white/60">{user.email}</p>
+            <Link
+              href="/dashboard"
+              className="mt-6 block rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-4 py-2.5 font-semibold text-white shadow-lg shadow-violet-600/30 transition hover:from-violet-500 hover:to-violet-400 hover:-translate-y-0.5"
+            >
+              Buka Dashboard
+            </Link>
             <button
               onClick={logout}
-              className="mt-6 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 font-medium text-white backdrop-blur-md transition hover:bg-white/20"
+              className="mt-3 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 font-medium text-white backdrop-blur-md transition hover:bg-white/20"
             >
               Log out
             </button>
