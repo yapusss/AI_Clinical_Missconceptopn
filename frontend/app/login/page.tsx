@@ -48,9 +48,6 @@ export default function LoginPage() {
               <span className="font-display text-lg font-bold tracking-tight text-primary">
                 EvalAI Academic
               </span>
-              <span className="rounded bg-surface-container-high px-2 py-0.5 font-mono-ui text-[11px] font-medium uppercase text-secondary ring-1 ring-outline-variant/30">
-                Portal Resmi
-              </span>
             </div>
             <p className="font-body text-xs text-on-surface-variant">
               Universites - AI Clinical Missconception
@@ -80,7 +77,7 @@ export default function LoginPage() {
             <div className="mb-8 text-center sm:text-left">
               <div className="mb-3 inline-flex items-center gap-1.5 rounded-md border border-primary-fixed-dim bg-primary-fixed/50 px-2.5 py-1 text-primary">
                 <Icon name="verified_user" className="h-[15px] w-[15px]" />
-                <span className="text-xs font-semibold">Autentikasi Sivitas Akademika</span>
+                <span className="text-xs font-semibold">Autentikasi Civitas Academica</span>
               </div>
               <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
                 Masuk ke Portal

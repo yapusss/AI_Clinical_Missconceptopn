@@ -75,3 +75,72 @@ class UserSubjectRole(models.Model):
 
     def __str__(self):
         return f'{self.user.email}:{self.role}@{self.subject.slug}'
+
+
+class QuestionSet(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    topic_id = models.UUIDField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='created_by')
+    code = models.CharField(max_length=64)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'question_sets'
+        managed = False
+
+
+class Misconception(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    topic_id = models.UUIDField(null=True, blank=True)
+    label = models.CharField(max_length=255)
+    source = models.CharField(max_length=30)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'misconceptions'
+        managed = False
+
+
+class Submission(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='student_id', related_name='submissions')
+    question_version_id = models.UUIDField()
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    status = models.CharField(max_length=30)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'submissions'
+        managed = False
+
+
+class LlmAnalysis(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    submission = models.ForeignKey(Submission, on_delete=models.CASCADE, db_column='submission_id')
+    is_current = models.BooleanField(default=True)
+    percentage_correct = models.DecimalField(max_digits=5, decimal_places=2)
+    tier_level_snapshot = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'llm_analyses'
+        managed = False
+
+
+class Validation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    analysis = models.ForeignKey(LlmAnalysis, on_delete=models.RESTRICT, db_column='analysis_id')
+    lecturer = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='lecturer_id')
+    status = models.CharField(max_length=20)
+    final_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    validated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'validations'
+        managed = False
