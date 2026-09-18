@@ -53,7 +53,7 @@ export default function LoginPage() {
               </span>
             </div>
             <p className="font-body text-xs text-on-surface-variant">
-              Universitas Terbuka • Sistem Asesmen Digital Terpadu
+              Universites - AI Clinical Missconception
             </p>
           </div>
         </div>
@@ -97,7 +97,7 @@ export default function LoginPage() {
                   htmlFor="identitas"
                   className="block text-sm font-medium text-on-surface"
                 >
-                  Nama Pengguna atau ID Institusi (NIP / NIM / Email)
+                  Username
                 </label>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
@@ -238,11 +238,7 @@ export default function LoginPage() {
               <Icon name="lock" className="h-4 w-4 text-tertiary-container" />
               <span>Koneksi Terenkripsi TLS 1.3 End-to-End • Sertifikasi ISO 27001</span>
             </div>
-            <p className="max-w-sm text-xs text-outline">
-              Sistem mendeteksi dan mengamankan integritas penilaian akademik secara
-              otomatik. Segala percobaan akses tanpa wewenang akan dicatat.
-            </p>
-          </div>
+            </div>
         </div>
       </div>
 
