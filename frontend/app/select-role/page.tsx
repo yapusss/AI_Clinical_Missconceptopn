@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
 import { Icon } from "../components/Icon";
@@ -18,13 +19,14 @@ type Option = { key: string; subjects: string[] };
 
 export default function SelectRolePage() {
   const { user, loading, logout } = useAuth();
+  const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
     if (!user) {
-      window.location.replace("/login");
+      router.replace("/login");
     }
-  }, [user, loading]);
+  }, [user, loading, router]);
 
   function computeOptions(): Option[] {
     if (!user) return [];
@@ -42,12 +44,12 @@ export default function SelectRolePage() {
 
   function enter(key: string) {
     localStorage.setItem("selected_role", key);
-    window.location.assign(`/dashboard?role=${key}`);
+    router.push(`/dashboard?role=${key}`);
   }
 
   const handleLogout = async () => {
     await logout();
-    window.location.assign("/login");
+    router.replace("/login");
   };
 
   if (loading) {

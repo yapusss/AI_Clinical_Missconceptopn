@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
 import { Icon } from "../components/Icon";
@@ -59,6 +60,7 @@ function StatCard({ icon, label, value }: Card) {
 
 export default function DashboardPage() {
   const { user, token, loading, logout } = useAuth();
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [selectedRole] = useState<string | null>(() => {
@@ -70,7 +72,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (loading) return;
     if (!user || !token) {
-      window.location.replace("/login");
+      router.replace("/login");
       return;
     }
     let cancelled = false;
@@ -90,11 +92,11 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, token, loading]);
+  }, [user, token, loading, router]);
 
   const handleLogout = async () => {
     await logout();
-    window.location.assign("/login");
+    router.replace("/login");
   };
 
   if (loading) {

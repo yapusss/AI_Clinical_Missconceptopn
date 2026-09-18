@@ -68,12 +68,22 @@ async function parseError(res: Response): Promise<string> {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(readStoredToken);
+  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(() => readStoredToken() !== null);
+  const [loading, setLoading] = useState(true);
+  const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    setToken(readStoredToken());
+    setStorageReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` },
@@ -99,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, storageReady]);
 
   const login = useCallback(
     async (email: string, password: string, remember = true) => {
