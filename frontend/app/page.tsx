@@ -7,6 +7,11 @@ import { useAuth } from "./components/AuthProvider";
 export default function Home() {
   const { user, loading, logout } = useAuth();
 
+  const handleLogout = async () => {
+    await logout();
+    window.location.assign("/");
+  };
+
   return (
     <div className="flex flex-1 items-center justify-center px-4">
       <main className="w-full max-w-2xl text-center">
@@ -38,7 +43,7 @@ export default function Home() {
               Buka Dashboard
             </Link>
             <button
-              onClick={logout}
+              onClick={handleLogout}
               className="mt-3 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 font-medium text-white backdrop-blur-md transition hover:bg-white/20"
             >
               Log out

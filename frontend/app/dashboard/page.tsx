@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
 import { Icon } from "../components/Icon";
@@ -13,7 +12,12 @@ type Role = {
   subject_name: string;
 };
 
-type Summary = Record<string, string | number | null | Role[]>;
+type SubjectSummary = {
+  slug: string;
+  name: string;
+};
+
+type Summary = Record<string, string | number | null | SubjectSummary[]>;
 
 type DashboardData = {
   roles: Role[];
@@ -55,7 +59,6 @@ function StatCard({ icon, label, value }: Card) {
 
 export default function DashboardPage() {
   const { user, token, loading, logout } = useAuth();
-  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [selectedRole] = useState<string | null>(() => {
@@ -67,7 +70,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (loading) return;
     if (!user || !token) {
-      router.replace("/login");
+      window.location.replace("/login");
       return;
     }
     let cancelled = false;
@@ -87,7 +90,12 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, token, loading, router]);
+  }, [user, token, loading]);
+
+  const handleLogout = async () => {
+    await logout();
+    window.location.assign("/login");
+  };
 
   if (loading) {
     return (
@@ -167,7 +175,7 @@ export default function DashboardPage() {
               ]
             : [];
 
-  const mySubjects = (summary.my_subjects as Role[]) ?? [];
+  const mySubjects = (summary.my_subjects as SubjectSummary[]) ?? [];
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body text-on-surface">
@@ -191,7 +199,7 @@ export default function DashboardPage() {
               {user.full_name}
             </span>
             <button
-              onClick={logout}
+              onClick={handleLogout}
               className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-xs font-semibold text-on-surface-variant transition-colors hover:bg-error-container hover:text-on-error-container"
             >
               <Icon name="logout" className="h-4 w-4" />
@@ -262,14 +270,14 @@ export default function DashboardPage() {
               <ul className="mt-4 space-y-2">
                 {mySubjects.map((s) => (
                   <li
-                    key={s.subject_slug}
+                    key={s.slug}
                     className="flex items-center justify-between rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-3"
                   >
                     <span className="text-sm font-medium text-on-surface">
-                      {s.subject_name}
+                      {s.name}
                     </span>
                     <span className="rounded bg-surface-container-high px-2 py-0.5 font-mono-ui text-[11px] uppercase text-secondary">
-                      {s.role}
+                      Mata kuliah
                     </span>
                   </li>
                 ))}

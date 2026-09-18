@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
 import { Icon } from "../components/Icon";
@@ -19,12 +18,13 @@ type Option = { key: string; subjects: string[] };
 
 export default function SelectRolePage() {
   const { user, loading, logout } = useAuth();
-  const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
-    if (!user) router.replace("/login");
-  }, [user, loading, router]);
+    if (!user) {
+      window.location.replace("/login");
+    }
+  }, [user, loading]);
 
   function computeOptions(): Option[] {
     if (!user) return [];
@@ -42,8 +42,23 @@ export default function SelectRolePage() {
 
   function enter(key: string) {
     localStorage.setItem("selected_role", key);
-    router.push(`/dashboard?role=${key}`);
+    window.location.assign(`/dashboard?role=${key}`);
   }
+
+  const handleLogout = async () => {
+    await logout();
+    window.location.assign("/login");
+  };
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body">
+        <p className="text-sm text-on-surface-variant">Memuat data pengguna...</p>
+      </main>
+    );
+  }
+
+  if (!user) return null;
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body text-on-surface">
@@ -61,7 +76,7 @@ export default function SelectRolePage() {
             </div>
           </div>
           <button
-            onClick={logout}
+            onClick={handleLogout}
             className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-xs font-semibold text-on-surface-variant transition-colors hover:bg-error-container hover:text-on-error-container"
           >
             <Icon name="logout" className="h-4 w-4" />

@@ -1,34 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import { useAuth } from "../components/AuthProvider";
 import { Icon } from "../components/Icon";
 
 export default function LoginPage() {
   const { user, loading, login } = useAuth();
-  const router = useRouter();
   const [identitas, setIdentitas] = useState("");
   const [kataSandi, setKataSandi] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) router.replace("/select-role");
-  }, [user, loading, router]);
+    if (!loading && user) {
+      window.location.replace("/select-role");
+    }
+  }, [user, loading]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSubmitting(true);
     setError("");
     try {
-      await login(identitas, kataSandi);
-      router.push("/select-role");
+      await login(identitas, kataSandi, rememberMe);
+      window.location.assign("/select-role");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
-    } finally {
       setSubmitting(false);
     }
   }
@@ -63,13 +63,6 @@ export default function LoginPage() {
             <span className="h-2 w-2 animate-pulse rounded-full bg-tertiary-fixed-dim" />
             <span className="text-xs font-medium text-on-surface">Server Akademik Normal</span>
           </div>
-          <a
-            href="#bantuan"
-            className="flex items-center gap-1.5 py-1 text-on-surface-variant transition-colors hover:text-primary"
-          >
-            <Icon name="help" className="h-[18px] w-[18px]" />
-            <span>Bantuan &amp; FAQ</span>
-          </a>
         </div>
       </header>
 
@@ -94,24 +87,25 @@ export default function LoginPage() {
             <form onSubmit={onSubmit} className="space-y-5">
               <div className="space-y-1.5">
                 <label
-                  htmlFor="identitas"
+                  htmlFor="email"
                   className="block text-sm font-medium text-on-surface"
                 >
-                  Username
+                  Email
                 </label>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
                     <Icon name="badge" className="h-5 w-5" />
                   </div>
                   <input
-                    id="identitas"
-                    name="identitas"
+                    id="email"
+                    name="email"
                     type="email"
                     autoComplete="username"
+                    inputMode="email"
                     required
                     value={identitas}
                     onChange={(e) => setIdentitas(e.target.value)}
-                    placeholder="Contoh: 041234567 atau dosen@ut.ac.id"
+                    placeholder="Contoh: dosen@ut.ac.id"
                     className="w-full rounded-lg border border-[#CBD5E1] bg-surface-container-lowest py-2.5 pl-10 pr-3.5 text-on-surface outline-none transition-all duration-150 placeholder:text-outline/70 focus:border-primary-container focus:ring-2 focus:ring-primary-container/20"
                   />
                 </div>
@@ -125,12 +119,9 @@ export default function LoginPage() {
                   >
                     Kata Sandi
                   </label>
-                  <a
-                    href="#lupa-sandi"
-                    className="text-xs font-semibold text-primary-container transition-colors hover:text-primary hover:underline"
-                  >
-                    Lupa Kata Sandi?
-                  </a>
+                  <span className="text-xs text-on-surface-variant">
+                    Hubungi administrator jika lupa kata sandi.
+                  </span>
                 </div>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
@@ -165,7 +156,8 @@ export default function LoginPage() {
                 <label className="flex cursor-pointer select-none items-center gap-2.5">
                   <input
                     type="checkbox"
-                    defaultChecked
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
                     className="h-4 w-4 cursor-pointer rounded border border-[#CBD5E1] bg-surface-container-lowest text-primary-container focus:ring-primary-container/30"
                   />
                   <span className="text-xs font-normal text-on-surface-variant">
@@ -189,7 +181,7 @@ export default function LoginPage() {
                   disabled={submitting}
                   className="group flex w-full items-center justify-center gap-2 rounded-lg bg-primary-container px-4 py-2.5 text-sm font-semibold text-on-primary shadow-sm transition-all duration-150 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-60"
                 >
-                  <span>{submitting ? "Pangatut..." : "Masuk ke Akun"}</span>
+                  <span>{submitting ? "Memuat..." : "Masuk ke Akun"}</span>
                   <Icon
                     name="arrow_forward"
                     className="h-[18px] w-[18px] transition-transform group-hover:translate-x-0.5"
@@ -198,39 +190,6 @@ export default function LoginPage() {
               </div>
             </form>
 
-            <div className="relative my-6 flex items-center justify-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-outline-variant/40" />
-              </div>
-              <span className="relative bg-surface-container-lowest/90 px-3 font-mono-ui text-[11px] uppercase tracking-wider text-outline">
-                Akses Khusus Ujian
-              </span>
-            </div>
-
-            <div className="glass-tier-1 rounded-lg border border-outline-variant/40 p-3.5 transition-all hover:border-primary-fixed-dim">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-8 w-8 items-center justify-center rounded bg-surface-container-high text-primary">
-                    <Icon name="key" className="h-[18px] w-[18px]" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-on-surface">
-                      Peserta Ujian Daring?
-                    </h4>
-                    <p className="text-xs text-on-surface-variant">
-                      Langsung menuju ruang uji tanpa login penuh
-                    </p>
-                  </div>
-                </div>
-                <a
-                  href="#token-cbt"
-                  className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-container hover:text-primary-container"
-                >
-                  <span>Token CBT</span>
-                  <Icon name="chevron_right" className="h-4 w-4" />
-                </a>
-              </div>
-            </div>
           </div>
 
           <div className="mt-6 flex flex-col items-center space-y-2 text-center">
