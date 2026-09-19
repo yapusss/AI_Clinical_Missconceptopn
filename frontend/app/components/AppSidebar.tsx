@@ -36,7 +36,7 @@ const ROLE_LABEL: Record<AppRole, string> = {
 const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER", "STUDENT"] },
-  { label: "Settings", path: "/dashboard?view=settings", icon: Settings, roles: ["ADMIN"] },
+  { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
 ];
 
