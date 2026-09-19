@@ -404,7 +404,7 @@ export default function QuestionsPage() {
 
       {/* Modal Form Tambah/Edit Soal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto" style={{ zIndex: 200 }}>
           <div className="w-full max-w-2xl rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl my-8">
             <div className="flex items-center justify-between border-b border-outline-variant/30 pb-4">
               <h2 className="font-display text-xl font-bold text-on-surface">
