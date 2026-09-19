@@ -168,6 +168,8 @@ class Submission(models.Model):
     student = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='student_id', related_name='submissions')
     question_version_id = models.UUIDField()
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    answer_text = models.TextField()
+    attempt_no = models.IntegerField(default=1)
     status = models.CharField(max_length=30)
     submitted_at = models.DateTimeField(auto_now_add=True)
 

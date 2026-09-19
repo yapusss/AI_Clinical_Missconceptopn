@@ -135,3 +135,17 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
                     'indicators': f"Total bobot indikator harus tepat 1.0000 untuk dipublikasikan. Saat ini: {total_weight}"
                 })
         return attrs
+
+
+# ============================================================================
+# SPRINT 3: STUDENT SUBMISSION SERIALIZERS (UC-01 / P3)
+# ============================================================================
+
+class SubmissionCreateSerializer(serializers.Serializer):
+    answer_text = serializers.CharField(min_length=1, max_length=20000)
+
+    def validate_answer_text(self, value):
+        val = value.strip()
+        if not val:
+            raise serializers.ValidationError('Jawaban tidak boleh kosong.')
+        return val

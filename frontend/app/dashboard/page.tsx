@@ -71,14 +71,16 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [pageLoading, setPageLoading] = useState(true);
-  const [view] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("view"),
-  );
-  const [selectedRole] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const q = new URLSearchParams(window.location.search).get("role");
-    return q ?? localStorage.getItem("selected_role");
-  });
+  // Read from the URL/storage after mount only: a render-time read diverges from
+  // the server render and breaks hydration.
+  const [view, setView] = useState<string | null>(null);
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setView(params.get("view"));
+    setSelectedRole(params.get("role") ?? localStorage.getItem("selected_role"));
+  }, []);
 
   useEffect(() => {
     if (!loading && (!user || !token)) {
@@ -148,7 +150,10 @@ export default function DashboardPage() {
 
   const quickActions =
     primaryRole === "STUDENT"
-      ? [{ icon: ClipboardList, label: "Kerjakan evaluasi baru", href: "/questions" }]
+      ? [
+          { icon: ClipboardList, label: "Kerjakan evaluasi baru", href: "/code" },
+          { icon: FileSearch, label: "Lihat pengumpulan saya", href: "/code#pengumpulan" },
+        ]
       : primaryRole === "LECTURER"
         ? [
             { icon: FilePlus, label: "Buat bank soal baru", href: "/questions" },

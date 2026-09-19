@@ -150,8 +150,9 @@ export default function SettingsPage() {
   const { user, token, loading } = useAuth();
   const router = useRouter();
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
-  const [notifications, setNotifications] = useState<NotifSettings>(() => loadPrefs().notifications);
-  const [system, setSystem] = useState<SystemSettings>(() => loadPrefs().system);
+  // Loaded in an effect (not during render) so the server and first client render agree.
+  const [notifications, setNotifications] = useState<NotifSettings>(DEFAULT_SETTINGS.notifications);
+  const [system, setSystem] = useState<SystemSettings>(DEFAULT_SETTINGS.system);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [notice, setNotice] = useState("");

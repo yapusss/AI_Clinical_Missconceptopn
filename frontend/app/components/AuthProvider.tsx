@@ -69,9 +69,17 @@ async function parseError(res: Response): Promise<string> {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(readStoredToken);
+  // SSR-stable: the server must render the same thing as the first client pass.
+  // The stored token is read after mount; `loading` blocks the auth guard until then.
+  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(() => readStoredToken() !== null);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    const stored = readStoredToken();
+    if (stored) setToken(stored);
+    else setLoading(false);
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -148,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         await fetch("/api/auth/me", {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
+                    headers: { Authorization: `Bearer ${token}` },
         });
       } catch {
         // Local session is still cleared when the server is unavailable.

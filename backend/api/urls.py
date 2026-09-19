@@ -9,6 +9,11 @@ from .views import (
     QuestionPublishView,
     QuestionToggleActiveView,
     RegisterView,
+    StudentSetLookupView,
+    StudentSubmissionCreateView,
+    StudentSubmissionListView,
+    StudentSubmissionSetDetailView,
+    StudentSubmissionSetListView,
 )
 
 urlpatterns = [
@@ -22,4 +27,11 @@ urlpatterns = [
     path('questions/<uuid:pk>', QuestionDetailView.as_view(), name='question-detail'),
     path('questions/<uuid:pk>/toggle-active', QuestionToggleActiveView.as_view(), name='question-toggle-active'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
+
+    # Sprint 3 Student Endpoints (UC-01 / P3)
+    path('student/sets', StudentSetLookupView.as_view(), name='student-set-lookup'),
+    path('student/sets/<uuid:pk>/questions/<uuid:qid>/submissions', StudentSubmissionCreateView.as_view(), name='student-submission-create'),
+    path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
+    path('student/submission-sets', StudentSubmissionSetListView.as_view(), name='student-submission-set-list'),
+    path('student/submission-sets/<uuid:pk>', StudentSubmissionSetDetailView.as_view(), name='student-submission-set-detail'),
 ]

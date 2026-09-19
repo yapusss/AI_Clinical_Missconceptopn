@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Building2,
+  ClipboardList,
   FileSearch,
   LayoutDashboard,
   LogOut,
@@ -35,7 +36,8 @@ const ROLE_LABEL: Record<AppRole, string> = {
 
 const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
-  { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER", "STUDENT"] },
+  { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
+  { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
 ];
@@ -48,8 +50,12 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const { user, loading, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const [mounted, setMounted] = useState(() => typeof document === "undefined");
+  // Must start false on the server AND on the first client render (hydration),
+  // then flip in an effect — see React's two-pass pattern. Diverging here causes
+  // a hydration mismatch and a client-side re-render of the whole shell.
+  const [mounted, setMounted] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [currentSearch, setCurrentSearch] = useState("");
 
   useEffect(() => {
     const timer = setTimeout(() => setMounted(true), 0);
@@ -59,6 +65,10 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    setCurrentSearch(window.location.search);
+  }, [pathname]);
 
   const isPublic = pathname === "/" || pathname === "/login" || pathname === "/select-role";
 
@@ -79,7 +89,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const appRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
   const items = MENU_ITEMS.filter((item) => item.roles.includes(appRole));
 
-  const currentSearch = typeof window === "undefined" ? "" : window.location.search;
+  // set by an effect (below) so the first client render matches the server
 
   const isActive = (path: string) => {
     if (path === "/dashboard") {

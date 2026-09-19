@@ -27,6 +27,7 @@ from .serializers import (
     QuestionSetCreateSerializer,  
     QuestionSetUpdateSerializer,  
     RegisterSerializer,
+    SubmissionCreateSerializer,
     UserSerializer,
 )
 
@@ -755,3 +756,360 @@ class QuestionPublishView(APIView):
             return Response({'detail': 'Versi soal berhasil dipublikasikan.', 'is_published': qv.is_published})
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+# ============================================================================
+# SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
+# ============================================================================
+
+def is_student_for_subject(user, subject_id):
+    if user.is_superuser:
+        return True
+    return UserSubjectRole.objects.filter(
+        user=user, subject_id=subject_id, role=UserSubjectRole.Role.STUDENT
+    ).exists()
+
+
+class StudentSetLookupView(APIView):
+    """Lookup soal set by kode (UC-01: mahasiswa memasukkan kode soal)."""
+
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        code = (request.query_params.get('code') or '').strip()
+        if not code:
+            return Response(
+                {'detail': 'Parameter kode wajib diisi.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            q_set = QuestionSet.objects.select_related('subject', 'created_by').get(
+                code__iexact=code, is_active=True
+            )
+        except QuestionSet.DoesNotExist:
+            return Response(
+                {'detail': 'Kode soal tidak ditemukan.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        questions = Question.objects.filter(question_set=q_set).order_by('order_index')
+
+        items = []
+        for q in questions:
+            version = QuestionVersion.objects.filter(
+                question=q, is_published=True
+            ).order_by('-version_number').first()
+            if not version:
+                continue
+            latest_sub = Submission.objects.filter(
+                student=request.user, question_version_id=version.id
+            ).order_by('-attempt_no').first()
+            items.append({
+                'question_id': str(q.id),
+                'order_index': q.order_index,
+                'version_id': str(version.id),
+                'version_number': version.version_number,
+                'prompt': version.prompt,
+                'latest_submission': {
+                    'submission_id': str(latest_sub.id),
+                    'attempt_no': latest_sub.attempt_no,
+                    'status': latest_sub.status,
+                    'submitted_at': latest_sub.submitted_at,
+                } if latest_sub else None,
+            })
+
+        return Response({
+            'id': str(q_set.id),
+            'code': q_set.code,
+            'title': q_set.title,
+            'description': q_set.description or '',
+            'subject_id': str(q_set.subject_id),
+            'subject_name': q_set.subject.name,
+            'is_active': q_set.is_active,
+            'questions': items,
+        })
+
+
+class StudentSubmissionCreateView(APIView):
+    """Simpan jawaban konseptual mahasiswa (UC-01; sp_submit_conceptual_answer)."""
+
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request, pk, qid):
+        try:
+            q_set = QuestionSet.objects.get(pk=pk, is_active=True)
+        except QuestionSet.DoesNotExist:
+            return Response(
+                {'detail': 'Soal tidak ditemukan.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            question = Question.objects.get(pk=qid, question_set=q_set)
+        except Question.DoesNotExist:
+            return Response(
+                {'detail': 'Pertanyaan tidak ditemukan.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        version = QuestionVersion.objects.filter(
+            question=question, is_published=True
+        ).order_by('-version_number').first()
+        if not version:
+            return Response(
+                {'detail': 'Versi soal belum dipublikasikan. Tidak dapat mengumpulkan jawaban.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not is_student_for_subject(request.user, q_set.subject_id):
+            return Response(
+                {'detail': 'Anda tidak terdaftar pada mata kuliah ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = SubmissionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        answer_text = serializer.validated_data['answer_text']
+
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "CALL sp_submit_conceptual_answer(%s, %s, %s, NULL);",
+                        [str(request.user.id), str(version.id), answer_text],
+                    )
+                    row = cursor.fetchone()
+                    submission_id = str(row[0]) if row and row[0] else None
+                    if not submission_id:
+                        cursor.execute(
+                            """
+                            SELECT id FROM submissions
+                            WHERE student_id = %s AND question_version_id = %s
+                            ORDER BY attempt_no DESC LIMIT 1
+                            """,
+                            [str(request.user.id), str(version.id)],
+                        )
+                        fallback = cursor.fetchone()
+                        submission_id = str(fallback[0]) if fallback else None
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not submission_id:
+            return Response(
+                {'detail': 'Gagal menyimpan jawaban. Silakan coba lagi.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        submission = Submission.objects.get(pk=submission_id)
+        return Response({
+            'submission_id': str(submission.id),
+            'question_id': str(question.id),
+            'question_version_id': str(version.id),
+            'attempt_no': submission.attempt_no,
+            'status': submission.status,
+            'submitted_at': submission.submitted_at,
+        }, status=status.HTTP_201_CREATED)
+
+
+class StudentSubmissionListView(APIView):
+    """Daftar pengumpulan mahasiswa (status state machine P3)."""
+
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        submissions = list(
+            Submission.objects.filter(student=request.user).order_by('-submitted_at')
+        )
+
+        version_ids = {s.question_version_id for s in submissions}
+        versions = {
+            v.id: v
+            for v in QuestionVersion.objects.filter(id__in=version_ids)
+        }
+        question_ids = {v.question_id for v in versions.values()}
+        questions = {
+            q.id: q
+            for q in Question.objects.filter(id__in=question_ids)
+        }
+        set_ids = {q.question_set_id for q in questions.values()}
+        sets_map = {
+            s.id: s
+            for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject')
+        }
+
+        results = []
+        for s in submissions:
+            v = versions.get(s.question_version_id)
+            q = questions.get(v.question_id) if v else None
+            qs = sets_map.get(q.question_set_id) if q else None
+            results.append({
+                'id': str(s.id),
+                'set_id': str(qs.id) if qs else None,
+                'question_version_id': str(s.question_version_id),
+                'question_prompt': v.prompt if v else None,
+                'set_title': qs.title if qs else None,
+                'set_code': qs.code if qs else None,
+                'subject_id': str(qs.subject_id) if qs else None,
+                'subject_name': qs.subject.name if qs else None,
+                'attempt_no': s.attempt_no,
+                'status': s.status,
+                'answer_text': s.answer_text,
+                'submitted_at': s.submitted_at,
+            })
+
+        return Response(results)
+# ============================================================================
+# SPRINT 4: STUDENT SUBMISSION GROUPING BY QUESTION SET
+# ============================================================================
+
+
+def _build_submission_set_groups(user):
+    """Group a student's submissions per question set (read-only aggregation).
+
+    Mirrors what the student is allowed to see: only published question versions,
+    and every published question is reported (answered or not).
+    """
+    submissions = list(
+        Submission.objects.filter(student=user).order_by('submitted_at')
+    )
+    if not submissions:
+        return []
+
+    version_ids = {s.question_version_id for s in submissions}
+    versions = {
+        v.id: v
+        for v in QuestionVersion.objects.filter(id__in=version_ids).select_related('question')
+    }
+    question_ids = {v.question_id for v in versions.values()}
+    questions = {q.id: q for q in Question.objects.filter(id__in=question_ids)}
+    set_ids = {q.question_set_id for q in questions.values()}
+    sets_map = {
+        s.id: s
+        for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject')
+    }
+
+    # Published question count per set (a question counts once, latest version wins)
+    published_rows = (
+        QuestionVersion.objects.filter(
+            is_published=True, question__question_set_id__in=set_ids
+        )
+        .values_list('question_id', 'question__question_set_id')
+        .distinct()
+    )
+    published_count = {}
+    for _qid, _sid in published_rows:
+        published_count[_sid] = published_count.get(_sid, 0) + 1
+
+    grouped = {}
+    for s in submissions:
+        v = versions.get(s.question_version_id)
+        q = questions.get(v.question_id) if v else None
+        if not q:
+            continue
+        grouped.setdefault(q.question_set_id, {}).setdefault(q.id, []).append(s)
+
+    results = []
+    for set_id, question_map in grouped.items():
+        q_set = sets_map.get(set_id)
+        if not q_set:
+            continue
+
+        status_counts = {}
+        max_attempt = 0
+        last_submitted = None
+        questions_payload = []
+
+        for qid, subs in question_map.items():
+            q = questions[qid]
+            attempts = []
+            for s in sorted(subs, key=lambda x: x.attempt_no):
+                status_counts[s.status] = status_counts.get(s.status, 0) + 1
+                max_attempt = max(max_attempt, s.attempt_no)
+                if last_submitted is None or s.submitted_at > last_submitted:
+                    last_submitted = s.submitted_at
+                attempts.append({
+                    'submission_id': str(s.id),
+                    'attempt_no': s.attempt_no,
+                    'status': s.status,
+                    'answer_text': s.answer_text,
+                    'submitted_at': s.submitted_at,
+                    # Reserved for P5/P6: score, tier, explanation, suggested materials
+                    'evaluation': None,
+                })
+
+            latest_version = versions[sorted(subs, key=lambda x: x.attempt_no)[-1].question_version_id]
+            questions_payload.append({
+                'question_id': str(qid),
+                'order_index': q.order_index,
+                'version_id': str(latest_version.id),
+                'version_number': latest_version.version_number,
+                'prompt': latest_version.prompt,
+                'answered': True,
+                'attempts': attempts,
+            })
+
+        # Published questions this student has not answered yet
+        unanswered = Question.objects.filter(question_set_id=set_id).exclude(
+            id__in=list(question_map.keys())
+        ).order_by('order_index')
+        for q in unanswered:
+            v = QuestionVersion.objects.filter(
+                question=q, is_published=True
+            ).order_by('-version_number').first()
+            if not v:
+                continue
+            questions_payload.append({
+                'question_id': str(q.id),
+                'order_index': q.order_index,
+                'version_id': str(v.id),
+                'version_number': v.version_number,
+                'prompt': v.prompt,
+                'answered': False,
+                'attempts': [],
+            })
+
+        questions_payload.sort(key=lambda item: item['order_index'])
+
+        status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
+
+        results.append({
+            'set_id': str(q_set.id),
+            'code': q_set.code,
+            'title': q_set.title,
+            'subject_id': str(q_set.subject_id),
+            'subject_name': q_set.subject.name,
+            'question_count': published_count.get(set_id, 0),
+            'answered_count': sum(1 for item in questions_payload if item['answered']),
+            'total_attempts': sum(status_counts.values()),
+            'max_attempt_no': max_attempt,
+            'status_summary': status_summary,
+            'status_counts': status_counts,
+            'last_submitted_at': last_submitted,
+            'questions': questions_payload,
+        })
+
+    results.sort(key=lambda item: item['last_submitted_at'], reverse=True)
+    return results
+
+
+class StudentSubmissionSetListView(APIView):
+    """Daftar pengumpulan mahasiswa dikelompokkan per bank soal (UC-01)."""
+
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        return Response(_build_submission_set_groups(request.user))
+
+
+class StudentSubmissionSetDetailView(APIView):
+    """Rincian satu bank soal: seluruh pertanyaan, jawaban, dan evaluasi."""
+
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request, pk):
+        for group in _build_submission_set_groups(request.user):
+            if group['set_id'] == str(pk):
+                return Response(group)
+        return Response(
+            {'detail': 'Pengumpulan untuk bank soal ini tidak ditemukan.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
