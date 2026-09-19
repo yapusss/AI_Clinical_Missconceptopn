@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowRight, Building2, Eye, EyeOff, Lock, UserRound } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
-import { Icon } from "../components/Icon";
+import ThemeToggle from "../components/ThemeToggle";
 
 export default function LoginPage() {
   const { user, loading, login } = useAuth();
@@ -12,14 +13,11 @@ export default function LoginPage() {
   const [identitas, setIdentitas] = useState("");
   const [kataSandi, setKataSandi] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) {
-      router.replace("/select-role");
-    }
+    if (!loading && user) router.replace("/select-role");
   }, [user, loading, router]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -27,198 +25,131 @@ export default function LoginPage() {
     setSubmitting(true);
     setError("");
     try {
-      await login(identitas, kataSandi, rememberMe);
-      router.replace("/select-role");
+      await login(identitas, kataSandi);
+      router.push("/select-role");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed.");
+      setError(err instanceof Error ? err.message : "Login gagal.");
+    } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <main className="relative flex min-h-screen flex-col justify-between overflow-x-hidden bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body text-on-surface antialiased">
-      {/* Architectural background grid & ambient tints */}
-      <div className="pointer-events-none fixed inset-0 z-0 grid-pattern" aria-hidden />
-      <div className="pointer-events-none fixed -top-40 -left-40 z-0 h-96 w-96 rounded-full bg-primary-fixed-dim/30 blur-3xl" aria-hidden />
-      <div className="pointer-events-none fixed top-1/3 -right-32 z-0 h-80 w-80 rounded-full bg-surface-container-highest/60 blur-3xl" aria-hidden />
-
-      {/* Academic header anchor */}
-      <header className="relative z-10 mx-auto flex w-full max-w-[1680px] items-center justify-between px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
-            <Icon name="school" className="h-6 w-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-display text-lg font-bold tracking-tight text-primary">
-                EvalAI Academic
-              </span>
-            </div>
-            <p className="font-body text-xs text-on-surface-variant">
-              Universites - AI Clinical Missconception
-            </p>
-          </div>
-        </div>
-
-        <div className="hidden items-center gap-4 text-on-surface-variant sm:flex">
-          <div className="flex items-center gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/80 px-3 py-1.5 shadow-xs backdrop-blur-sm">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-tertiary-fixed-dim" />
-            <span className="text-xs font-medium text-on-surface">Server Akademik Normal</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Main centered glassmorphic pane */}
-      <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-4 py-8 sm:py-12">
-        <div className="w-full max-w-[480px]">
-          <div className="glass-tier-2 rounded-xl p-8 transition-all duration-200 sm:p-10">
-            <div className="mb-8 text-center sm:text-left">
-              <div className="mb-3 inline-flex items-center gap-1.5 rounded-md border border-primary-fixed-dim bg-primary-fixed/50 px-2.5 py-1 text-primary">
-                <Icon name="verified_user" className="h-[15px] w-[15px]" />
-                <span className="text-xs font-semibold">Autentikasi Civitas Academica</span>
-              </div>
-              <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
-                Masuk ke Portal
-              </h1>
-              <p className="mt-1.5 text-sm text-on-surface-variant">
-                Gunakan kredensial resmi Universitas Terbuka untuk mengakses lembar
-                evaluasi dan ujian.
-              </p>
-            </div>
-
-            <form onSubmit={onSubmit} className="space-y-5">
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="email"
-                  className="block text-sm font-medium text-on-surface"
-                >
-                  Email
-                </label>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
-                    <Icon name="badge" className="h-5 w-5" />
-                  </div>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    autoComplete="username"
-                    inputMode="email"
-                    required
-                    value={identitas}
-                    onChange={(e) => setIdentitas(e.target.value)}
-                    placeholder="Contoh: dosen@ut.ac.id"
-                    className="w-full rounded-lg border border-[#CBD5E1] bg-surface-container-lowest py-2.5 pl-10 pr-3.5 text-on-surface outline-none transition-all duration-150 placeholder:text-outline/70 focus:border-primary-container focus:ring-2 focus:ring-primary-container/20"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label
-                    htmlFor="kata_sandi"
-                    className="block text-sm font-medium text-on-surface"
-                  >
-                    Kata Sandi
-                  </label>
-                  <span className="text-xs text-on-surface-variant">
-                    Hubungi administrator jika lupa kata sandi.
-                  </span>
-                </div>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-outline">
-                    <Icon name="lock" className="h-5 w-5" />
-                  </div>
-                  <input
-                    id="kata_sandi"
-                    name="kata_sandi"
-                    type={showPassword ? "text" : "password"}
-                    autoComplete="current-password"
-                    required
-                    value={kataSandi}
-                    onChange={(e) => setKataSandi(e.target.value)}
-                    placeholder="Masukkan kata sandi akun Anda"
-                    className="w-full rounded-lg border border-[#CBD5E1] bg-surface-container-lowest py-2.5 pl-10 pr-10 text-on-surface outline-none transition-all duration-150 placeholder:text-outline/70 focus:border-primary-container focus:ring-2 focus:ring-primary-container/20"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Tampilkan atau sembunyikan kata sandi"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-outline outline-none hover:text-on-surface"
-                  >
-                    <Icon
-                      name={showPassword ? "visibility_off" : "visibility"}
-                      className="h-5 w-5"
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex cursor-pointer select-none items-center gap-2.5">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="h-4 w-4 cursor-pointer rounded border border-[#CBD5E1] bg-surface-container-lowest text-primary-container focus:ring-primary-container/30"
-                  />
-                  <span className="text-xs font-normal text-on-surface-variant">
-                    Ingat saya di perangkat ini
-                  </span>
-                </label>
-              </div>
-
-              {error && (
-                <div
-                  role="alert"
-                  className="rounded-lg border border-error/40 bg-error-container px-3.5 py-2.5 text-sm text-on-error-container"
-                >
-                  {error}
-                </div>
-              )}
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="group flex w-full items-center justify-center gap-2 rounded-lg bg-primary-container px-4 py-2.5 text-sm font-semibold text-on-primary shadow-sm transition-all duration-150 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-60"
-                >
-                  <span>{submitting ? "Memuat..." : "Masuk ke Akun"}</span>
-                  <Icon
-                    name="arrow_forward"
-                    className="h-[18px] w-[18px] transition-transform group-hover:translate-x-0.5"
-                  />
-                </button>
-              </div>
-            </form>
-
-          </div>
-
-          <div className="mt-6 flex flex-col items-center space-y-2 text-center">
-            <div className="inline-flex items-center gap-2 text-xs text-on-surface-variant">
-              <Icon name="lock" className="h-4 w-4 text-tertiary-container" />
-              <span>Koneksi Terenkripsi TLS 1.3 End-to-End • Sertifikasi ISO 27001</span>
-            </div>
-            </div>
-        </div>
+    <div
+      className="app-shell"
+      style={{
+        minHeight: "100vh",
+        background: "var(--bg-main)",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div style={{ position: "absolute", top: "16px", right: "16px" }}>
+        <ThemeToggle />
       </div>
 
-      {/* Academic footer */}
-      <footer className="relative z-10 mx-auto flex w-full max-w-[1680px] flex-col items-center justify-between gap-3 border-t border-outline-variant/30 px-6 py-4 text-xs text-on-surface-variant sm:flex-row">
-        <span>© 2025 Universitas Terbuka. Seluruh hak cipta dilindungi.</span>
-        <div className="flex items-center gap-6">
-          <a href="#panduan" className="transition-colors hover:text-primary">
-            Panduan Registrasi
-          </a>
-          <a href="#kebijakan" className="transition-colors hover:text-primary">
-            Kebijakan Privasi
-          </a>
-          <a href="#status" className="flex items-center gap-1 transition-colors hover:text-primary">
-            <Icon name="verified_user" className="h-4 w-4" />
-            <span>Pusat Integritas</span>
-          </a>
+      <div
+        className="glass-panel animate-fade-in"
+        style={{
+          width: "100%",
+          maxWidth: "420px",
+          padding: "2rem",
+          borderRadius: "var(--radius-lg)",
+          boxSizing: "border-box",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "1.25rem" }}>
+          <div
+            style={{
+              width: "52px",
+              height: "52px",
+              borderRadius: "var(--radius-md)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "var(--gradient-primary)",
+              color: "#ffffff",
+            }}
+          >
+            <Building2 size={28} />
+          </div>
         </div>
-      </footer>
-    </main>
+        <h1 style={{ fontSize: "1.5rem", fontWeight: 800, textAlign: "center", margin: 0 }}>
+          Masuk ke Portal
+        </h1>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center", marginTop: "0.4rem" }}>
+          EvalAI Academic — AI Clinical Misconception
+        </p>
+
+        <form
+          onSubmit={onSubmit}
+          style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1.5rem" }}
+        >
+          <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
+            Username
+            <div style={{ position: "relative" }}>
+              <UserRound size={18} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
+              <input
+                type="email"
+                autoComplete="username"
+                required
+                value={identitas}
+                onChange={(e) => setIdentitas(e.target.value)}
+                placeholder="demo@acm.local"
+                className="form-input"
+                style={{ paddingLeft: "2.4rem" }}
+              />
+            </div>
+          </label>
+
+          <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
+            Kata Sandi
+            <div style={{ position: "relative" }}>
+              <Lock size={18} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
+              <input
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                value={kataSandi}
+                onChange={(e) => setKataSandi(e.target.value)}
+                placeholder="••••••••"
+                className="form-input"
+                style={{ paddingLeft: "2.4rem", paddingRight: "2.4rem" }}
+              />
+              <button
+                type="button"
+                aria-label="Tampilkan atau sembunyikan kata sandi"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: "absolute",
+                  right: "6px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-dim)",
+                  cursor: "pointer",
+                  padding: "6px",
+                  display: "inline-flex",
+                }}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </label>
+
+          {error && (
+            <div role="alert" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(239, 68, 68, 0.3)", background: "rgba(239, 68, 68, 0.12)", color: "#f87171", fontSize: "0.85rem", padding: "0.6rem 0.9rem" }}>
+              {error}
+            </div>
+          )}
+
+          <button type="submit" className="btn-primary" disabled={submitting} style={{ padding: "0.75rem 1.25rem", fontSize: "0.9rem", opacity: submitting ? 0.6 : 1 }}>
+            {submitting ? "Memproses..." : "Masuk ke Akun"}
+            <ArrowRight size={16} />
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }

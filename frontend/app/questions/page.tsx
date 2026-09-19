@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../components/AuthProvider";
-import { AppSidebar } from "../components/AppSidebar";
-import { Icon } from "../components/Icon";
+import { CircleCheck, ClipboardList, Plus, TriangleAlert } from "lucide-react";
 
 type Indicator = {
   label: string;
@@ -35,8 +34,17 @@ type SubjectOption = {
   name: string;
 };
 
+type ApiError = {
+  detail?: unknown;
+  code?: unknown;
+  indicators?: unknown;
+  message?: string;
+};
+
+const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
 export default function QuestionsPage() {
-  const { user, token, loading, logout } = useAuth();
+  const { user, token, loading } = useAuth();
   const router = useRouter();
 
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
@@ -64,22 +72,21 @@ export default function QuestionsPage() {
   const [formPublish, setFormPublish] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const loadQuestions = async () => {
+  const loadQuestions = useCallback(async () => {
     if (!token) return;
     try {
-      setFetching(true);
       const res = await fetch("/api/questions", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Gagal memuat daftar soal.");
       const data = await res.json();
       setQuestions(data);
-    } catch (err: any) {
-      setError(err.message || "Terjadi kesalahan saat memuat soal.");
+    } catch (err) {
+      setError(errMsg(err) || "Terjadi kesalahan saat memuat soal.");
     } finally {
       setFetching(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (loading) return;
@@ -99,7 +106,16 @@ export default function QuestionsPage() {
         if (subs.length > 0) setFormSubjectId(subs[0].id);
       });
 
-    loadQuestions();
+    fetch("/api/questions", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Gagal memuat daftar soal.");
+        return res.json();
+      })
+      .then((data) => setQuestions(data))
+      .catch((e) => setError(e instanceof Error ? e.message : "Terjadi kesalahan saat memuat soal."))
+      .finally(() => setFetching(false));
   }, [user, token, loading, router]);
 
   // Handle Toggle Active (ACM-11)
@@ -113,9 +129,10 @@ export default function QuestionsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Gagal mengubah status.");
       setSuccess(data.message);
+      setFetching(true);
       loadQuestions();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errMsg(err));
     }
   };
 
@@ -141,17 +158,17 @@ export default function QuestionsPage() {
         setFormModelAnswer(latest.model_answer);
         if (latest.indicators && latest.indicators.length > 0) {
           setFormIndicators(
-            latest.indicators.map((i: any) => ({
+            latest.indicators.map((i: Indicator) => ({
               label: i.label,
               description: i.description,
-              weight: parseFloat(i.weight),
+              weight: i.weight,
             }))
           );
         }
       }
       setShowModal(true);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errMsg(err));
     }
   };
 
@@ -165,7 +182,7 @@ export default function QuestionsPage() {
     setSubmitting(true);
 
     try {
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         title: formTitle,
         description: formDescription,
         prompt: formPrompt,
@@ -197,7 +214,7 @@ export default function QuestionsPage() {
         });
       }
 
-      let data: any = {};
+      let data: ApiError = {};
       const responseText = await res.text();
       try {
         data = JSON.parse(responseText);
@@ -206,16 +223,17 @@ export default function QuestionsPage() {
       }
 
       if (!res.ok) {
-        const msg = data.detail || (data.code ? data.code[0] : "") || (data.indicators ? data.indicators : "") || "Gagal menyimpan soal.";
+        const msg = data.detail || (Array.isArray(data.code) ? data.code[0] : "") || (data.indicators ? data.indicators : "") || "Gagal menyimpan soal.";
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
       setSuccess(isEditing ? "Soal berhasil diperbarui." : "Soal baru berhasil ditambahkan.");
       setShowModal(false);
       resetForm();
+      setFetching(true);
       loadQuestions();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errMsg(err));
     } finally {
       setSubmitting(false);
     }
@@ -240,7 +258,7 @@ export default function QuestionsPage() {
     setFormIndicators(formIndicators.filter((_, i) => i !== index));
   };
 
-  const updateIndicator = (index: number, field: keyof Indicator, value: any) => {
+  const updateIndicator = (index: number, field: keyof Indicator, value: string | number) => {
     const updated = [...formIndicators];
     updated[index] = { ...updated[index], [field]: value };
     setFormIndicators(updated);
@@ -251,51 +269,13 @@ export default function QuestionsPage() {
   if (loading || !user) return null;
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body text-on-surface">
-      <AppSidebar
-        role="LECTURER"
-        activeItem="questions"
-        userName={user.full_name}
-        onSelect={(id) => {
-          if (id === "dashboard") router.push("/dashboard?role=LECTURER");
-          if (id === "profile") router.push("/profile");
-        }}
-        onLogout={async () => {
-          await logout();
-          router.replace("/login");
-        }}
-      />
-
-      <div className="min-h-screen lg:pl-72">
-        <div className="mx-auto w-full max-w-6xl px-6 pb-12">
-          {/* Top Header bar konsisten dengan EvalAI Dashboard */}
-          <header className="flex items-center justify-between py-5 border-b border-outline-variant/30 mb-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
-                <Icon name="school" className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="font-display text-lg font-bold tracking-tight text-primary">
-                  EvalAI Academic
-                </p>
-                <p className="text-xs text-on-surface-variant">
-                  Manajemen Soal — Dosen
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="hidden rounded-full border border-outline-variant/30 bg-surface-container-lowest/80 px-3 py-1.5 text-xs font-medium text-on-surface sm:inline">
-                {user.full_name}
-              </span>
-            </div>
-          </header>
-
-          {/* Hero & Aksi Tambah Soal */}
+    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+      {/* Hero & Aksi Tambah Soal */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               {/* Badge Bank Soal Dosen dengan warna khas EvalAI */}
               <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-                <Icon name="assignment" className="h-3.5 w-3.5 text-primary" />
+                <ClipboardList size={14} color="var(--primary)" />
                 Bank Soal Dosen
               </div>
               <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-on-surface">
@@ -314,7 +294,7 @@ export default function QuestionsPage() {
               }}
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary-container focus-visible:ring-2 focus-visible:ring-primary/40"
             >
-              <Icon name="add" className="h-5 w-5" />
+              <Plus size={20} />
               Tambah Soal Baru
             </button>
           </div>
@@ -322,14 +302,14 @@ export default function QuestionsPage() {
           {/* Status Alerts */}
           {error && (
             <div role="alert" className="mt-6 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container">
-              <Icon name="error_outline" className="h-5 w-5 shrink-0" />
+              <TriangleAlert size={20} />
               <span>{error}</span>
             </div>
           )}
 
           {success && (
             <div role="status" className="mt-6 flex items-center gap-3 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-4 text-sm text-primary">
-              <Icon name="check_circle" className="h-5 w-5 shrink-0" />
+              <CircleCheck size={20} />
               <span>{success}</span>
             </div>
           )}
@@ -382,7 +362,7 @@ export default function QuestionsPage() {
                           </span>
                           {q.latest_version?.is_published ? (
                             <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-tertiary">
-                              <Icon name="check_circle" className="h-3.5 w-3.5" /> Publik
+                              <CircleCheck size={14} /> Publik
                             </span>
                           ) : (
                             <span className="ml-2 text-xs font-medium text-on-surface-variant">
@@ -420,8 +400,6 @@ export default function QuestionsPage() {
               </table>
             </div>
           </div>
-        </div>
-      </div>
 
       {/* Modal Form Tambah/Edit Soal */}
       {showModal && (
@@ -575,7 +553,7 @@ export default function QuestionsPage() {
                   onClick={addIndicator}
                   className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
                 >
-                  <Icon name="add" className="h-3.5 w-3.5" /> Tambah Indikator
+                  <Plus size={14} /> Tambah Indikator
                 </button>
               </div>
 
@@ -614,6 +592,6 @@ export default function QuestionsPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 import "./globals.css";
 
 import { AuthProvider } from "./components/AuthProvider";
+import AppSidebar from "./components/AppSidebar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,10 +45,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="id"
-      className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} ${plusJakartaSans.variable} ${jetBrainsMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} ${plusJakartaSans.variable} ${jetBrainsMono.variable}`}
     >
-      <body className="min-h-full flex flex-col">
-        <AuthProvider>{children}</AuthProvider>
+      <body className="min-h-full">
+        <AuthProvider>
+          <AppSidebar>{children}</AppSidebar>
+        </AuthProvider>
       </body>
     </html>
   );

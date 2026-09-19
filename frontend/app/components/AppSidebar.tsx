@@ -1,46 +1,30 @@
 "use client";
 
-import { Icon } from "./Icon";
-import type { IconName } from "./Icon";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  Building2,
+  FileSearch,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Settings,
+  UserRound,
+  X,
+} from "lucide-react";
 
-export type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
-export type AppMenuId = "dashboard" | "questions" | "settings" | "profile";
+import { useAuth } from "./AuthProvider";
+import ThemeToggle from "./ThemeToggle";
+
+type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 
 type MenuItem = {
-  id: AppMenuId;
   label: string;
-  icon: IconName;
+  path: string;
+  icon: typeof LayoutDashboard;
   roles: AppRole[];
 };
-
-const ALL_ROLES: AppRole[] = ["ADMIN", "LECTURER", "STUDENT", "GENERAL"];
-
-const MENU_ITEMS: MenuItem[] = [
-  {
-    id: "dashboard",
-    label: "Dashboard",
-    icon: "dashboard",
-    roles: ALL_ROLES,
-  },
-  {
-    id: "questions",
-    label: "Soal",
-    icon: "assignment",
-    roles: ["ADMIN", "LECTURER", "STUDENT"],
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    icon: "settings",
-    roles: ["ADMIN"],
-  },
-  {
-    id: "profile",
-    label: "Profile",
-    icon: "person",
-    roles: ALL_ROLES,
-  },
-];
 
 const ROLE_LABEL: Record<AppRole, string> = {
   ADMIN: "Administrator",
@@ -49,119 +33,218 @@ const ROLE_LABEL: Record<AppRole, string> = {
   GENERAL: "Akun umum",
 };
 
-type AppSidebarProps = {
-  role: string;
-  activeItem: AppMenuId;
-  userName: string;
-  onSelect: (item: AppMenuId) => void;
-  onLogout: () => void;
-};
+const MENU_ITEMS: MenuItem[] = [
+  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
+  { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER", "STUDENT"] },
+  { label: "Settings", path: "/dashboard?view=settings", icon: Settings, roles: ["ADMIN"] },
+  { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
+];
 
-function toAppRole(role: string): AppRole {
-  return role in ROLE_LABEL ? (role as AppRole) : "GENERAL";
+function toAppRole(role?: string): AppRole {
+  return role === "ADMIN" || role === "LECTURER" || role === "STUDENT" ? role : "GENERAL";
 }
 
-function MenuButtons({
-  items,
-  activeItem,
-  onSelect,
-  compact = false,
-}: {
-  items: MenuItem[];
-  activeItem: AppMenuId;
-  onSelect: (item: AppMenuId) => void;
-  compact?: boolean;
-}) {
-  return (
-    <>
-      {items.map((item) => {
-        const active = item.id === activeItem;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSelect(item.id)}
-            aria-current={active ? "page" : undefined}
-            className={`flex min-h-11 items-center gap-3 rounded-lg text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary-container/50 ${
-              compact
-                ? "justify-center px-3"
-                : "w-full px-3 text-left"
-            } ${
-              active
-                ? "bg-primary text-on-primary shadow-sm"
-                : "text-on-surface-variant hover:bg-primary-fixed/60 hover:text-primary"
-            }`}
-          >
-            <Icon name={item.icon} className="h-5 w-5 shrink-0" />
-            <span className={compact ? "sr-only" : undefined}>{item.label}</span>
-          </button>
-        );
-      })}
-    </>
-  );
-}
+export default function AppSidebar({ children }: { children: React.ReactNode }) {
+  const { user, loading, logout } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
+  const [mounted, setMounted] = useState(() => typeof document === "undefined");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-export function AppSidebar({
-  role,
-  activeItem,
-  userName,
-  onSelect,
-  onLogout,
-}: AppSidebarProps) {
-  const appRole = toAppRole(role);
+  useEffect(() => {
+    const timer = setTimeout(() => setMounted(true), 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login");
+  }, [user, loading, router]);
+
+  const isPublic = pathname === "/" || pathname === "/login";
+
+  if (isPublic) {
+    return <>{children}</>;
+  }
+
+  if (!mounted || loading) {
+    return (
+      <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg-main)" }}>
+        <div style={{ flex: 1, padding: "24px 32px" }} />
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
+  const appRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
   const items = MENU_ITEMS.filter((item) => item.roles.includes(appRole));
 
+  const isActive = (path: string) =>
+    path.startsWith("/dashboard") ? pathname.startsWith("/dashboard") : pathname === path;
+
+  const handleLogout = () => {
+    setMobileNavOpen(false);
+    void logout().then(() => router.replace("/login"));
+  };
+
   return (
-    <>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-outline-variant/40 bg-surface-container-lowest/95 px-4 py-5 shadow-sm backdrop-blur lg:flex">
-        <div className="flex items-center gap-3 px-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-on-primary shadow-sm">
-            <Icon name="school" className="h-6 w-6" />
-          </div>
+    <div className="app-shell" style={{ display: "flex", minHeight: "100vh", background: "var(--bg-main)" }}>
+      <header className="mobile-app-header glass-panel">
+        <div className="mobile-app-brand">
+          <Building2 size={22} color="var(--primary)" />
           <div>
-            <p className="font-display text-base font-bold tracking-tight text-primary">
-              EvalAI Academic
-            </p>
-            <p className="text-xs text-on-surface-variant">{ROLE_LABEL[appRole]}</p>
+            <strong>EvalAI Academic</strong>
+            <span>AI Clinical Misconception</span>
           </div>
         </div>
+        <button
+          type="button"
+          className="mobile-menu-button"
+          onClick={() => setMobileNavOpen((isOpen) => !isOpen)}
+          aria-expanded={mobileNavOpen}
+          aria-label={mobileNavOpen ? "Tutup menu navigasi" : "Buka menu navigasi"}
+        >
+          {mobileNavOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+      </header>
 
-        <nav aria-label="Navigasi utama" className="mt-9 space-y-1">
-          <MenuButtons items={items} activeItem={activeItem} onSelect={onSelect} />
-        </nav>
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="mobile-nav-overlay"
+          onClick={() => setMobileNavOpen(false)}
+          aria-label="Tutup menu navigasi"
+        />
+      )}
 
-        <div className="mt-auto border-t border-outline-variant/40 pt-4">
-          <p className="truncate px-3 text-xs font-medium text-on-surface-variant" title={userName}>
-            {userName}
-          </p>
+      <aside className={`glass-panel app-sidebar ${mobileNavOpen ? "app-sidebar-open" : ""}`}>
+        <div>
+          <div
+            style={{
+              paddingBottom: "14px",
+              borderBottom: "1px solid var(--border-color)",
+              marginBottom: "14px",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <Building2 size={24} color="var(--primary)" style={{ flexShrink: 0 }} />
+            <div>
+              <h2 style={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.4px", color: "var(--text-main)", margin: 0, lineHeight: 1.2 }}>
+                EvalAI Academic
+              </h2>
+              <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginTop: "2px" }}>
+                AI Clinical Misconception
+              </span>
+            </div>
+          </div>
+
+          <nav style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+            {items.map((item) => {
+              const active = isActive(item.path);
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.path}
+                  href={item.path}
+                  onClick={() => setMobileNavOpen(false)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    color: active ? "#ffffff" : "var(--text-muted)",
+                    background: active ? "var(--gradient-primary)" : "transparent",
+                    textDecoration: "none",
+                    fontSize: "0.825rem",
+                    fontWeight: active ? "600" : "500",
+                    transition: "all 0.15s ease",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <Icon size={16} color={active ? "#ffffff" : "var(--text-muted)"} style={{ flexShrink: 0 }} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+
+        <div
+          style={{
+            paddingTop: "12px",
+            borderTop: "1px solid var(--border-color)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+          }}
+        >
+          <div
+            style={{
+              padding: "8px 10px",
+              background: "var(--input-bg)",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border-color)",
+            }}
+          >
+            <div style={{ fontWeight: 700, color: "var(--text-main)", fontSize: "0.8rem" }}>
+              {user.full_name}
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "2px" }}>
+              Peran: <strong style={{ color: "var(--primary)" }}>{ROLE_LABEL[appRole]}</strong>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "8px 12px",
+              background: "var(--input-bg)",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border-color)",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          >
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+              Mode Tampilan
+            </span>
+            <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
+              <ThemeToggle />
+            </div>
+          </div>
+
           <button
             type="button"
-            onClick={onLogout}
-            className="mt-3 flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-semibold text-on-surface-variant outline-none transition-colors hover:bg-error-container hover:text-on-error-container focus-visible:ring-2 focus-visible:ring-error/40"
+            onClick={handleLogout}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              background: "rgba(239, 68, 68, 0.1)",
+              border: "1px solid rgba(239, 68, 68, 0.25)",
+              borderRadius: "var(--radius-sm)",
+              color: "#ef4444",
+              fontSize: "0.825rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              transition: "all 0.15s ease",
+            }}
           >
-            <Icon name="logout" className="h-5 w-5" />
-            Logout
+            <LogOut size={16} />
+            Keluar Sistem
           </button>
         </div>
       </aside>
 
-      <nav
-        aria-label="Navigasi utama"
-        className="sticky top-0 z-30 flex min-h-14 items-center justify-between border-b border-outline-variant/40 bg-surface-container-lowest/95 px-3 shadow-sm backdrop-blur lg:hidden"
-      >
-        <span className="font-display text-sm font-bold text-primary">EvalAI</span>
-        <div className="flex items-center gap-1">
-          <MenuButtons items={items} activeItem={activeItem} onSelect={onSelect} compact />
-          <button
-            type="button"
-            aria-label="Logout"
-            onClick={onLogout}
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-on-surface-variant outline-none transition-colors hover:bg-error-container hover:text-on-error-container focus-visible:ring-2 focus-visible:ring-error/40"
-          >
-            <Icon name="logout" className="h-5 w-5" />
-          </button>
-        </div>
-      </nav>
-    </>
+      <main className="app-main">
+        {children}
+      </main>
+    </div>
   );
 }

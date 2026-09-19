@@ -2,29 +2,25 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowRight, BookOpen, GraduationCap, LayoutDashboard, ShieldCheck } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
-import { Icon } from "../components/Icon";
-import type { IconName } from "../components/Icon";
 
-const META: Record<string, { label: string; icon: IconName; desc: string }> = {
-  ADMIN: { label: "Administrator", icon: "verified", desc: "Kelola seluruh sistem." },
-  LECTURER: { label: "Dosen", icon: "menu_book", desc: "Kelola bank soal dan validasi jawaban." },
-  STUDENT: { label: "Mahasiswa", icon: "school", desc: "Lembar evaluasi dan latihan." },
-  GENERAL: { label: "Akun Umum", icon: "dashboard", desc: "Tampilan umum tanpa peran khusus." },
+const META: Record<string, { label: string; icon: typeof ShieldCheck; desc: string }> = {
+  ADMIN: { label: "Administrator", icon: ShieldCheck, desc: "Kelola seluruh sistem." },
+  LECTURER: { label: "Dosen", icon: BookOpen, desc: "Kelola bank soal dan validasi jawaban." },
+  STUDENT: { label: "Mahasiswa", icon: GraduationCap, desc: "Lembar evaluasi dan latihan." },
+  GENERAL: { label: "Akun Umum", icon: LayoutDashboard, desc: "Tampilan umum tanpa peran khusus." },
 };
 
 type Option = { key: string; subjects: string[] };
 
 export default function SelectRolePage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      router.replace("/login");
-    }
+    if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
 
   function computeOptions(): Option[] {
@@ -39,102 +35,81 @@ export default function SelectRolePage() {
     return [...seen.entries()].map(([key, subjects]) => ({ key, subjects }));
   }
 
-  const options = computeOptions();
-
   function enter(key: string) {
     localStorage.setItem("selected_role", key);
     router.push(`/dashboard?role=${key}`);
   }
 
-  const handleLogout = async () => {
-    await logout();
-    router.replace("/login");
-  };
-
-  if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body">
-        <p className="text-sm text-on-surface-variant">Memuat data pengguna...</p>
-      </main>
-    );
-  }
-
-  if (!user) return null;
-
   return (
-    <main className="min-h-screen bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body text-on-surface">
-      <div className="mx-auto w-full max-w-3xl px-6">
-        <header className="flex items-center justify-between py-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
-              <Icon name="school" className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="font-display text-lg font-bold tracking-tight text-primary">
-                EvalAI Academic
-              </p>
-              <p className="text-xs text-on-surface-variant">Pemilihan peran</p>
-            </div>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-xs font-semibold text-on-surface-variant transition-colors hover:bg-error-container hover:text-on-error-container"
-          >
-            <Icon name="logout" className="h-4 w-4" />
-            Keluar
-          </button>
-        </header>
+    <div style={{ maxWidth: "840px", margin: "0 auto" }}>
+      <header style={{ marginBottom: "1.5rem" }}>
+        <h1 style={{ fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>Pilih peran Anda</h1>
+        <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          Masuk sebagai <strong style={{ color: "var(--text-main)" }}>{user?.email}</strong> — {user?.full_name}. Pilih peran untuk membuka dashboard.
+        </p>
+      </header>
 
-        <div className="mb-8 mt-6 text-center">
-          <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
-            Pilih peran Anda
-          </h1>
-          <p className="mt-1.5 text-sm text-on-surface-variant">
-            Masuk sebagai <span className="font-medium text-on-surface">{user?.email}</span> —{" "}
-            {user?.full_name}. Pilih peran untuk membuka dashboard.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {options.map((opt) => {
-            const meta = META[opt.key] ?? META.GENERAL;
-            return (
-              <button
-                key={opt.key}
-                onClick={() => enter(opt.key)}
-                className="glass-tier-2 group flex flex-col rounded-xl p-6 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-fixed-dim"
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px" }}>
+        {computeOptions().map((opt) => {
+          const meta = META[opt.key] ?? META.GENERAL;
+          const Icon = meta.icon;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => enter(opt.key)}
+              className="glass-card animate-fade-in"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                textAlign: "left",
+                padding: "1.25rem",
+                borderRadius: "var(--radius-lg)",
+                cursor: "pointer",
+              }}
+            >
+              <div
+                style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "var(--radius-md)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "rgba(99, 102, 241, 0.15)",
+                  color: "var(--primary)",
+                }}
               >
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-fixed/60 text-primary transition-colors group-hover:bg-primary text-on-primary">
-                  <Icon name={meta.icon} className="h-6 w-6" />
+                <Icon size={26} />
+              </div>
+              <h2 style={{ fontSize: "1.05rem", fontWeight: 700, margin: "0.75rem 0 0.2rem" }}>{meta.label}</h2>
+              <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: 0 }}>{meta.desc}</p>
+              {opt.subjects.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "0.6rem" }}>
+                  {opt.subjects.map((s) => (
+                    <span key={s} className="badge badge-role">{s}</span>
+                  ))}
                 </div>
-                <h2 className="mt-4 font-display text-lg font-bold text-on-surface">
-                  {meta.label}
-                </h2>
-                <p className="mt-1 text-xs text-on-surface-variant">{meta.desc}</p>
-                {opt.subjects.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {opt.subjects.map((s) => (
-                      <span
-                        key={s}
-                        className="rounded bg-surface-container-high px-2 py-0.5 text-[11px] font-medium text-secondary"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-primary">
-                  Masuk
-                  <Icon
-                    name="arrow_forward"
-                    className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
-                  />
-                </span>
-              </button>
-            );
-          })}
-        </div>
+              )}
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "0.85rem",
+                  fontWeight: 600,
+                  color: "var(--primary)",
+                  marginTop: "0.9rem",
+                }}
+              >
+                Masuk
+                <ArrowRight size={16} />
+              </span>
+            </button>
+          );
+        })}
       </div>
-    </main>
+    </div>
   );
 }
