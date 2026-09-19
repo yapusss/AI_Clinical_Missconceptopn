@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 dhon-folder/
+
+# local dev artifacts (never commit)
+backend/venv/
+backend/db.sqlite3
