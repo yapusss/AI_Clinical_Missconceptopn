@@ -79,8 +79,19 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const appRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
   const items = MENU_ITEMS.filter((item) => item.roles.includes(appRole));
 
-  const isActive = (path: string) =>
-    path.startsWith("/dashboard") ? pathname.startsWith("/dashboard") : pathname === path;
+  const currentSearch = typeof window === "undefined" ? "" : window.location.search;
+
+  const isActive = (path: string) => {
+    if (path === "/dashboard") {
+      const hasView = new URLSearchParams(currentSearch).has("view");
+      return pathname.startsWith("/dashboard") && !hasView;
+    }
+    if (path.startsWith("/dashboard?")) {
+      const target = new URLSearchParams(path.split("?")[1]).get("view");
+      return new URLSearchParams(currentSearch).get("view") === target;
+    }
+    return pathname === path;
+  };
 
   const handleLogout = () => {
     setMobileNavOpen(false);
