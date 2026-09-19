@@ -41,7 +41,11 @@ export default function SelectRolePage() {
   }
 
   return (
-    <div style={{ maxWidth: "840px", margin: "0 auto" }}>
+    <div
+      className="app-shell"
+      style={{ minHeight: "100vh", background: "var(--bg-main)", flexDirection: "column" }}
+    >
+      <div style={{ width: "100%", maxWidth: "840px", padding: "3rem 1.25rem", margin: "0 auto" }}>
       <header style={{ marginBottom: "1.5rem" }}>
         <h1 style={{ fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>Pilih peran Anda</h1>
         <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
@@ -109,6 +113,7 @@ export default function SelectRolePage() {
             </button>
           );
         })}
+        </div>
       </div>
     </div>
   );

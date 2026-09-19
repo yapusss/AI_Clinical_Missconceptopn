@@ -60,7 +60,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
 
-  const isPublic = pathname === "/" || pathname === "/login";
+  const isPublic = pathname === "/" || pathname === "/login" || pathname === "/select-role";
 
   if (isPublic) {
     return <>{children}</>;
