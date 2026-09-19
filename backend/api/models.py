@@ -1,6 +1,5 @@
 import uuid
 
-from django.contrib.auth.hashers import make_password
 from django.db import models
 
 
@@ -76,10 +75,25 @@ class UserSubjectRole(models.Model):
         return f'{self.user.email}:{self.role}@{self.subject.slug}'
 
 
+class Topic(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'topics'
+        managed = False
+
+    def __str__(self):
+        return self.name
+
+
 class QuestionSet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
-    topic_id = models.UUIDField(null=True, blank=True)
+    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, db_column='topic_id', null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='created_by')
     code = models.CharField(max_length=64)
     title = models.CharField(max_length=255)
@@ -90,6 +104,49 @@ class QuestionSet(models.Model):
 
     class Meta:
         db_table = 'question_sets'
+        managed = False
+
+    def __str__(self):
+        return f'[{self.code}] {self.title}'
+
+
+class Question(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question_set = models.ForeignKey(QuestionSet, on_delete=models.CASCADE, db_column='question_set_id', related_name='questions')
+    order_index = models.IntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'questions'
+        managed = False
+
+
+class QuestionVersion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, db_column='question_id', related_name='versions')
+    version_number = models.IntegerField(default=1)
+    prompt = models.TextField()
+    model_answer = models.TextField()
+    is_published = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='created_by')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'question_versions'
+        managed = False
+
+
+class ConceptIndicator(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question_version = models.ForeignKey(QuestionVersion, on_delete=models.CASCADE, db_column='question_version_id', related_name='indicators')
+    label = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    weight = models.DecimalField(max_digits=5, decimal_places=4)
+    order_index = models.IntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'concept_indicators'
         managed = False
 
 

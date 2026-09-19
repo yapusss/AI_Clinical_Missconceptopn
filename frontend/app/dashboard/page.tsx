@@ -15,6 +15,7 @@ type Role = {
 };
 
 type SubjectSummary = {
+  id: string;
   slug: string;
   name: string;
 };
@@ -32,6 +33,12 @@ type Card = {
   label: string;
   value: unknown;
   format?: (v: unknown) => string;
+};
+
+type QuickAction = {
+  icon: IconName;
+  label: string;
+  onClick?: () => void;
 };
 
 const ROLE_META: Record<string, { label: string; icon: IconName; desc: string }> = {
@@ -155,13 +162,27 @@ export default function DashboardPage() {
     }
   })();
 
-  const quickActions =
+  const quickActions: QuickAction[] =
     primaryRole === "STUDENT"
-      ? [{ icon: "assignment" as IconName, label: "Kerjakan evaluasi baru" }]
+      ? [
+          {
+            icon: "assignment",
+            label: "Kerjakan evaluasi baru",
+            onClick: () => router.push("/questions"),
+          },
+        ]
       : primaryRole === "LECTURER"
         ? [
-            { icon: "add" as IconName, label: "Buat bank soal baru" },
-            { icon: "verified" as IconName, label: "Tinjau validasi" },
+            {
+              icon: "add",
+              label: "Buat bank soal baru",
+              onClick: () => router.push("/questions"),
+            },
+            {
+              icon: "verified",
+              label: "Tinjau validasi",
+              onClick: () => setNotice("Modul Validasi akan aktif pada fase berikutnya."),
+            },
           ]
         : primaryRole === "ADMIN"
           ? [
@@ -177,11 +198,15 @@ export default function DashboardPage() {
       router.replace(`/dashboard?role=${primaryRole}`);
       return;
     }
+    if (item === "questions") {
+      router.push("/questions");
+      return;
+    }
     if (item === "profile") {
       router.push("/profile");
       return;
     }
-    setNotice(`${item === "questions" ? "Modul Soal" : "Settings"} akan segera tersedia.`);
+    setNotice("Settings akan segera tersedia.");
   };
 
   return (
@@ -196,117 +221,121 @@ export default function DashboardPage() {
       <div className="min-h-screen lg:pl-72">
         <div className="mx-auto w-full max-w-6xl px-6">
           <header className="flex items-center justify-between py-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
-              <Icon name="school" className="h-6 w-6" />
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-primary shadow-sm">
+                <Icon name="school" className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="font-display text-lg font-bold tracking-tight text-primary">
+                  EvalAI Academic
+                </p>
+                <p className="text-xs text-on-surface-variant">
+                  Dashboard — {meta.label}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="font-display text-lg font-bold tracking-tight text-primary">
-                EvalAI Academic
-              </p>
-              <p className="text-xs text-on-surface-variant">
-                Dashboard — {meta.label}
-              </p>
+            <div className="flex items-center gap-3">
+              <span className="hidden rounded-full border border-outline-variant/30 bg-surface-container-lowest/80 px-3 py-1.5 text-xs font-medium text-on-surface sm:inline">
+                {user.full_name}
+              </span>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="hidden rounded-full border border-outline-variant/30 bg-surface-container-lowest/80 px-3 py-1.5 text-xs font-medium text-on-surface sm:inline">
-              {user.full_name}
-            </span>
-          </div>
           </header>
 
-        <div className="mb-6 flex items-center gap-2">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-fixed/60 text-primary">
-            <Icon name={meta.icon} className="h-6 w-6" />
+          <div className="mb-6 flex items-center gap-2">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-fixed/60 text-primary">
+              <Icon name={meta.icon} className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
+                {meta.label}
+              </h1>
+              <p className="text-sm text-on-surface-variant">{meta.desc}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
-              {meta.label}
-            </h1>
-            <p className="text-sm text-on-surface-variant">{meta.desc}</p>
+
+          {error && (
+            <div
+              role="alert"
+              className="mb-6 rounded-lg border border-error/40 bg-error-container px-3.5 py-2.5 text-sm text-on-error-container"
+            >
+              {error}
+            </div>
+          )}
+
+          {notice && (
+            <div
+              role="status"
+              className="mb-6 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 px-3.5 py-2.5 text-sm text-primary"
+            >
+              {notice}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {cards.map((card) => (
+              <StatCard
+                key={card.label}
+                icon={card.icon}
+                label={card.label}
+                value={card.format ? card.format(card.value) : card.value}
+              />
+            ))}
           </div>
-        </div>
 
-        {error && (
-          <div
-            role="alert"
-            className="mb-6 rounded-lg border border-error/40 bg-error-container px-3.5 py-2.5 text-sm text-on-error-container"
-          >
-            {error}
-          </div>
-        )}
-
-        {notice && (
-          <div
-            role="status"
-            className="mb-6 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 px-3.5 py-2.5 text-sm text-primary"
-          >
-            {notice}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {cards.map((card) => (
-            <StatCard
-              key={card.label}
-              icon={card.icon}
-              label={card.label}
-              value={card.format ? card.format(card.value) : card.value}
-            />
-          ))}
-        </div>
-
-        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <section className="glass-tier-2 rounded-xl p-6">
-            <h2 className="font-display text-lg font-bold text-on-surface">
-              Aksi cepat
-            </h2>
-            <ul className="mt-4 space-y-2">
-              {quickActions.map((action) => (
-                <li key={action.label}>
-                  <button className="flex w-full items-center gap-3 rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-3 text-sm font-medium text-on-surface transition-colors hover:border-primary-fixed-dim hover:bg-primary-fixed/30">
-                    <Icon name={action.icon} className="h-5 w-5 text-primary" />
-                    {action.label}
-                  </button>
-                </li>
-              ))}
-              {quickActions.length === 0 && (
-                <li className="text-sm text-on-surface-variant">
-                  Tidak ada aksi khusus untuk peran ini.
-                </li>
-              )}
-            </ul>
-          </section>
-
-          <section className="glass-tier-2 rounded-xl p-6">
-            <h2 className="font-display text-lg font-bold text-on-surface">
-              Mata kuliah saya
-            </h2>
-            {mySubjects.length > 0 ? (
+          <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <section className="glass-tier-2 rounded-xl p-6">
+              <h2 className="font-display text-lg font-bold text-on-surface">
+                Aksi cepat
+              </h2>
               <ul className="mt-4 space-y-2">
-                {mySubjects.map((s) => (
-                  <li
-                    key={s.slug}
-                    className="flex items-center justify-between rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-3"
-                  >
-                    <span className="text-sm font-medium text-on-surface">
-                      {s.name}
-                    </span>
-                    <span className="rounded bg-surface-container-high px-2 py-0.5 font-mono-ui text-[11px] uppercase text-secondary">
-                      Mata kuliah
-                    </span>
+                {quickActions.map((action) => (
+                  <li key={action.label}>
+                    <button
+                      type="button"
+                      onClick={action.onClick}
+                      className="flex w-full items-center gap-3 rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-3 text-sm font-medium text-on-surface transition-colors hover:border-primary-fixed-dim hover:bg-primary-fixed/30"
+                    >
+                      <Icon name={action.icon} className="h-5 w-5 text-primary" />
+                      {action.label}
+                    </button>
                   </li>
                 ))}
+                {quickActions.length === 0 && (
+                  <li className="text-sm text-on-surface-variant">
+                    Tidak ada aksi khusus untuk peran ini.
+                  </li>
+                )}
               </ul>
-            ) : (
-              <p className="mt-4 text-sm text-on-surface-variant">
-                Belum ada mata kuliah yang ditautkan ke akun ini.
-              </p>
-            )}
-          </section>
+            </section>
+
+            <section className="glass-tier-2 rounded-xl p-6">
+              <h2 className="font-display text-lg font-bold text-on-surface">
+                Mata kuliah saya
+              </h2>
+              {mySubjects.length > 0 ? (
+                <ul className="mt-4 space-y-2">
+                  {mySubjects.map((s) => (
+                    <li
+                      key={s.slug}
+                      className="flex items-center justify-between rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-3"
+                    >
+                      <span className="text-sm font-medium text-on-surface">
+                        {s.name}
+                      </span>
+                      <span className="rounded bg-surface-container-high px-2 py-0.5 font-mono-ui text-[11px] uppercase text-secondary">
+                        Mata kuliah
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-sm text-on-surface-variant">
+                  Belum ada mata kuliah yang ditautkan ke akun ini.
+                </p>
+              )}
+            </section>
+          </div>
         </div>
-      </div>
       </div>
     </main>
   );
