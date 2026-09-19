@@ -37,7 +37,6 @@ type Card = {
 const ROLE_META: Record<string, { label: string; icon: IconName; desc: string }> = {
   ADMIN: { label: "Administrator", icon: "verified", desc: "Ikhtisar seluruh sistem." },
   LECTURER: { label: "Dosen", icon: "menu_book", desc: "Kelola soal dan validasi jawaban mahasiswa." },
-  RESEARCHER: { label: "Peneliti", icon: "bar_chart", desc: "Analisis miskonsepsi dan data asesmen." },
   STUDENT: { label: "Mahasiswa", icon: "school", desc: "Lembar evaluasi dan pemantauan penguasaan." },
   GENERAL: { label: "Akun Umum", icon: "dashboard", desc: "Ringkasan umum akun Anda." },
 };
@@ -144,12 +143,6 @@ export default function DashboardPage() {
           { icon: "school", label: "Pengumpulan mahasiswa", value: summary.subject_submissions },
           { icon: "verified", label: "Menunggu validasi", value: summary.pending_validations },
         ];
-      case "RESEARCHER":
-        return [
-          { icon: "error_outline", label: "Miskonsepsi", value: summary.research_misconceptions },
-          { icon: "bar_chart", label: "Analisis LLM", value: summary.research_analyses },
-          { icon: "verified", label: "Validasi", value: summary.research_validations },
-        ];
       default:
         return [
           {
@@ -170,14 +163,12 @@ export default function DashboardPage() {
             { icon: "add" as IconName, label: "Buat bank soal baru" },
             { icon: "verified" as IconName, label: "Tinjau validasi" },
           ]
-        : primaryRole === "RESEARCHER"
-          ? [{ icon: "bar_chart" as IconName, label: "Buka laporan analisis" }]
-          : primaryRole === "ADMIN"
-            ? [
-                { icon: "people" as IconName, label: "Kelola pengguna" },
-                { icon: "menu_book" as IconName, label: "Kelola mata kuliah" },
-              ]
-            : [];
+        : primaryRole === "ADMIN"
+          ? [
+              { icon: "people" as IconName, label: "Kelola pengguna" },
+              { icon: "menu_book" as IconName, label: "Kelola mata kuliah" },
+            ]
+          : [];
 
   const mySubjects = (summary.my_subjects as SubjectSummary[]) ?? [];
 

@@ -3,7 +3,7 @@
 import { Icon } from "./Icon";
 import type { IconName } from "./Icon";
 
-export type AppRole = "ADMIN" | "LECTURER" | "RESEARCHER" | "STUDENT" | "GENERAL";
+export type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 export type AppMenuId = "dashboard" | "questions" | "settings" | "profile";
 
 type MenuItem = {
@@ -13,7 +13,7 @@ type MenuItem = {
   roles: AppRole[];
 };
 
-const ALL_ROLES: AppRole[] = ["ADMIN", "LECTURER", "RESEARCHER", "STUDENT", "GENERAL"];
+const ALL_ROLES: AppRole[] = ["ADMIN", "LECTURER", "STUDENT", "GENERAL"];
 
 const MENU_ITEMS: MenuItem[] = [
   {
@@ -32,7 +32,7 @@ const MENU_ITEMS: MenuItem[] = [
     id: "settings",
     label: "Settings",
     icon: "settings",
-    roles: ["ADMIN", "RESEARCHER"],
+    roles: ["ADMIN"],
   },
   {
     id: "profile",
@@ -45,7 +45,6 @@ const MENU_ITEMS: MenuItem[] = [
 const ROLE_LABEL: Record<AppRole, string> = {
   ADMIN: "Administrator",
   LECTURER: "Dosen",
-  RESEARCHER: "Peneliti",
   STUDENT: "Mahasiswa",
   GENERAL: "Akun umum",
 };

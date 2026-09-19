@@ -10,7 +10,6 @@ import type { IconName } from "../components/Icon";
 const META: Record<string, { label: string; icon: IconName; desc: string }> = {
   ADMIN: { label: "Administrator", icon: "verified", desc: "Kelola seluruh sistem." },
   LECTURER: { label: "Dosen", icon: "menu_book", desc: "Kelola bank soal dan validasi jawaban." },
-  RESEARCHER: { label: "Peneliti", icon: "bar_chart", desc: "Analisis miskonsepsi dan data asesmen." },
   STUDENT: { label: "Mahasiswa", icon: "school", desc: "Lembar evaluasi dan latihan." },
   GENERAL: { label: "Akun Umum", icon: "dashboard", desc: "Tampilan umum tanpa peran khusus." },
 };

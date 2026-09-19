@@ -59,7 +59,6 @@ class Subject(models.Model):
 class UserSubjectRole(models.Model):
     class Role(models.TextChoices):
         LECTURER = 'LECTURER'
-        RESEARCHER = 'RESEARCHER'
         STUDENT = 'STUDENT'
 
     id = models.BigAutoField(primary_key=True)

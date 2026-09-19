@@ -15,7 +15,6 @@ ACCOUNTS = [
     ('demo@acm.local', 'Demo User', False, None),
     ('admin@acm.local', 'Admin User', True, None),
     ('lecturer@acm.local', 'Lecturer Demo', False, 'LECTURER'),
-    ('researcher@acm.local', 'Researcher Demo', False, 'RESEARCHER'),
     ('student@acm.local', 'Student Demo', False, 'STUDENT'),
 ]
 
@@ -52,6 +51,10 @@ class Command(BaseCommand):
                         user=user, subject=subject, role=role,
                     )
                 self.stdout.write(f'roles ensured: {email} -> {role}')
+
+        removed = UserSubjectRole.objects.filter(role='RESEARCHER').delete()
+        User.objects.filter(email='researcher@acm.local').delete()
+        self.stdout.write(f'researcher role cleaned (rows removed: {removed[0]})')
 
         admin_created = self.ensure_django_admin()
         if admin_created:

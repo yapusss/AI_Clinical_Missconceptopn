@@ -126,13 +126,6 @@ class DashboardView(APIView):
                 ).count(),
             })
 
-        if 'RESEARCHER' in role_set or user.is_superuser:
-            summary.update({
-                'research_misconceptions': Misconception.objects.count(),
-                'research_analyses': LlmAnalysis.objects.count(),
-                'research_validations': Validation.objects.count(),
-            })
-
         return Response({
             'roles': roles,
             'is_superuser': user.is_superuser,

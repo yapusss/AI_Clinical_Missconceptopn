@@ -12,7 +12,6 @@ import { Icon } from "../components/Icon";
 const ROLE_LABEL: Record<string, string> = {
   ADMIN: "Administrator",
   LECTURER: "Dosen",
-  RESEARCHER: "Peneliti",
   STUDENT: "Mahasiswa",
   GENERAL: "Akun Umum",
 };
