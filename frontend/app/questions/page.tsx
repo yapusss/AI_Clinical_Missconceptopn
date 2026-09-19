@@ -292,9 +292,10 @@ export default function QuestionsPage() {
                 resetForm();
                 setShowModal(true);
               }}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary-container focus-visible:ring-2 focus-visible:ring-primary/40"
+              style={{ color: "#ffffff" }}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold shadow-sm transition-colors hover:bg-primary-container focus-visible:ring-2 focus-visible:ring-primary/40"
             >
-              <Plus size={20} />
+              <Plus size={20} color="#ffffff" />
               Tambah Soal Baru
             </button>
           </div>
@@ -583,7 +584,8 @@ export default function QuestionsPage() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-on-primary hover:bg-primary-container disabled:opacity-50"
+                  style={{ color: "#ffffff" }}
+                  className="rounded-lg bg-primary px-5 py-2 text-sm font-semibold hover:bg-primary-container disabled:opacity-50"
                 >
                   {submitting ? "Menyimpan..." : isEditing ? "Perbarui Soal" : "Simpan Soal"}
                 </button>
