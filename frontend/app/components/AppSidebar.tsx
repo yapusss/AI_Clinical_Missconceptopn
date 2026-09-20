@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -36,7 +36,6 @@ const ROLE_LABEL: Record<AppRole, string> = {
 
 const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
-<<<<<<< HEAD
   { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
   { label: "Jawaban Mahasiswa", path: "/submissions", icon: ClipboardList, roles: ["ADMIN", "LECTURER"] },
@@ -53,7 +52,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const pathname = usePathname();
   const router = useRouter();
   // Must start false on the server AND on the first client render (hydration),
-  // then flip in an effect — see React's two-pass pattern. Diverging here causes
+  // then flip in an effect â€” see React's two-pass pattern. Diverging here causes
   // a hydration mismatch and a client-side re-render of the whole shell.
   const [mounted, setMounted] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
