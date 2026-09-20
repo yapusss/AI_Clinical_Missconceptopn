@@ -7,6 +7,7 @@ from .views import (
     MeView,
     QuestionDetailView,
     QuestionListCreateView,
+    QuestionSetPublishView,
     QuestionPublishView,
     QuestionToggleActiveView,
     RegisterView,
@@ -28,6 +29,7 @@ urlpatterns = [
     path('questions', QuestionListCreateView.as_view(), name='question-list-create'),
     path('questions/<uuid:pk>', QuestionDetailView.as_view(), name='question-detail'),
     path('questions/<uuid:pk>/toggle-active', QuestionToggleActiveView.as_view(), name='question-toggle-active'),
+    path('questions/<uuid:pk>/publish', QuestionSetPublishView.as_view(), name='question-set-publish'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
 
     # Sprint 3 Student Endpoints (UC-01 / P3)

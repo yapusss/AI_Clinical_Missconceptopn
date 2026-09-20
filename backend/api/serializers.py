@@ -73,8 +73,8 @@ class ConceptIndicatorSerializer(serializers.Serializer):
 class QuestionVersionSerializer(serializers.Serializer):
     id = serializers.UUIDField(read_only=True)
     version_number = serializers.IntegerField(read_only=True)
-    prompt = serializers.CharField()
-    model_answer = serializers.CharField()
+    prompt = serializers.CharField(required=False, default='')
+    model_answer = serializers.CharField(required=False, default='')
     is_published = serializers.BooleanField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
@@ -89,6 +89,7 @@ class QuestionSetCreateSerializer(serializers.Serializer):
     prompt = serializers.CharField()
     model_answer = serializers.CharField()
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
+    questions = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     publish = serializers.BooleanField(default=False)
 
     def validate_code(self, value):
@@ -100,7 +101,29 @@ class QuestionSetCreateSerializer(serializers.Serializer):
         return val
 
     def validate(self, attrs):
+        questions = attrs.get('questions') or []
+        if questions:
+            for index, question in enumerate(questions, start=1):
+                if not str(question.get('prompt', '')).strip():
+                    raise serializers.ValidationError({'questions': f'Pertanyaan ke-{index} wajib diisi.'})
+                if not str(question.get('model_answer', '')).strip():
+                    raise serializers.ValidationError({'questions': f'Jawaban referensi pertanyaan ke-{index} wajib diisi.'})
+                indicators = question.get('indicators') or []
+                if attrs.get('publish') and not indicators:
+                    raise serializers.ValidationError({'questions': f'Pertanyaan ke-{index} wajib memiliki indikator.'})
+                if attrs.get('publish'):
+                    total_weight = sum(Decimal(str(i['weight'])) for i in indicators)
+                    if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
+                        raise serializers.ValidationError({
+                            'questions': f'Total bobot indikator pertanyaan ke-{index} harus 1.0000.'
+                        })
+            return attrs
+
         indicators = attrs.get('indicators', [])
+        if not str(attrs.get('prompt', '')).strip():
+            raise serializers.ValidationError({'prompt': 'Pertanyaan wajib diisi.'})
+        if not str(attrs.get('model_answer', '')).strip():
+            raise serializers.ValidationError({'model_answer': 'Jawaban referensi wajib diisi.'})
         publish = attrs.get('publish', False)
 
         if indicators:

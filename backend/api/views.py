@@ -1,7 +1,7 @@
 ﻿import uuid
 from decimal import Decimal
 from django.db import connection, transaction
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Q, Sum
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -185,17 +185,19 @@ class QuestionListCreateView(APIView):
 
         results = []
         for item in qs:
-            first_q = Question.objects.filter(question_set=item).order_by('order_index').first()
-            version_data = None
-            if first_q:
-                v = QuestionVersion.objects.filter(question=first_q).order_by('-version_number').first()
+            set_questions = list(Question.objects.filter(question_set=item).order_by('order_index'))
+            version_data = []
+            for question in set_questions:
+                v = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
                 if v:
-                    version_data = {
+                    version_data.append({
                         'id': str(v.id),
+                        'question_id': str(question.id),
+                        'order_index': question.order_index,
                         'version_number': v.version_number,
                         'prompt_preview': v.prompt[:160] + ('...' if len(v.prompt) > 160 else ''),
                         'is_published': v.is_published,
-                    }
+                    })
 
             results.append({
                 'id': str(item.id),
@@ -207,7 +209,9 @@ class QuestionListCreateView(APIView):
                 'is_active': item.is_active,
                 'created_by_name': item.created_by.full_name,
                 'created_at': item.created_at,
-                'latest_version': version_data,
+                'question_count': len(set_questions),
+                'latest_versions': version_data,
+                'latest_version': version_data[0] if version_data else None,
             })
 
         return Response(results)
@@ -243,44 +247,40 @@ class QuestionListCreateView(APIView):
                 is_active=True,
             )
 
-            q = Question.objects.create(
-                id=uuid.uuid4(),
-                question_set=q_set,
-                order_index=1,
-            )
-
-            qv = QuestionVersion.objects.create(
-                id=uuid.uuid4(),
-                question=q,
-                version_number=1,
-                prompt=data['prompt'],
-                model_answer=data['model_answer'],
-                is_published=False,
-                created_by=request.user,
-            )
-
-            indicators_data = data.get('indicators', [])
-            for idx, ind in enumerate(indicators_data, start=1):
-                ConceptIndicator.objects.create(
-                    id=uuid.uuid4(),
-                    question_version=qv,
-                    label=ind['label'],
-                    description=ind.get('description', ''),
-                    weight=ind['weight'],
-                    order_index=idx,   
+            question_payloads = data.get('questions') or [{
+                'prompt': data['prompt'],
+                'model_answer': data['model_answer'],
+                'indicators': data.get('indicators', []),
+            }]
+            created_versions = []
+            for order_index, question_data in enumerate(question_payloads, start=1):
+                q = Question.objects.create(id=uuid.uuid4(), question_set=q_set, order_index=order_index)
+                qv = QuestionVersion.objects.create(
+                    id=uuid.uuid4(), question=q, version_number=1,
+                    prompt=question_data['prompt'], model_answer=question_data['model_answer'],
+                    is_published=False, created_by=request.user,
                 )
+                for indicator_index, ind in enumerate(question_data.get('indicators', []), start=1):
+                    ConceptIndicator.objects.create(
+                        id=uuid.uuid4(), question_version=qv,
+                        label=ind['label'], description=ind.get('description', ''),
+                        weight=ind['weight'], order_index=indicator_index,
+                    )
+                created_versions.append(qv)
 
             if data.get('publish', False):
-                with connection.cursor() as cursor:
-                    cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(qv.id), str(request.user.id)])
-                qv.refresh_from_db()
+                for qv in created_versions:
+                    with connection.cursor() as cursor:
+                        cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(qv.id), str(request.user.id)])
+                    qv.refresh_from_db()
 
         return Response({
             'id': str(q_set.id),
             'code': q_set.code,
             'title': q_set.title,
-            'version_id': str(qv.id),
-            'is_published': qv.is_published,
+            'question_count': len(created_versions),
+            'version_ids': [str(version.id) for version in created_versions],
+            'is_published': all(version.is_published for version in created_versions),
             'is_active': q_set.is_active,
             'message': 'Soal berhasil disimpan.',
         }, status=status.HTTP_201_CREATED)
@@ -298,30 +298,34 @@ class QuestionDetailView(APIView):
         if not is_lecturer_for_subject(request.user, q_set.subject_id):
             return Response({'detail': 'Anda tidak berwenang mengakses soal ini.'}, status=status.HTTP_403_FORBIDDEN)
 
-        q = Question.objects.filter(question_set=q_set).order_by('order_index').first()
-        versions = []
-        if q:
-            all_v = QuestionVersion.objects.filter(question=q).order_by('-version_number')
-            for v in all_v:
-                inds = ConceptIndicator.objects.filter(question_version=v).order_by('order_index')
+        questions = []
+        for question in Question.objects.filter(question_set=q_set).order_by('order_index'):
+            versions = []
+            for version in QuestionVersion.objects.filter(question=question).order_by('-version_number'):
+                indicators = ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
                 versions.append({
-                    'id': str(v.id),
-                    'version_number': v.version_number,
-                    'prompt': v.prompt,
-                    'model_answer': v.model_answer,
-                    'is_published': v.is_published,
-                    'created_at': v.created_at,
+                    'id': str(version.id),
+                    'version_number': version.version_number,
+                    'prompt': version.prompt,
+                    'model_answer': version.model_answer,
+                    'is_published': version.is_published,
+                    'created_at': version.created_at,
                     'indicators': [
                         {
-                            'id': str(i.id),
-                            'label': i.label,
-                            'description': i.description or '',
-                            'weight': str(i.weight),
-                            'order_index': i.order_index,
+                            'id': str(indicator.id),
+                            'label': indicator.label,
+                            'description': indicator.description or '',
+                            'weight': str(indicator.weight),
+                            'order_index': indicator.order_index,
                         }
-                        for i in inds
-                    ]
+                        for indicator in indicators
+                    ],
                 })
+            questions.append({
+                'id': str(question.id),
+                'order_index': question.order_index,
+                'versions': versions,
+            })
 
         return Response({
             'id': str(q_set.id),
@@ -332,7 +336,7 @@ class QuestionDetailView(APIView):
             'subject_name': q_set.subject.name,
             'is_active': q_set.is_active,
             'created_at': q_set.created_at,
-            'versions': versions,
+            'questions': questions,
         })
 
     def put(self, request, pk):
@@ -432,6 +436,50 @@ class QuestionToggleActiveView(APIView):
             'id': str(q_set.id),
             'is_active': q_set.is_active,
             'message': f'Soal berhasil {status_text}.'
+        })
+
+
+class QuestionSetPublishView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request, pk):
+        try:
+            q_set = QuestionSet.objects.get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang menerbitkan paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        questions = list(Question.objects.filter(question_set=q_set).order_by('order_index'))
+        if not questions:
+            return Response({'detail': 'Paket harus memiliki minimal satu pertanyaan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        versions = []
+        for question in questions:
+            version = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
+            if not version:
+                return Response({'detail': f'Pertanyaan ke-{question.order_index} belum memiliki versi.'}, status=status.HTTP_400_BAD_REQUEST)
+            total_weight = ConceptIndicator.objects.filter(question_version=version).aggregate(total=Sum('weight'))['total'] or Decimal('0')
+            if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
+                return Response({'detail': f'Bobot indikator pertanyaan ke-{question.order_index} harus tepat 1.0000.'}, status=status.HTTP_400_BAD_REQUEST)
+            versions.append(version)
+
+        try:
+            with transaction.atomic():
+                for version in versions:
+                    if not version.is_published:
+                        with connection.cursor() as cursor:
+                            cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(version.id), str(request.user.id)])
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'id': str(q_set.id),
+            'code': q_set.code,
+            'question_count': len(versions),
+            'is_published': True,
+            'message': 'Paket ujian berhasil diterbitkan.',
         })
 
 
