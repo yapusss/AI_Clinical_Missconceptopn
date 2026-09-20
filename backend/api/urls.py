@@ -8,6 +8,9 @@ from .views import (
     QuestionDetailView,
     QuestionListCreateView,
     QuestionSetPublishView,
+    QuestionImportCommitView,
+    QuestionImportCreateView,
+    QuestionImportDetailView,
     QuestionPublishView,
     QuestionToggleActiveView,
     RegisterView,
@@ -30,6 +33,9 @@ urlpatterns = [
     path('questions/<uuid:pk>', QuestionDetailView.as_view(), name='question-detail'),
     path('questions/<uuid:pk>/toggle-active', QuestionToggleActiveView.as_view(), name='question-toggle-active'),
     path('questions/<uuid:pk>/publish', QuestionSetPublishView.as_view(), name='question-set-publish'),
+    path('question-imports', QuestionImportCreateView.as_view(), name='question-import-create'),
+    path('question-imports/<uuid:pk>', QuestionImportDetailView.as_view(), name='question-import-detail'),
+    path('question-imports/<uuid:pk>/commit', QuestionImportCommitView.as_view(), name='question-import-commit'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
 
     # Sprint 3 Student Endpoints (UC-01 / P3)

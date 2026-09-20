@@ -1,0 +1,3 @@
+question_key,order_index,prompt,reference_answer,answer_key,indicators
+NEWTON-001,1,"Sebuah lift dipercepat ke atas. Bandingkan gaya normal dan gaya berat.","Gaya normal lebih besar dari gaya berat karena N = m(g+a).",ANS-NEWTON-001,"Hubungan gaya dan percepatan:0.5000|Perbedaan gaya normal dan berat:0.5000"
+NEWTON-002,2,"Mengapa balok diam di bidang miring kasar?","Gaya gesek statis menyeimbangkan komponen gaya berat sejajar bidang.",ANS-NEWTON-002,"Gaya gesek statis:0.6000|Resultan gaya:0.4000"

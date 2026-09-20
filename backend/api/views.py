@@ -1,9 +1,14 @@
-﻿import uuid
+﻿import csv
+import io
+import json
+import uuid
 from decimal import Decimal
 from django.db import connection, transaction
 from django.db.models import Avg, Count, Q, Sum
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
 
 from .authentication import TokenAuthentication
@@ -15,6 +20,9 @@ from .models import (
     Question,             
     QuestionSet,
     QuestionVersion,      
+    ImportJob,
+    ImportRow,
+    ReferenceAnswer,
     Subject,
     Submission,
     Topic,                
@@ -161,6 +169,205 @@ def is_lecturer_for_subject(user, subject_id):
     return UserSubjectRole.objects.filter(
         user=user, subject_id=subject_id, role=UserSubjectRole.Role.LECTURER
     ).exists()
+
+
+IMPORT_REQUIRED_COLUMNS = {'question_key', 'order_index', 'prompt', 'reference_answer'}
+
+
+def _parse_import_indicators(raw_value):
+    if not raw_value.strip():
+        return [{'label': 'Konsep utama', 'description': '', 'weight': Decimal('1.0000')}]
+    indicators = []
+    for item in raw_value.split('|'):
+        label, separator, weight = item.partition(':')
+        if not separator:
+            raise ValueError('Format indikator harus label:bobot|label:bobot.')
+        try:
+            parsed_weight = Decimal(weight.strip())
+        except Exception as exc:
+            raise ValueError(f'Bobot indikator tidak valid: {weight}.') from exc
+        if not label.strip() or parsed_weight <= 0 or parsed_weight > 1:
+            raise ValueError('Label indikator wajib diisi dan bobot harus antara 0 dan 1.')
+        indicators.append({'label': label.strip(), 'description': '', 'weight': parsed_weight})
+    if abs(sum(item['weight'] for item in indicators) - Decimal('1.0000')) > Decimal('0.0001'):
+        raise ValueError('Total bobot indikator harus tepat 1.0000.')
+    return indicators
+
+
+def _read_question_import(upload):
+    if not upload:
+        raise ValueError('File CSV wajib diunggah.')
+    if upload.size > 10 * 1024 * 1024:
+        raise ValueError('Ukuran file maksimal 10 MB.')
+    try:
+        text = upload.read().decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise ValueError('File harus menggunakan encoding UTF-8.') from exc
+    reader = csv.DictReader(io.StringIO(text))
+    headers = {header.strip() for header in (reader.fieldnames or []) if header}
+    missing = sorted(IMPORT_REQUIRED_COLUMNS - headers)
+    if missing:
+        raise ValueError(f'Kolom wajib tidak ditemukan: {", ".join(missing)}.')
+
+    rows = []
+    for row_number, raw in enumerate(reader, start=2):
+        normalized = {str(key).strip(): (value or '').strip() for key, value in raw.items() if key}
+        errors = []
+        key = normalized.get('question_key', '')
+        if not key:
+            errors.append('question_key wajib diisi.')
+        if not normalized.get('prompt'):
+            errors.append('prompt wajib diisi.')
+        if not normalized.get('reference_answer'):
+            errors.append('reference_answer wajib diisi.')
+        try:
+            order_index = int(normalized.get('order_index', ''))
+            if order_index < 1:
+                raise ValueError
+        except ValueError:
+            order_index = 0
+            errors.append('order_index harus berupa bilangan bulat positif.')
+        try:
+            indicators = _parse_import_indicators(normalized.get('indicators', ''))
+        except ValueError as exc:
+            indicators = []
+            errors.append(str(exc))
+        rows.append({
+            'row_number': row_number,
+            'question_key': key or None,
+            'raw_data': normalized,
+            'status': 'INVALID' if errors else 'VALID',
+            'errors': errors,
+            'order_index': order_index,
+            'indicators': indicators,
+        })
+
+    seen_keys = set()
+    seen_orders = set()
+    for row in rows:
+        if row['question_key'] and row['question_key'] in seen_keys:
+            row['status'] = 'INVALID'
+            row['errors'].append('question_key duplikat dalam file.')
+        if row['question_key']:
+            seen_keys.add(row['question_key'])
+        if row['order_index'] in seen_orders and row['order_index'] > 0:
+            row['status'] = 'INVALID'
+            row['errors'].append('order_index duplikat dalam file.')
+        if row['order_index'] > 0:
+            seen_orders.add(row['order_index'])
+    return rows
+
+
+class QuestionImportCreateView(APIView):
+    authentication_classes = [TokenAuthentication]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        subject_id = request.data.get('subject_id')
+        try:
+            subject = Subject.objects.get(pk=subject_id)
+        except (Subject.DoesNotExist, ValueError, TypeError):
+            return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not is_lecturer_for_subject(request.user, subject.id):
+            return Response({'detail': 'Anda tidak berwenang mengimpor soal untuk mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        code = (request.data.get('code') or '').strip().upper()
+        title = (request.data.get('title') or '').strip()
+        if not code or not title:
+            return Response({'detail': 'code dan title wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        if QuestionSet.objects.filter(code__iexact=code).exists():
+            return Response({'detail': 'Kode paket sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            parsed_rows = _read_question_import(request.FILES.get('file'))
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        errors = [
+            {'row': row['row_number'], 'question_key': row['question_key'], 'messages': row['errors']}
+            for row in parsed_rows if row['status'] == 'INVALID'
+        ]
+        job = ImportJob.objects.create(
+            id=uuid.uuid4(), subject=subject, requested_by=request.user,
+            file_name=request.FILES['file'].name, package_code=code,
+            package_title=title, package_description=request.data.get('description', ''),
+            status='READY_TO_IMPORT' if not errors and parsed_rows else 'VALIDATION_FAILED',
+            total_rows=len(parsed_rows), valid_rows=len(parsed_rows) - len(errors),
+            invalid_rows=len(errors), error_summary=errors,
+        )
+        ImportRow.objects.bulk_create([
+            ImportRow(import_job=job, row_number=row['row_number'], question_key=row['question_key'], raw_data=row['raw_data'], status=row['status'], errors=row['errors'])
+            for row in parsed_rows
+        ])
+        return Response({
+            'import_id': str(job.id), 'status': job.status,
+            'total_rows': job.total_rows, 'valid_rows': job.valid_rows,
+            'invalid_rows': job.invalid_rows, 'errors': errors,
+        }, status=status.HTTP_201_CREATED)
+
+
+class QuestionImportDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request, pk):
+        try:
+            job = ImportJob.objects.select_related('subject').get(pk=pk, requested_by=request.user)
+        except ImportJob.DoesNotExist:
+            return Response({'detail': 'Import tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'import_id': str(job.id), 'status': job.status, 'code': job.package_code,
+            'title': job.package_title, 'total_rows': job.total_rows,
+            'valid_rows': job.valid_rows, 'invalid_rows': job.invalid_rows,
+            'errors': job.error_summary, 'rows': [
+                {'row_number': row.row_number, 'question_key': row.question_key, 'status': row.status, 'errors': row.errors}
+                for row in job.rows.order_by('row_number')
+            ],
+        })
+
+
+class QuestionImportCommitView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request, pk):
+        try:
+            job = ImportJob.objects.get(pk=pk, requested_by=request.user)
+        except ImportJob.DoesNotExist:
+            return Response({'detail': 'Import tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if job.status != 'READY_TO_IMPORT':
+            return Response({'detail': 'Import belum valid dan tidak dapat di-commit.'}, status=status.HTTP_400_BAD_REQUEST)
+        if QuestionSet.objects.filter(code__iexact=job.package_code).exists():
+            return Response({'detail': 'Kode paket sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            q_set = QuestionSet.objects.create(
+                id=uuid.uuid4(), subject=job.subject, created_by=request.user,
+                code=job.package_code, title=job.package_title,
+                description=job.package_description or '', is_active=True,
+            )
+            for row in job.rows.order_by('row_number'):
+                raw = row.raw_data
+                question = Question.objects.create(
+                    id=uuid.uuid4(), question_set=q_set,
+                    external_key=row.question_key, order_index=int(raw['order_index']),
+                )
+                version = QuestionVersion.objects.create(
+                    id=uuid.uuid4(), question=question, version_number=1,
+                    prompt=raw['prompt'], model_answer=raw['reference_answer'],
+                    is_published=False, created_by=request.user,
+                )
+                indicators = _parse_import_indicators(raw.get('indicators', ''))
+                ConceptIndicator.objects.bulk_create([
+                    ConceptIndicator(id=uuid.uuid4(), question_version=version, label=item['label'], description=item['description'], weight=item['weight'], order_index=index)
+                    for index, item in enumerate(indicators, start=1)
+                ])
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(), question_version=version,
+                    answer_key=raw.get('answer_key') or row.question_key,
+                    answer_text=raw['reference_answer'], answer_type='CANONICAL', is_primary=True,
+                )
+            job.status = 'IMPORTED'
+            job.completed_at = timezone.now()
+            job.save(update_fields=['status', 'completed_at'])
+        return Response({'question_set_id': str(q_set.id), 'code': q_set.code, 'question_count': job.valid_rows, 'status': job.status})
 
 
 class QuestionListCreateView(APIView):
@@ -310,6 +517,16 @@ class QuestionDetailView(APIView):
                     'model_answer': version.model_answer,
                     'is_published': version.is_published,
                     'created_at': version.created_at,
+                    'reference_answers': [
+                        {
+                            'id': str(reference.id),
+                            'answer_key': reference.answer_key,
+                            'answer_text': reference.answer_text,
+                            'answer_type': reference.answer_type,
+                            'is_primary': reference.is_primary,
+                        }
+                        for reference in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
+                    ],
                     'indicators': [
                         {
                             'id': str(indicator.id),
@@ -323,6 +540,7 @@ class QuestionDetailView(APIView):
                 })
             questions.append({
                 'id': str(question.id),
+                'external_key': question.external_key,
                 'order_index': question.order_index,
                 'versions': versions,
             })

@@ -7,6 +7,7 @@ import {
   Building2,
   ClipboardList,
   FileSearch,
+  CircleHelp,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -41,6 +42,7 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Jawaban Mahasiswa", path: "/submissions", icon: ClipboardList, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
+  { label: "Bantuan", path: "/help", icon: CircleHelp, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
 ];
 
 function toAppRole(role?: string): AppRole {
@@ -57,6 +59,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const [mounted, setMounted] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentSearch, setCurrentSearch] = useState("");
+  const [selectedRole, setSelectedRole] = useState<AppRole | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setMounted(true), 0);
@@ -69,6 +72,8 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     setCurrentSearch(window.location.search);
+    const storedRole = window.localStorage.getItem("selected_role");
+    if (storedRole) setSelectedRole(toAppRole(storedRole));
   }, [pathname]);
 
   const isPublic = pathname === "/" || pathname === "/login" || pathname === "/select-role";
@@ -87,7 +92,8 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
 
   if (!user) return null;
 
-  const appRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
+  const fallbackRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
+  const appRole = user.is_superuser ? "ADMIN" : selectedRole ?? fallbackRole;
   const items = MENU_ITEMS.filter((item) => item.roles.includes(appRole));
 
   // set by an effect (below) so the first client render matches the server
