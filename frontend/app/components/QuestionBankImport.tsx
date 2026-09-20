@@ -15,15 +15,16 @@ export default function QuestionBankImport({ subjects, token, onImported }: { su
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  function downloadTemplate() {
-    const csv = "question_key,order_index,prompt,reference_answer,answer_key,indicators\nNEWTON-001,1,\"Pertanyaan konseptual\",\"Jawaban referensi\",ANS-001,\"Konsep utama:1.0000\"\n";
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = "template-bank-soal.csv"; link.click(); URL.revokeObjectURL(url);
+  async function downloadTemplate() {
+    const response = await fetch("/api/question-import-template", { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) { setError("Template tidak dapat diunduh."); return; }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = "template-bank-soal.xlsx"; link.click(); URL.revokeObjectURL(url);
   }
 
   async function upload(event: React.FormEvent) {
     event.preventDefault();
-    if (!file) { setError("Pilih file CSV terlebih dahulu."); return; }
+    if (!file) { setError("Pilih file CSV atau Excel terlebih dahulu."); return; }
     setBusy(true); setError("");
     const body = new FormData(); body.append("subject_id", subjectId); body.append("code", code); body.append("title", title); body.append("description", description); body.append("file", file);
     try {
@@ -45,8 +46,8 @@ export default function QuestionBankImport({ subjects, token, onImported }: { su
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Commit import gagal."); } finally { setBusy(false); }
   }
 
-  return <section className="mt-8 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-lg font-bold text-on-surface">Import bank soal + bank jawaban</h2><p className="mt-1 text-xs text-on-surface-variant">Satu baris menghubungkan question_key, pertanyaan, dan reference_answer.</p></div><button type="button" onClick={downloadTemplate} className="btn-secondary text-xs">Unduh template CSV</button></div>
-    <form onSubmit={upload} className="mt-4 grid gap-3 sm:grid-cols-2"><select value={subjectId} onChange={(event) => setSubjectId(event.target.value)} required className="form-select"><option value="">Pilih mata kuliah</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} required placeholder="Kode paket" className="form-input" /><input value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="Judul paket" className="form-input sm:col-span-2" /><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Deskripsi atau instruksi" rows={2} className="form-input sm:col-span-2" /><input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required className="form-input sm:col-span-2" /><button type="submit" disabled={busy} className="btn-primary sm:col-span-2"><FileUp size={16} />{busy ? "Memproses..." : "Validasi file"}</button></form>
+  return <section className="mt-8 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-lg font-bold text-on-surface">Import bank soal + bank jawaban</h2><p className="mt-1 text-xs text-on-surface-variant">Nomor soal mencocokkan pertanyaan dan jawaban. ID teknis dibuat otomatis oleh sistem.</p></div><button type="button" onClick={() => void downloadTemplate()} className="btn-secondary text-xs">Unduh template Excel</button></div>
+    <form onSubmit={upload} className="mt-4 grid gap-3 sm:grid-cols-2"><select value={subjectId} onChange={(event) => setSubjectId(event.target.value)} required className="form-select"><option value="">Pilih mata kuliah</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} required placeholder="Kode paket" className="form-input" /><input value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="Judul paket" className="form-input sm:col-span-2" /><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Deskripsi atau instruksi" rows={2} className="form-input sm:col-span-2" /><input type="file" accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required className="form-input sm:col-span-2" /><button type="submit" disabled={busy} className="btn-primary sm:col-span-2"><FileUp size={16} />{busy ? "Memproses..." : "Validasi file"}</button></form>
     {error && <div role="alert" className="mt-4 flex gap-2 rounded-lg border border-error/40 bg-error-container p-3 text-xs text-on-error-container"><TriangleAlert size={16} />{error}</div>}
     {job && <div className="mt-4 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-4"><div className="flex flex-wrap gap-3 text-xs text-on-surface"><span>Total: <b>{job.total_rows}</b></span><span>Valid: <b className="text-tertiary">{job.valid_rows}</b></span><span>Error: <b className="text-error">{job.invalid_rows}</b></span></div>{job.errors.length > 0 && <ul className="mt-3 space-y-1 text-xs text-error">{job.errors.slice(0, 8).map((item) => <li key={item.row}>Baris {item.row}: {item.messages.join(" ")}</li>)}</ul>}{job.status === "READY_TO_IMPORT" ? <button type="button" onClick={() => void commit()} disabled={busy} className="btn-primary mt-4 text-xs"><CheckCircle2 size={15} /> Commit sebagai paket draft</button> : <p className="mt-3 text-xs text-error">Perbaiki file berdasarkan error di atas lalu upload ulang.</p>}</div>}
   </section>;

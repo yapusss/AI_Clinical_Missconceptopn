@@ -6,6 +6,8 @@ from decimal import Decimal
 from django.db import connection, transaction
 from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
+from django.http import HttpResponse
+from openpyxl import Workbook, load_workbook
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -173,7 +175,7 @@ def is_lecturer_for_subject(user, subject_id):
     ).exists()
 
 
-IMPORT_REQUIRED_COLUMNS = {'question_key', 'order_index', 'prompt', 'reference_answer'}
+IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'reference_answer'}
 
 
 def _parse_import_indicators(raw_value):
@@ -196,28 +198,66 @@ def _parse_import_indicators(raw_value):
     return indicators
 
 
+def _normalize_import_row(raw):
+    return {str(key).strip(): (value or '').strip() for key, value in raw.items() if key}
+
+
+def _read_xlsx_rows(upload):
+    try:
+        workbook = load_workbook(upload, read_only=True, data_only=True)
+    except Exception as exc:
+        raise ValueError('File Excel tidak dapat dibaca. Gunakan template yang disediakan.') from exc
+    if not {'Bank Soal', 'Bank Jawaban'}.issubset(workbook.sheetnames):
+        raise ValueError('File Excel harus memiliki sheet "Bank Soal" dan "Bank Jawaban".')
+
+    def rows_from_sheet(name):
+        values = workbook[name].iter_rows(values_only=True)
+        headers = [str(value).strip() if value is not None else '' for value in next(values, ())]
+        return [_normalize_import_row(dict(zip(headers, row))) for row in values if any(value is not None for value in row)]
+
+    question_rows = {row.get('order_index', ''): row for row in rows_from_sheet('Bank Soal')}
+    answer_rows = {row.get('order_index', ''): row for row in rows_from_sheet('Bank Jawaban')}
+    if not question_rows or not answer_rows:
+        raise ValueError('Sheet Bank Soal dan Bank Jawaban harus memiliki data.')
+    return [
+        {
+            'order_index': order_index,
+            'prompt': question.get('prompt', ''),
+            'topic': question.get('topic', ''),
+            'difficulty': question.get('difficulty', ''),
+            'reference_answer': answer_rows.get(order_index, {}).get('reference_answer', ''),
+            'answer_key': answer_rows.get(order_index, {}).get('answer_key', ''),
+            'indicators': answer_rows.get(order_index, {}).get('indicators', ''),
+        }
+        for order_index, question in question_rows.items()
+    ]
+
+
 def _read_question_import(upload):
     if not upload:
-        raise ValueError('File CSV wajib diunggah.')
+        raise ValueError('File CSV atau Excel wajib diunggah.')
     if upload.size > 10 * 1024 * 1024:
         raise ValueError('Ukuran file maksimal 10 MB.')
-    try:
-        text = upload.read().decode('utf-8-sig')
-    except UnicodeDecodeError as exc:
-        raise ValueError('File harus menggunakan encoding UTF-8.') from exc
-    reader = csv.DictReader(io.StringIO(text))
-    headers = {header.strip() for header in (reader.fieldnames or []) if header}
+    if upload.name.lower().endswith(('.xlsx', '.xlsm')):
+        raw_rows = _read_xlsx_rows(upload)
+        headers = set(raw_rows[0]) if raw_rows else set()
+    else:
+        try:
+            text = upload.read().decode('utf-8-sig')
+        except UnicodeDecodeError as exc:
+            raise ValueError('File harus menggunakan encoding UTF-8.') from exc
+        reader = csv.DictReader(io.StringIO(text))
+        headers = {header.strip() for header in (reader.fieldnames or []) if header}
+        raw_rows = list(reader)
     missing = sorted(IMPORT_REQUIRED_COLUMNS - headers)
     if missing:
         raise ValueError(f'Kolom wajib tidak ditemukan: {", ".join(missing)}.')
 
     rows = []
-    for row_number, raw in enumerate(reader, start=2):
-        normalized = {str(key).strip(): (value or '').strip() for key, value in raw.items() if key}
+    for row_number, raw in enumerate(raw_rows, start=2):
+        normalized = _normalize_import_row(raw)
         errors = []
-        key = normalized.get('question_key', '')
-        if not key:
-            errors.append('question_key wajib diisi.')
+        key = f"Q-{normalized.get('order_index', row_number - 1)}"
         if not normalized.get('prompt'):
             errors.append('prompt wajib diisi.')
         if not normalized.get('reference_answer'):
@@ -244,14 +284,8 @@ def _read_question_import(upload):
             'indicators': indicators,
         })
 
-    seen_keys = set()
     seen_orders = set()
     for row in rows:
-        if row['question_key'] and row['question_key'] in seen_keys:
-            row['status'] = 'INVALID'
-            row['errors'].append('question_key duplikat dalam file.')
-        if row['question_key']:
-            seen_keys.add(row['question_key'])
         if row['order_index'] in seen_orders and row['order_index'] > 0:
             row['status'] = 'INVALID'
             row['errors'].append('order_index duplikat dalam file.')
@@ -305,6 +339,28 @@ class QuestionImportCreateView(APIView):
             'total_rows': job.total_rows, 'valid_rows': job.valid_rows,
             'invalid_rows': job.invalid_rows, 'errors': errors,
         }, status=status.HTTP_201_CREATED)
+
+
+class QuestionImportTemplateView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        workbook = Workbook()
+        questions = workbook.active
+        questions.title = 'Bank Soal'
+        questions.append(['order_index', 'prompt', 'topic', 'difficulty'])
+        questions.append([1, 'Pertanyaan konseptual', 'Topik', 'Sedang'])
+        answers = workbook.create_sheet('Bank Jawaban')
+        answers.append(['order_index', 'reference_answer', 'answer_key', 'indicators'])
+        answers.append([1, 'Jawaban referensi', 'ANS-001', 'Konsep utama:1.0000'])
+        output = io.BytesIO()
+        workbook.save(output)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = 'attachment; filename="template-bank-soal.xlsx"'
+        return response
 
 
 class QuestionImportDetailView(APIView):
