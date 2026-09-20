@@ -7,6 +7,7 @@ from django.db import connection, transaction
 from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
@@ -70,6 +71,7 @@ class LoginView(APIView):
 
 class MeView(APIView):
     authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         data = UserSerializer(request.user).data
