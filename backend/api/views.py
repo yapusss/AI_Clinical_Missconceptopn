@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from decimal import Decimal
 from django.db import connection, transaction
 from django.db.models import Avg, Count, Q
@@ -1113,3 +1113,74 @@ class StudentSubmissionSetDetailView(APIView):
             {'detail': 'Pengumpulan untuk bank soal ini tidak ditemukan.'},
             status=status.HTTP_404_NOT_FOUND,
         )
+class LecturerSubmissionsView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+
+        if user.is_superuser:
+            scoped = Submission.objects.all()
+        else:
+            lecturer_subjects = list(
+                UserSubjectRole.objects.filter(user=user, role=UserSubjectRole.Role.LECTURER)
+                .values_list('subject_id', flat=True)
+            )
+            if not lecturer_subjects:
+                return Response({'detail': 'Akses ditolak.'}, status=status.HTTP_403_FORBIDDEN)
+            scoped = Submission.objects.filter(subject_id__in=lecturer_subjects)
+
+        status_param = request.query_params.get('status')
+        if status_param:
+            scoped = scoped.filter(status=status_param)
+        subject_slug = request.query_params.get('subject_slug')
+        if subject_slug:
+            scoped = scoped.filter(subject__slug=subject_slug)
+
+        submissions = list(scoped.select_related('student', 'subject').order_by('-submitted_at')[:300])
+
+        analyses = {
+            a.submission_id: a
+            for a in LlmAnalysis.objects.filter(
+                submission_id__in=[s.id for s in submissions], is_current=True
+            )
+        }
+        validations = {
+            v.analysis_id: v
+            for v in Validation.objects.filter(
+                analysis_id__in=[a.id for a in analyses.values()]
+            )
+        }
+        versions = {
+            v.id: v
+            for v in QuestionVersion.objects.filter(
+                id__in={s.question_version_id for s in submissions}
+            ).select_related('question__question_set')
+        }
+
+        rows = []
+        for s in submissions:
+            version = versions.get(s.question_version_id)
+            question = version.question if version else None
+            qset = question.question_set if question else None
+            analysis = analyses.get(s.id)
+            validation = validations.get(analysis.id) if analysis else None
+            rows.append({
+                'id': str(s.id),
+                'student_name': s.student.full_name,
+                'student_email': s.student.email,
+                'subject_slug': s.subject.slug,
+                'subject_name': s.subject.name,
+                'question_code': qset.code if qset else None,
+                'question_title': qset.title if qset else None,
+                'version_number': version.version_number if version else None,
+                'prompt_preview': (version.prompt[:240] + 'â€¦') if version and version.prompt else '',
+                'answer': s.answer_text,
+                'status': s.status,
+                'submitted_at': s.submitted_at.isoformat() if s.submitted_at else None,
+                'score': float(analysis.percentage_correct) if analysis and analysis.percentage_correct is not None else None,
+                'tier_label': analysis.tier_label_snapshot if analysis else None,
+                'validation_status': validation.status if validation else None,
+            })
+
+        return Response({'submissions': rows})
