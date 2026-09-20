@@ -17,6 +17,10 @@ class User(models.Model):
         db_table = 'users'
         managed = False
 
+    @property
+    def is_authenticated(self):
+        return True
+
     def __str__(self):
         return self.email
 
