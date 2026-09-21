@@ -327,7 +327,7 @@ select option {
 .app-main {
   flex: 1;
   margin-left: 256px;
-  padding: 20px 28px;
+  padding: 40px 28px 28px;
   min-width: 0;
 }
 
@@ -436,7 +436,7 @@ select option {
   .app-main {
     width: 100%;
     margin-left: 0 !important;
-    padding: 80px 16px 28px !important;
+    padding: 96px 16px 28px !important;
     box-sizing: border-box;
   }
 }
