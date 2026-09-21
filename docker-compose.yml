@@ -44,14 +44,47 @@ services:
       DB_USER: appuser
       DB_PASSWORD: apppassword
       REDIS_URL: redis://valkey:6379
-      LLM_BASE_URL: http://host.docker.internal:8080/v1
-      LLM_API_KEY: "local-llama-cpp"
-      LLM_MODEL: "Ling-3.0-tiny"
+      # LLM provider — real values come from the shell/.env at deploy time
+      # (scripts/deploy.sh exports them; never commit the key itself).
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-local-llama-cpp}
+      LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
+      LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
         condition: service_healthy
+
+  # P4 analysis worker (same image, polling queue). Profile-gated so it only
+  # starts when explicitly enabled (deploy.sh does this once a real
+  # LLM_API_KEY exists in .env); without a key it would fail every analysis
+  # to ANALYSIS_FAILED in a bounded retry loop.
+  worker:
+    profiles: ["worker"]
+    build: ./backend
+    container_name: worker
+    command: python manage.py analyze_submissions --loop --interval 5
+    volumes:
+      - ./backend:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppassword
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-local-llama-cpp}
+      LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
+      LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build:
