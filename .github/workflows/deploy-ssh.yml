@@ -57,8 +57,24 @@ jobs:
         run: |
           rsync -az --delete -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 -i ~/.ssh/id_deploy" \
             --exclude node_modules --exclude .next --exclude venv --exclude __pycache__ \
-            --exclude .git --exclude "*.pyc" \
+            --exclude .git --exclude "*.pyc" --exclude .env \
             ./ $VPS_USER@127.0.0.1:$DEPLOY_DIR/
+
+      # Materialize runtime secrets on the VPS from GitHub Secrets (repo-safe:
+      # values never enter git or rsync). deploy.sh sources .env at startup.
+      - name: Write .env on VPS
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "GROQ_API_KEY secret not set - skipping .env write (worker stays disabled)"
+            exit 0
+          fi
+          printf 'LLM_BASE_URL=https://api.groq.com/openai/v1\nLLM_API_KEY=%s\nLLM_MODEL=openai/gpt-oss-20b\nLLM_TIMEOUT=60\nLLM_MAX_RUNS=3\n' "$GROQ_API_KEY" \
+            | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -p 2222 -i ~/.ssh/id_deploy \
+                "$VPS_USER@127.0.0.1" "cat > /home/ubuntu/app/.env.tmp && mv /home/ubuntu/app/.env.tmp /home/ubuntu/app/.env && chmod 600 /home/ubuntu/app/.env"
+          echo ".env written (600)"
 
       - name: Deploy stack on VPS
         run: |

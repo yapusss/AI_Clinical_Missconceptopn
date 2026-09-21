@@ -147,7 +147,10 @@ MAILERS = {
     },
 }
 
-# LLM Inference Configuration (Local llama.cpp or Cloud API)
-LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://127.0.0.1:8080/v1')
+# LLM Inference Configuration (OpenAI-compatible: local Ollama/llama.cpp in dev,
+# stakeholder external API in production — env-driven, provider-agnostic)
+LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://127.0.0.1:11434/v1')
 LLM_API_KEY = os.environ.get('LLM_API_KEY', 'local-llama-cpp')
-LLM_MODEL = os.environ.get('LLM_MODEL', 'Ling-3.0-tiny')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:3b-instruct')
+LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '120'))
+LLM_MAX_RUNS = int(os.environ.get('LLM_MAX_RUNS', '3'))

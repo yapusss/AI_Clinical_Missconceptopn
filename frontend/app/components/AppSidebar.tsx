@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  BarChart3,
   Building2,
   ClipboardList,
   FileSearch,
@@ -13,6 +14,7 @@ import {
   LogOut,
   Menu,
   Settings,
+  ShieldCheck,
   UserRound,
   X,
 } from "lucide-react";
@@ -41,6 +43,8 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
   { label: "Jawaban Mahasiswa", path: "/submissions", icon: ClipboardList, roles: ["ADMIN", "LECTURER"] },
+  { label: "Validasi", path: "/validation", icon: ShieldCheck, roles: ["ADMIN", "LECTURER"] },
+  { label: "Metrik AI", path: "/metrics", icon: BarChart3, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
   { label: "Kelola Dosen", path: "/admin/lecturers", icon: UserRound, roles: ["ADMIN"] },
   { label: "Kelola Mahasiswa", path: "/admin/students", icon: GraduationCap, roles: ["ADMIN"] },
