@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  BarChart3,
   Building2,
   ClipboardList,
   FileSearch,
@@ -11,6 +12,7 @@ import {
   LogOut,
   Menu,
   Settings,
+  ShieldCheck,
   UserRound,
   X,
 } from "lucide-react";
@@ -38,6 +40,8 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
   { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
+  { label: "Validasi", path: "/validation", icon: ShieldCheck, roles: ["ADMIN", "LECTURER"] },
+  { label: "Metrik AI", path: "/metrics", icon: BarChart3, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
 ];

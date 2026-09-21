@@ -1,5 +1,12 @@
 from django.urls import path
 
+from .validation_views import (
+    ModelMetricsView,
+    ValidationDetailView,
+    ValidationQueueView,
+    ValidationSubmitView,
+    ValidationTiersView,
+)
 from .views import (
     DashboardView,
     LoginView,
@@ -34,4 +41,11 @@ urlpatterns = [
     path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
     path('student/submission-sets', StudentSubmissionSetListView.as_view(), name='student-submission-set-list'),
     path('student/submission-sets/<uuid:pk>', StudentSubmissionSetDetailView.as_view(), name='student-submission-set-detail'),
+
+    # Sprint 5 Lecturer Validation (UC-05 / P5) + Model Metrics
+    path('validations/queue', ValidationQueueView.as_view(), name='validation-queue'),
+    path('validations/tiers', ValidationTiersView.as_view(), name='validation-tiers'),
+    path('validations/<uuid:analysis_id>', ValidationDetailView.as_view(), name='validation-detail'),
+    path('validations/<uuid:analysis_id>/submit', ValidationSubmitView.as_view(), name='validation-submit'),
+    path('metrics/model', ModelMetricsView.as_view(), name='model-metrics'),
 ]

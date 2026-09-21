@@ -148,7 +148,7 @@ export default function DashboardPage() {
     }
   })();
 
-  const quickActions =
+  const quickActions: { icon: typeof ShieldCheck; label: string; href?: string }[] =
     primaryRole === "STUDENT"
       ? [
           { icon: ClipboardList, label: "Kerjakan evaluasi baru", href: "/code" },
@@ -157,7 +157,8 @@ export default function DashboardPage() {
       : primaryRole === "LECTURER"
         ? [
             { icon: FilePlus, label: "Buat bank soal baru", href: "/questions" },
-            { icon: ShieldCheck, label: "Tinjau validasi" },
+            { icon: ShieldCheck, label: "Tinjau validasi", href: "/validation" },
+            { icon: BarChart3, label: "Lihat metrik AI", href: "/metrics" },
           ]
         : primaryRole === "ADMIN"
           ? [

@@ -149,3 +149,40 @@ class SubmissionCreateSerializer(serializers.Serializer):
         if not val:
             raise serializers.ValidationError('Jawaban tidak boleh kosong.')
         return val
+
+# ============================================================================
+# SPRINT 5: VALIDATION SERIALIZERS (DOSEN / P5)
+# ============================================================================
+
+class MisconceptionConfirmationSerializer(serializers.Serializer):
+    misconception_id = serializers.UUIDField()
+    confirmed = serializers.BooleanField()
+
+
+class ValidationSubmitSerializer(serializers.Serializer):
+    """Input for sp_validate_analysis (accept/edit/reject)."""
+
+    status = serializers.ChoiceField(choices=['ACCEPTED', 'EDITED', 'REJECTED'])
+    final_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        min_value=0, max_value=100,
+    )
+    final_tier_level = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=10)
+    final_feedback = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=5000)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=5000)
+    misconception_confirmations = MisconceptionConfirmationSerializer(
+        many=True, required=False,
+    )
+
+    def validate(self, attrs):
+        if attrs['status'] == 'EDITED':
+            has_change = (
+                attrs.get('final_percentage') is not None
+                or attrs.get('final_tier_level') is not None
+                or attrs.get('final_feedback')
+            )
+            if not has_change:
+                raise serializers.ValidationError(
+                    {'detail': 'Status EDITED memerlukan minimal satu koreksi (skor, tier, atau umpan balik).'}
+                )
+        return attrs
