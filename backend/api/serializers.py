@@ -50,6 +50,14 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class AdminManagedUserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    full_name = serializers.CharField(max_length=255)
+    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    is_active = serializers.BooleanField(required=False, default=True)
+    subject_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+
+
 # ============================================================================
 # SPRINT 2: QUESTION BANK SERIALIZERS (DOSEN)
 # ============================================================================

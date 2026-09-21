@@ -2,6 +2,9 @@ from django.urls import path
 
 from .views import (
     DashboardView,
+    AdminManagedUserDetailView,
+    AdminManagedUserListView,
+    AdminSubjectListView,
     LecturerSubmissionsView,
     LoginView,
     MeView,
@@ -27,6 +30,9 @@ urlpatterns = [
     path('auth/login', LoginView.as_view(), name='auth-login'),
     path('auth/me', MeView.as_view(), name='auth-me'),
     path('dashboard/summary', DashboardView.as_view(), name='dashboard-summary'),
+    path('admin/users/<str:role>', AdminManagedUserListView.as_view(), name='admin-managed-user-list'),
+    path('admin/users/<str:role>/<uuid:pk>', AdminManagedUserDetailView.as_view(), name='admin-managed-user-detail'),
+    path('admin/subjects', AdminSubjectListView.as_view(), name='admin-subject-list'),
     path('lecturer/submissions', LecturerSubmissionsView.as_view(), name='lecturer-submissions'),
 
     # Sprint 2 Dosen Endpoints

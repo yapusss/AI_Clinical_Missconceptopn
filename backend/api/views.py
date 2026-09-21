@@ -34,6 +34,7 @@ from .models import (
     Validation,
 )
 from .serializers import (
+    AdminManagedUserSerializer,
     LoginSerializer,
     QuestionSetCreateSerializer,  
     QuestionSetUpdateSerializer,  
@@ -161,6 +162,125 @@ class DashboardView(APIView):
             'is_superuser': user.is_superuser,
             'summary': summary,
         })
+
+
+def require_admin(request):
+    return request.user.is_superuser
+
+
+def managed_role_from_path(role):
+    if role == 'lecturers':
+        return UserSubjectRole.Role.LECTURER
+    if role == 'students':
+        return UserSubjectRole.Role.STUDENT
+    return None
+
+
+class AdminManagedUserListView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request, role):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        managed_role = managed_role_from_path(role)
+        if managed_role is None:
+            return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
+        user_ids = UserSubjectRole.objects.filter(role=managed_role).values_list('user_id', flat=True)
+        users = User.objects.filter(is_superuser=False, id__in=user_ids).order_by('full_name')
+        return Response([self.serialize_user(user, managed_role) for user in users])
+
+    def post(self, request, role):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        managed_role = managed_role_from_path(role)
+        if managed_role is None:
+            return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = AdminManagedUserSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if User.objects.filter(email__iexact=data['email']).exists():
+            return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
+        subject_ids = data.get('subject_ids', [])
+        valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
+        if len(valid_subjects) != len(set(subject_ids)):
+            return Response({'subject_ids': ['Ada mata kuliah yang tidak ditemukan.']}, status=status.HTTP_400_BAD_REQUEST)
+        if not data.get('password'):
+            return Response({'password': ['Password wajib diisi saat membuat akun.']}, status=status.HTTP_400_BAD_REQUEST)
+        from django.contrib.auth.hashers import make_password
+        user = User.objects.create(
+            id=uuid.uuid4(), email=data['email'].lower(), full_name=data['full_name'],
+            password_hash=make_password(data['password']), is_active=data.get('is_active', True),
+        )
+        UserSubjectRole.objects.bulk_create([
+            UserSubjectRole(user=user, subject_id=subject_id, role=managed_role)
+            for subject_id in subject_ids
+        ])
+        return Response(self.serialize_user(user, managed_role), status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def serialize_user(user, role):
+        roles = UserSubjectRole.objects.filter(user=user, role=role).select_related('subject')
+        return {
+            'id': str(user.id), 'email': user.email, 'full_name': user.full_name,
+            'is_active': user.is_active, 'created_at': user.created_at,
+            'role': role, 'subjects': [
+                {'id': str(item.subject_id), 'name': item.subject.name, 'slug': item.subject.slug}
+                for item in roles
+            ],
+        }
+
+
+class AdminManagedUserDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def patch(self, request, role, pk):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        managed_role = managed_role_from_path(role)
+        if managed_role is None:
+            return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(pk=pk, is_superuser=False)
+        except User.DoesNotExist:
+            return Response({'detail': 'Akun tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not UserSubjectRole.objects.filter(user=user, role=managed_role).exists():
+            return Response({'detail': 'Akun tidak termasuk role ini.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AdminManagedUserSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if 'email' in data and User.objects.exclude(pk=user.pk).filter(email__iexact=data['email']).exists():
+            return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
+        if 'subject_ids' in data:
+            subject_ids = data['subject_ids']
+            valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
+            if len(valid_subjects) != len(set(subject_ids)):
+                return Response({'subject_ids': ['Ada mata kuliah yang tidak ditemukan.']}, status=status.HTTP_400_BAD_REQUEST)
+        if 'email' in data: user.email = data['email'].lower()
+        if 'full_name' in data: user.full_name = data['full_name']
+        if 'is_active' in data: user.is_active = data['is_active']
+        if data.get('password'):
+            from django.contrib.auth.hashers import make_password
+            user.password_hash = make_password(data['password'])
+        user.save()
+        if 'subject_ids' in data:
+            UserSubjectRole.objects.filter(user=user, role=managed_role).delete()
+            UserSubjectRole.objects.bulk_create([
+                UserSubjectRole(user=user, subject_id=subject_id, role=managed_role)
+                for subject_id in subject_ids
+            ])
+        return Response(AdminManagedUserListView.serialize_user(user, managed_role))
+
+
+class AdminSubjectListView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        return Response([
+            {'id': str(subject.id), 'name': subject.name, 'slug': subject.slug}
+            for subject in Subject.objects.filter(is_active=True).order_by('name')
+        ])
 
 
 # ============================================================================

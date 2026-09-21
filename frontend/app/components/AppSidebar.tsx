@@ -8,6 +8,7 @@ import {
   ClipboardList,
   FileSearch,
   CircleHelp,
+  GraduationCap,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -41,6 +42,8 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
   { label: "Jawaban Mahasiswa", path: "/submissions", icon: ClipboardList, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
+  { label: "Kelola Dosen", path: "/admin/lecturers", icon: UserRound, roles: ["ADMIN"] },
+  { label: "Kelola Mahasiswa", path: "/admin/students", icon: GraduationCap, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
   { label: "Bantuan", path: "/help", icon: CircleHelp, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
 ];
