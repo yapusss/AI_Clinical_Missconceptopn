@@ -80,16 +80,23 @@ class QuestionVersionSerializer(serializers.Serializer):
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
 
 
+class QuestionItemCreateSerializer(serializers.Serializer):
+    prompt = serializers.CharField()
+    model_answer = serializers.CharField()
+    indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
+
+
 class QuestionSetCreateSerializer(serializers.Serializer):
     subject_id = serializers.UUIDField()
     topic_id = serializers.UUIDField(required=False, allow_null=True)
     code = serializers.CharField(max_length=64)
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, default="")
-    prompt = serializers.CharField()
-    model_answer = serializers.CharField()
+    
+    prompt = serializers.CharField(required=False)
+    model_answer = serializers.CharField(required=False)
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
-    questions = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+    questions = QuestionItemCreateSerializer(many=True, required=False, default=list)
     publish = serializers.BooleanField(default=False)
 
     def validate_code(self, value):
@@ -101,29 +108,19 @@ class QuestionSetCreateSerializer(serializers.Serializer):
         return val
 
     def validate(self, attrs):
-        questions = attrs.get('questions') or []
+        questions = attrs.get('questions', [])
         if questions:
-            for index, question in enumerate(questions, start=1):
-                if not str(question.get('prompt', '')).strip():
-                    raise serializers.ValidationError({'questions': f'Pertanyaan ke-{index} wajib diisi.'})
-                if not str(question.get('model_answer', '')).strip():
-                    raise serializers.ValidationError({'questions': f'Jawaban referensi pertanyaan ke-{index} wajib diisi.'})
-                indicators = question.get('indicators') or []
-                if attrs.get('publish') and not indicators:
-                    raise serializers.ValidationError({'questions': f'Pertanyaan ke-{index} wajib memiliki indikator.'})
-                if attrs.get('publish'):
-                    total_weight = sum(Decimal(str(i['weight'])) for i in indicators)
-                    if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
-                        raise serializers.ValidationError({
-                            'questions': f'Total bobot indikator pertanyaan ke-{index} harus 1.0000.'
-                        })
-            return attrs
+            first_q = questions[0]
+            attrs['prompt'] = first_q['prompt']
+            attrs['model_answer'] = first_q['model_answer']
+            attrs['indicators'] = first_q.get('indicators', [])
+        else:
+            if not attrs.get('prompt'):
+                raise serializers.ValidationError({'prompt': ['This field is required.']})
+            if not attrs.get('model_answer'):
+                raise serializers.ValidationError({'model_answer': ['This field is required.']})
 
         indicators = attrs.get('indicators', [])
-        if not str(attrs.get('prompt', '')).strip():
-            raise serializers.ValidationError({'prompt': 'Pertanyaan wajib diisi.'})
-        if not str(attrs.get('model_answer', '')).strip():
-            raise serializers.ValidationError({'model_answer': 'Jawaban referensi wajib diisi.'})
         publish = attrs.get('publish', False)
 
         if indicators:

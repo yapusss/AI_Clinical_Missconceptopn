@@ -512,29 +512,43 @@ class QuestionListCreateView(APIView):
                 is_active=True,
             )
 
-            question_payloads = data.get('questions') or [{
-                'prompt': data['prompt'],
-                'model_answer': data['model_answer'],
-                'indicators': data.get('indicators', []),
-            }]
-            created_versions = []
-            for order_index, question_data in enumerate(question_payloads, start=1):
-                q = Question.objects.create(id=uuid.uuid4(), question_set=q_set, order_index=order_index)
-                qv = QuestionVersion.objects.create(
-                    id=uuid.uuid4(), question=q, version_number=1,
-                    prompt=question_data['prompt'], model_answer=question_data['model_answer'],
-                    is_published=False, created_by=request.user,
-                )
-                for indicator_index, ind in enumerate(question_data.get('indicators', []), start=1):
-                    ConceptIndicator.objects.create(
-                        id=uuid.uuid4(), question_version=qv,
-                        label=ind['label'], description=ind.get('description', ''),
-                        weight=ind['weight'], order_index=indicator_index,
-                    )
-                created_versions.append(qv)
+            questions_list = data.get('questions', [])
+            if not questions_list:
+                questions_list = [{
+                    'prompt': data['prompt'],
+                    'model_answer': data['model_answer'],
+                    'indicators': data.get('indicators', []),
+                }]
 
-            if data.get('publish', False):
-                for qv in created_versions:
+            for q_idx, q_item in enumerate(questions_list, start=1):
+                q = Question.objects.create(
+                    id=uuid.uuid4(),
+                    question_set=q_set,
+                    order_index=q_idx,
+                )
+
+                qv = QuestionVersion.objects.create(
+                    id=uuid.uuid4(),
+                    question=q,
+                    version_number=1,
+                    prompt=q_item['prompt'],
+                    model_answer=q_item['model_answer'],
+                    is_published=False,
+                    created_by=request.user,
+                )
+
+                indicators_data = q_item.get('indicators', [])
+                for idx, ind in enumerate(indicators_data, start=1):
+                    ConceptIndicator.objects.create(
+                        id=uuid.uuid4(),
+                        question_version=qv,
+                        label=ind['label'],
+                        description=ind.get('description', ''),
+                        weight=ind['weight'],
+                        order_index=idx,
+                    )
+
+                if data.get('publish', False):
                     with connection.cursor() as cursor:
                         cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(qv.id), str(request.user.id)])
                     qv.refresh_from_db()
@@ -543,13 +557,11 @@ class QuestionListCreateView(APIView):
             'id': str(q_set.id),
             'code': q_set.code,
             'title': q_set.title,
-            'question_count': len(created_versions),
-            'version_ids': [str(version.id) for version in created_versions],
-            'is_published': all(version.is_published for version in created_versions),
+            'version_id': str(qv.id),
+            'is_published': qv.is_published,
             'is_active': q_set.is_active,
             'message': 'Soal berhasil disimpan.',
         }, status=status.HTTP_201_CREATED)
-
 
 class QuestionDetailView(APIView):
     authentication_classes = [TokenAuthentication]
