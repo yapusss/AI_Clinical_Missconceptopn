@@ -1,4 +1,4 @@
-"""0002 — LLM pipeline V2.1 upgrade (moved from database/V2_1_LLM_Upgrade.sql).
+"""0003 — LLM pipeline V2.1 upgrade (moved from database/V2_1_LLM_Upgrade.sql).
 
 Two DB procedure changes required by the P4 worker (api/llm.py):
 
@@ -22,7 +22,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("api", "0001_initial"),
+        ("api", "0002_bulk_question_import"),
     ]
 
     operations = [

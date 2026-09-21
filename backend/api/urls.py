@@ -9,10 +9,16 @@ from .validation_views import (
 )
 from .views import (
     DashboardView,
+    LecturerSubmissionsView,
     LoginView,
     MeView,
     QuestionDetailView,
     QuestionListCreateView,
+    QuestionSetPublishView,
+    QuestionImportCommitView,
+    QuestionImportCreateView,
+    QuestionImportDetailView,
+    QuestionImportTemplateView,
     QuestionPublishView,
     QuestionToggleActiveView,
     RegisterView,
@@ -28,11 +34,17 @@ urlpatterns = [
     path('auth/login', LoginView.as_view(), name='auth-login'),
     path('auth/me', MeView.as_view(), name='auth-me'),
     path('dashboard/summary', DashboardView.as_view(), name='dashboard-summary'),
+    path('lecturer/submissions', LecturerSubmissionsView.as_view(), name='lecturer-submissions'),
 
     # Sprint 2 Dosen Endpoints
     path('questions', QuestionListCreateView.as_view(), name='question-list-create'),
     path('questions/<uuid:pk>', QuestionDetailView.as_view(), name='question-detail'),
     path('questions/<uuid:pk>/toggle-active', QuestionToggleActiveView.as_view(), name='question-toggle-active'),
+    path('questions/<uuid:pk>/publish', QuestionSetPublishView.as_view(), name='question-set-publish'),
+    path('question-imports', QuestionImportCreateView.as_view(), name='question-import-create'),
+    path('question-import-template', QuestionImportTemplateView.as_view(), name='question-import-template'),
+    path('question-imports/<uuid:pk>', QuestionImportDetailView.as_view(), name='question-import-detail'),
+    path('question-imports/<uuid:pk>/commit', QuestionImportCommitView.as_view(), name='question-import-commit'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
 
     # Sprint 3 Student Endpoints (UC-01 / P3)

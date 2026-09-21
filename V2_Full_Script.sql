@@ -136,10 +136,63 @@ FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 CREATE TABLE questions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     question_set_id UUID NOT NULL REFERENCES question_sets(id) ON DELETE CASCADE,
+    external_key VARCHAR(100),   
     order_index INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    external_key VARCHAR(100),
     CONSTRAINT uq_set_question_order UNIQUE (question_set_id, order_index)
+
 );
+
+CREATE UNIQUE INDEX idx_questions_external_key
+    ON questions (question_set_id, external_key)
+    WHERE external_key IS NOT NULL;
+
+CREATE TABLE reference_answers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    question_version_id UUID NOT NULL REFERENCES question_versions(id) ON DELETE CASCADE,
+    answer_key VARCHAR(100),
+    answer_text TEXT NOT NULL,
+    answer_type VARCHAR(30) NOT NULL DEFAULT 'CANONICAL',
+    is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_reference_answers_key
+    ON reference_answers (question_version_id, answer_key)
+    WHERE answer_key IS NOT NULL;
+
+CREATE TABLE import_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+    requested_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    file_name VARCHAR(255) NOT NULL,
+    package_code VARCHAR(64) NOT NULL,
+    package_title VARCHAR(255) NOT NULL,
+    package_description TEXT,
+    import_type VARCHAR(30) NOT NULL DEFAULT 'QUESTION_ANSWER_CSV',
+    status VARCHAR(30) NOT NULL DEFAULT 'UPLOADED',
+    total_rows INT NOT NULL DEFAULT 0,
+    valid_rows INT NOT NULL DEFAULT 0,
+    invalid_rows INT NOT NULL DEFAULT 0,
+    error_summary JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE import_rows (
+    id BIGSERIAL PRIMARY KEY,
+    import_job_id UUID NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
+    row_number INT NOT NULL,
+    question_key VARCHAR(100),
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(20) NOT NULL DEFAULT 'VALID',
+    errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+    CONSTRAINT uq_import_row_number UNIQUE (import_job_id, row_number)
+);
+
+CREATE INDEX idx_import_jobs_requester ON import_jobs (requested_by, created_at DESC);
+CREATE INDEX idx_import_rows_job ON import_rows (import_job_id, row_number);
 
 CREATE TABLE question_versions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,10 +1,17 @@
+import csv
+import io
+import json
 import uuid
 from decimal import Decimal
 from django.db import connection, transaction
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Q, Sum
+from django.utils import timezone
+from django.http import HttpResponse
+from openpyxl import Workbook, load_workbook
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
 
 from .authentication import TokenAuthentication
@@ -16,6 +23,9 @@ from .models import (
     Question,             
     QuestionSet,
     QuestionVersion,      
+    ImportJob,
+    ImportRow,
+    ReferenceAnswer,
     Subject,
     Submission,
     Topic,                
@@ -166,6 +176,263 @@ def is_lecturer_for_subject(user, subject_id):
     ).exists()
 
 
+IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'reference_answer'}
+
+
+def _parse_import_indicators(raw_value):
+    if not raw_value.strip():
+        return [{'label': 'Konsep utama', 'description': '', 'weight': Decimal('1.0000')}]
+    indicators = []
+    for item in raw_value.split('|'):
+        label, separator, weight = item.partition(':')
+        if not separator:
+            raise ValueError('Format indikator harus label:bobot|label:bobot.')
+        try:
+            parsed_weight = Decimal(weight.strip())
+        except Exception as exc:
+            raise ValueError(f'Bobot indikator tidak valid: {weight}.') from exc
+        if not label.strip() or parsed_weight <= 0 or parsed_weight > 1:
+            raise ValueError('Label indikator wajib diisi dan bobot harus antara 0 dan 1.')
+        indicators.append({'label': label.strip(), 'description': '', 'weight': parsed_weight})
+    if abs(sum(item['weight'] for item in indicators) - Decimal('1.0000')) > Decimal('0.0001'):
+        raise ValueError('Total bobot indikator harus tepat 1.0000.')
+    return indicators
+
+
+def _normalize_import_row(raw):
+    return {str(key).strip(): (value or '').strip() for key, value in raw.items() if key}
+
+
+def _read_xlsx_rows(upload):
+    try:
+        workbook = load_workbook(upload, read_only=True, data_only=True)
+    except Exception as exc:
+        raise ValueError('File Excel tidak dapat dibaca. Gunakan template yang disediakan.') from exc
+    if not {'Bank Soal', 'Bank Jawaban'}.issubset(workbook.sheetnames):
+        raise ValueError('File Excel harus memiliki sheet "Bank Soal" dan "Bank Jawaban".')
+
+    def rows_from_sheet(name):
+        values = workbook[name].iter_rows(values_only=True)
+        headers = [str(value).strip() if value is not None else '' for value in next(values, ())]
+        return [_normalize_import_row(dict(zip(headers, row))) for row in values if any(value is not None for value in row)]
+
+    question_rows = {row.get('order_index', ''): row for row in rows_from_sheet('Bank Soal')}
+    answer_rows = {row.get('order_index', ''): row for row in rows_from_sheet('Bank Jawaban')}
+    if not question_rows or not answer_rows:
+        raise ValueError('Sheet Bank Soal dan Bank Jawaban harus memiliki data.')
+    return [
+        {
+            'order_index': order_index,
+            'prompt': question.get('prompt', ''),
+            'topic': question.get('topic', ''),
+            'difficulty': question.get('difficulty', ''),
+            'reference_answer': answer_rows.get(order_index, {}).get('reference_answer', ''),
+            'answer_key': answer_rows.get(order_index, {}).get('answer_key', ''),
+            'indicators': answer_rows.get(order_index, {}).get('indicators', ''),
+        }
+        for order_index, question in question_rows.items()
+    ]
+
+
+def _read_question_import(upload):
+    if not upload:
+        raise ValueError('File CSV atau Excel wajib diunggah.')
+    if upload.size > 10 * 1024 * 1024:
+        raise ValueError('Ukuran file maksimal 10 MB.')
+    if upload.name.lower().endswith(('.xlsx', '.xlsm')):
+        raw_rows = _read_xlsx_rows(upload)
+        headers = set(raw_rows[0]) if raw_rows else set()
+    else:
+        try:
+            text = upload.read().decode('utf-8-sig')
+        except UnicodeDecodeError as exc:
+            raise ValueError('File harus menggunakan encoding UTF-8.') from exc
+        reader = csv.DictReader(io.StringIO(text))
+        headers = {header.strip() for header in (reader.fieldnames or []) if header}
+        raw_rows = list(reader)
+    missing = sorted(IMPORT_REQUIRED_COLUMNS - headers)
+    if missing:
+        raise ValueError(f'Kolom wajib tidak ditemukan: {", ".join(missing)}.')
+
+    rows = []
+    for row_number, raw in enumerate(raw_rows, start=2):
+        normalized = _normalize_import_row(raw)
+        errors = []
+        key = f"Q-{normalized.get('order_index', row_number - 1)}"
+        if not normalized.get('prompt'):
+            errors.append('prompt wajib diisi.')
+        if not normalized.get('reference_answer'):
+            errors.append('reference_answer wajib diisi.')
+        try:
+            order_index = int(normalized.get('order_index', ''))
+            if order_index < 1:
+                raise ValueError
+        except ValueError:
+            order_index = 0
+            errors.append('order_index harus berupa bilangan bulat positif.')
+        try:
+            indicators = _parse_import_indicators(normalized.get('indicators', ''))
+        except ValueError as exc:
+            indicators = []
+            errors.append(str(exc))
+        rows.append({
+            'row_number': row_number,
+            'question_key': key or None,
+            'raw_data': normalized,
+            'status': 'INVALID' if errors else 'VALID',
+            'errors': errors,
+            'order_index': order_index,
+            'indicators': indicators,
+        })
+
+    seen_orders = set()
+    for row in rows:
+        if row['order_index'] in seen_orders and row['order_index'] > 0:
+            row['status'] = 'INVALID'
+            row['errors'].append('order_index duplikat dalam file.')
+        if row['order_index'] > 0:
+            seen_orders.add(row['order_index'])
+    return rows
+
+
+class QuestionImportCreateView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        subject_id = request.data.get('subject_id')
+        try:
+            subject = Subject.objects.get(pk=subject_id)
+        except (Subject.DoesNotExist, ValueError, TypeError):
+            return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not is_lecturer_for_subject(request.user, subject.id):
+            return Response({'detail': 'Anda tidak berwenang mengimpor soal untuk mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        code = (request.data.get('code') or '').strip().upper()
+        title = (request.data.get('title') or '').strip()
+        if not code or not title:
+            return Response({'detail': 'code dan title wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        if QuestionSet.objects.filter(code__iexact=code).exists():
+            return Response({'detail': 'Kode paket sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            parsed_rows = _read_question_import(request.FILES.get('file'))
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        errors = [
+            {'row': row['row_number'], 'question_key': row['question_key'], 'messages': row['errors']}
+            for row in parsed_rows if row['status'] == 'INVALID'
+        ]
+        job = ImportJob.objects.create(
+            id=uuid.uuid4(), subject=subject, requested_by=request.user,
+            file_name=request.FILES['file'].name, package_code=code,
+            package_title=title, package_description=request.data.get('description', ''),
+            status='READY_TO_IMPORT' if not errors and parsed_rows else 'VALIDATION_FAILED',
+            total_rows=len(parsed_rows), valid_rows=len(parsed_rows) - len(errors),
+            invalid_rows=len(errors), error_summary=errors,
+        )
+        ImportRow.objects.bulk_create([
+            ImportRow(import_job=job, row_number=row['row_number'], question_key=row['question_key'], raw_data=row['raw_data'], status=row['status'], errors=row['errors'])
+            for row in parsed_rows
+        ])
+        return Response({
+            'import_id': str(job.id), 'status': job.status,
+            'total_rows': job.total_rows, 'valid_rows': job.valid_rows,
+            'invalid_rows': job.invalid_rows, 'errors': errors,
+        }, status=status.HTTP_201_CREATED)
+
+
+class QuestionImportTemplateView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        workbook = Workbook()
+        questions = workbook.active
+        questions.title = 'Bank Soal'
+        questions.append(['order_index', 'prompt', 'topic', 'difficulty'])
+        questions.append([1, 'Pertanyaan konseptual', 'Topik', 'Sedang'])
+        answers = workbook.create_sheet('Bank Jawaban')
+        answers.append(['order_index', 'reference_answer', 'answer_key', 'indicators'])
+        answers.append([1, 'Jawaban referensi', 'ANS-001', 'Konsep utama:1.0000'])
+        output = io.BytesIO()
+        workbook.save(output)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = 'attachment; filename="template-bank-soal.xlsx"'
+        return response
+
+
+class QuestionImportDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            job = ImportJob.objects.select_related('subject').get(pk=pk, requested_by=request.user)
+        except ImportJob.DoesNotExist:
+            return Response({'detail': 'Import tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'import_id': str(job.id), 'status': job.status, 'code': job.package_code,
+            'title': job.package_title, 'total_rows': job.total_rows,
+            'valid_rows': job.valid_rows, 'invalid_rows': job.invalid_rows,
+            'errors': job.error_summary, 'rows': [
+                {'row_number': row.row_number, 'question_key': row.question_key, 'status': row.status, 'errors': row.errors}
+                for row in job.rows.order_by('row_number')
+            ],
+        })
+
+
+class QuestionImportCommitView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            job = ImportJob.objects.get(pk=pk, requested_by=request.user)
+        except ImportJob.DoesNotExist:
+            return Response({'detail': 'Import tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if job.status != 'READY_TO_IMPORT':
+            return Response({'detail': 'Import belum valid dan tidak dapat di-commit.'}, status=status.HTTP_400_BAD_REQUEST)
+        if QuestionSet.objects.filter(code__iexact=job.package_code).exists():
+            return Response({'detail': 'Kode paket sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            q_set = QuestionSet.objects.create(
+                id=uuid.uuid4(), subject=job.subject, created_by=request.user,
+                code=job.package_code, title=job.package_title,
+                description=job.package_description or '', is_active=True,
+            )
+            for row in job.rows.order_by('row_number'):
+                raw = row.raw_data
+                question = Question.objects.create(
+                    id=uuid.uuid4(), question_set=q_set,
+                    external_key=row.question_key, order_index=int(raw['order_index']),
+                )
+                version = QuestionVersion.objects.create(
+                    id=uuid.uuid4(), question=question, version_number=1,
+                    prompt=raw['prompt'], model_answer=raw['reference_answer'],
+                    is_published=False, created_by=request.user,
+                )
+                indicators = _parse_import_indicators(raw.get('indicators', ''))
+                ConceptIndicator.objects.bulk_create([
+                    ConceptIndicator(id=uuid.uuid4(), question_version=version, label=item['label'], description=item['description'], weight=item['weight'], order_index=index)
+                    for index, item in enumerate(indicators, start=1)
+                ])
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(), question_version=version,
+                    answer_key=raw.get('answer_key') or row.question_key,
+                    answer_text=raw['reference_answer'], answer_type='CANONICAL', is_primary=True,
+                )
+            job.status = 'IMPORTED'
+            job.completed_at = timezone.now()
+            job.save(update_fields=['status', 'completed_at'])
+        return Response({'question_set_id': str(q_set.id), 'code': q_set.code, 'question_count': job.valid_rows, 'status': job.status})
+
+
 class QuestionListCreateView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -189,17 +456,19 @@ class QuestionListCreateView(APIView):
 
         results = []
         for item in qs:
-            first_q = Question.objects.filter(question_set=item).order_by('order_index').first()
-            version_data = None
-            if first_q:
-                v = QuestionVersion.objects.filter(question=first_q).order_by('-version_number').first()
+            set_questions = list(Question.objects.filter(question_set=item).order_by('order_index'))
+            version_data = []
+            for question in set_questions:
+                v = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
                 if v:
-                    version_data = {
+                    version_data.append({
                         'id': str(v.id),
+                        'question_id': str(question.id),
+                        'order_index': question.order_index,
                         'version_number': v.version_number,
                         'prompt_preview': v.prompt[:160] + ('...' if len(v.prompt) > 160 else ''),
                         'is_published': v.is_published,
-                    }
+                    })
 
             results.append({
                 'id': str(item.id),
@@ -211,7 +480,9 @@ class QuestionListCreateView(APIView):
                 'is_active': item.is_active,
                 'created_by_name': item.created_by.full_name,
                 'created_at': item.created_at,
-                'latest_version': version_data,
+                'question_count': len(set_questions),
+                'latest_versions': version_data,
+                'latest_version': version_data[0] if version_data else None,
             })
 
         return Response(results)
@@ -247,37 +518,46 @@ class QuestionListCreateView(APIView):
                 is_active=True,
             )
 
-            q = Question.objects.create(
-                id=uuid.uuid4(),
-                question_set=q_set,
-                order_index=1,
-            )
+            questions_list = data.get('questions', [])
+            if not questions_list:
+                questions_list = [{
+                    'prompt': data['prompt'],
+                    'model_answer': data['model_answer'],
+                    'indicators': data.get('indicators', []),
+                }]
 
-            qv = QuestionVersion.objects.create(
-                id=uuid.uuid4(),
-                question=q,
-                version_number=1,
-                prompt=data['prompt'],
-                model_answer=data['model_answer'],
-                is_published=False,
-                created_by=request.user,
-            )
-
-            indicators_data = data.get('indicators', [])
-            for idx, ind in enumerate(indicators_data, start=1):
-                ConceptIndicator.objects.create(
+            for q_idx, q_item in enumerate(questions_list, start=1):
+                q = Question.objects.create(
                     id=uuid.uuid4(),
-                    question_version=qv,
-                    label=ind['label'],
-                    description=ind.get('description', ''),
-                    weight=ind['weight'],
-                    order_index=idx,
+                    question_set=q_set,
+                    order_index=q_idx,
                 )
 
-            if data.get('publish', False):
-                with connection.cursor() as cursor:
-                    cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(qv.id), str(request.user.id)])
-                qv.refresh_from_db()
+                qv = QuestionVersion.objects.create(
+                    id=uuid.uuid4(),
+                    question=q,
+                    version_number=1,
+                    prompt=q_item['prompt'],
+                    model_answer=q_item['model_answer'],
+                    is_published=False,
+                    created_by=request.user,
+                )
+
+                indicators_data = q_item.get('indicators', [])
+                for idx, ind in enumerate(indicators_data, start=1):
+                    ConceptIndicator.objects.create(
+                        id=uuid.uuid4(),
+                        question_version=qv,
+                        label=ind['label'],
+                        description=ind.get('description', ''),
+                        weight=ind['weight'],
+                        order_index=idx,
+                    )
+
+                if data.get('publish', False):
+                    with connection.cursor() as cursor:
+                        cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(qv.id), str(request.user.id)])
+                    qv.refresh_from_db()
 
         return Response({
             'id': str(q_set.id),
@@ -288,7 +568,6 @@ class QuestionListCreateView(APIView):
             'is_active': q_set.is_active,
             'message': 'Soal berhasil disimpan.',
         }, status=status.HTTP_201_CREATED)
-
 
 class QuestionDetailView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -303,30 +582,45 @@ class QuestionDetailView(APIView):
         if not is_lecturer_for_subject(request.user, q_set.subject_id):
             return Response({'detail': 'Anda tidak berwenang mengakses soal ini.'}, status=status.HTTP_403_FORBIDDEN)
 
-        q = Question.objects.filter(question_set=q_set).order_by('order_index').first()
-        versions = []
-        if q:
-            all_v = QuestionVersion.objects.filter(question=q).order_by('-version_number')
-            for v in all_v:
-                inds = ConceptIndicator.objects.filter(question_version=v).order_by('order_index')
+        questions = []
+        for question in Question.objects.filter(question_set=q_set).order_by('order_index'):
+            versions = []
+            for version in QuestionVersion.objects.filter(question=question).order_by('-version_number'):
+                indicators = ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
                 versions.append({
-                    'id': str(v.id),
-                    'version_number': v.version_number,
-                    'prompt': v.prompt,
-                    'model_answer': v.model_answer,
-                    'is_published': v.is_published,
-                    'created_at': v.created_at,
+                    'id': str(version.id),
+                    'version_number': version.version_number,
+                    'prompt': version.prompt,
+                    'model_answer': version.model_answer,
+                    'is_published': version.is_published,
+                    'created_at': version.created_at,
+                    'reference_answers': [
+                        {
+                            'id': str(reference.id),
+                            'answer_key': reference.answer_key,
+                            'answer_text': reference.answer_text,
+                            'answer_type': reference.answer_type,
+                            'is_primary': reference.is_primary,
+                        }
+                        for reference in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
+                    ],
                     'indicators': [
                         {
-                            'id': str(i.id),
-                            'label': i.label,
-                            'description': i.description or '',
-                            'weight': str(i.weight),
-                            'order_index': i.order_index,
+                            'id': str(indicator.id),
+                            'label': indicator.label,
+                            'description': indicator.description or '',
+                            'weight': str(indicator.weight),
+                            'order_index': indicator.order_index,
                         }
-                        for i in inds
-                    ]
+                        for indicator in indicators
+                    ],
                 })
+            questions.append({
+                'id': str(question.id),
+                'external_key': question.external_key,
+                'order_index': question.order_index,
+                'versions': versions,
+            })
 
         return Response({
             'id': str(q_set.id),
@@ -337,7 +631,7 @@ class QuestionDetailView(APIView):
             'subject_name': q_set.subject.name,
             'is_active': q_set.is_active,
             'created_at': q_set.created_at,
-            'versions': versions,
+            'questions': questions,
         })
 
     def put(self, request, pk):
@@ -406,7 +700,7 @@ class QuestionDetailView(APIView):
                         label=ind['label'],
                         description=ind.get('description', ''),
                         weight=ind['weight'],
-                        order_index=ind.get('order_index', idx),
+                        order_index=idx,
                     )
 
             if data.get('publish', False) and not target_v.is_published:
@@ -441,6 +735,51 @@ class QuestionToggleActiveView(APIView):
         })
 
 
+class QuestionSetPublishView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            q_set = QuestionSet.objects.get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang menerbitkan paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        questions = list(Question.objects.filter(question_set=q_set).order_by('order_index'))
+        if not questions:
+            return Response({'detail': 'Paket harus memiliki minimal satu pertanyaan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        versions = []
+        for question in questions:
+            version = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
+            if not version:
+                return Response({'detail': f'Pertanyaan ke-{question.order_index} belum memiliki versi.'}, status=status.HTTP_400_BAD_REQUEST)
+            total_weight = ConceptIndicator.objects.filter(question_version=version).aggregate(total=Sum('weight'))['total'] or Decimal('0')
+            if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
+                return Response({'detail': f'Bobot indikator pertanyaan ke-{question.order_index} harus tepat 1.0000.'}, status=status.HTTP_400_BAD_REQUEST)
+            versions.append(version)
+
+        try:
+            with transaction.atomic():
+                for version in versions:
+                    if not version.is_published:
+                        with connection.cursor() as cursor:
+                            cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(version.id), str(request.user.id)])
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'id': str(q_set.id),
+            'code': q_set.code,
+            'question_count': len(versions),
+            'is_published': True,
+            'message': 'Paket ujian berhasil diterbitkan.',
+        })
+
+
 class QuestionPublishView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -462,7 +801,7 @@ class QuestionPublishView(APIView):
             return Response({'detail': 'Versi soal berhasil dipublikasikan.', 'is_published': qv.is_published})
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-# ============================================================================
+
 # SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
 # ============================================================================
 
@@ -824,3 +1163,75 @@ class StudentSubmissionSetDetailView(APIView):
             {'detail': 'Pengumpulan untuk bank soal ini tidak ditemukan.'},
             status=status.HTTP_404_NOT_FOUND,
         )
+class LecturerSubmissionsView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        if user.is_superuser:
+            scoped = Submission.objects.all()
+        else:
+            lecturer_subjects = list(
+                UserSubjectRole.objects.filter(user=user, role=UserSubjectRole.Role.LECTURER)
+                .values_list('subject_id', flat=True)
+            )
+            if not lecturer_subjects:
+                return Response({'detail': 'Akses ditolak.'}, status=status.HTTP_403_FORBIDDEN)
+            scoped = Submission.objects.filter(subject_id__in=lecturer_subjects)
+
+        status_param = request.query_params.get('status')
+        if status_param:
+            scoped = scoped.filter(status=status_param)
+        subject_slug = request.query_params.get('subject_slug')
+        if subject_slug:
+            scoped = scoped.filter(subject__slug=subject_slug)
+
+        submissions = list(scoped.select_related('student', 'subject').order_by('-submitted_at')[:300])
+
+        analyses = {
+            a.submission_id: a
+            for a in LlmAnalysis.objects.filter(
+                submission_id__in=[s.id for s in submissions], is_current=True
+            )
+        }
+        validations = {
+            v.analysis_id: v
+            for v in Validation.objects.filter(
+                analysis_id__in=[a.id for a in analyses.values()]
+            )
+        }
+        versions = {
+            v.id: v
+            for v in QuestionVersion.objects.filter(
+                id__in={s.question_version_id for s in submissions}
+            ).select_related('question__question_set')
+        }
+
+        rows = []
+        for s in submissions:
+            version = versions.get(s.question_version_id)
+            question = version.question if version else None
+            qset = question.question_set if question else None
+            analysis = analyses.get(s.id)
+            validation = validations.get(analysis.id) if analysis else None
+            rows.append({
+                'id': str(s.id),
+                'student_name': s.student.full_name,
+                'student_email': s.student.email,
+                'subject_slug': s.subject.slug,
+                'subject_name': s.subject.name,
+                'question_code': qset.code if qset else None,
+                'question_title': qset.title if qset else None,
+                'version_number': version.version_number if version else None,
+                'prompt_preview': (version.prompt[:240] + 'â€¦') if version and version.prompt else '',
+                'answer': s.answer_text,
+                'status': s.status,
+                'submitted_at': s.submitted_at.isoformat() if s.submitted_at else None,
+                'score': float(analysis.percentage_correct) if analysis and analysis.percentage_correct is not None else None,
+                'tier_label': analysis.tier_label_snapshot if analysis else None,
+                'validation_status': validation.status if validation else None,
+            })
+
+        return Response({'submissions': rows})

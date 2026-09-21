@@ -13,14 +13,13 @@ class User(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # DRF compatibility (custom user model, not django.contrib.auth):
-    # IsAuthenticated checks these; AnonymousUser has the inverse values.
-    is_authenticated = True
-    is_anonymous = False
-
     class Meta:
         db_table = 'users'
         managed = False
+
+    @property
+    def is_authenticated(self):
+        return True
 
     def __str__(self):
         return self.email
@@ -118,6 +117,7 @@ class QuestionSet(models.Model):
 class Question(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     question_set = models.ForeignKey(QuestionSet, on_delete=models.CASCADE, db_column='question_set_id', related_name='questions')
+    external_key = models.CharField(max_length=100, null=True, blank=True)
     order_index = models.IntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -152,6 +152,56 @@ class ConceptIndicator(models.Model):
 
     class Meta:
         db_table = 'concept_indicators'
+        managed = False
+
+
+class ReferenceAnswer(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question_version = models.ForeignKey(QuestionVersion, on_delete=models.CASCADE, db_column='question_version_id')
+    answer_key = models.CharField(max_length=100, null=True, blank=True)
+    answer_text = models.TextField()
+    answer_type = models.CharField(max_length=30, default='CANONICAL')
+    is_primary = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'reference_answers'
+        managed = False
+
+
+class ImportJob(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    requested_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='requested_by')
+    file_name = models.CharField(max_length=255)
+    package_code = models.CharField(max_length=64)
+    package_title = models.CharField(max_length=255)
+    package_description = models.TextField(null=True, blank=True)
+    import_type = models.CharField(max_length=30, default='QUESTION_ANSWER_CSV')
+    status = models.CharField(max_length=30, default='UPLOADED')
+    total_rows = models.IntegerField(default=0)
+    valid_rows = models.IntegerField(default=0)
+    invalid_rows = models.IntegerField(default=0)
+    error_summary = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'import_jobs'
+        managed = False
+
+
+class ImportRow(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    import_job = models.ForeignKey(ImportJob, on_delete=models.CASCADE, db_column='import_job_id', related_name='rows')
+    row_number = models.IntegerField()
+    question_key = models.CharField(max_length=100, null=True, blank=True)
+    raw_data = models.JSONField(default=dict)
+    status = models.CharField(max_length=20, default='VALID')
+    errors = models.JSONField(default=list)
+
+    class Meta:
+        db_table = 'import_rows'
         managed = False
 
 

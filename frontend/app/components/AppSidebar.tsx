@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -8,6 +8,7 @@ import {
   Building2,
   ClipboardList,
   FileSearch,
+  CircleHelp,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -40,10 +41,12 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
   { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
+  { label: "Jawaban Mahasiswa", path: "/submissions", icon: ClipboardList, roles: ["ADMIN", "LECTURER"] },
   { label: "Validasi", path: "/validation", icon: ShieldCheck, roles: ["ADMIN", "LECTURER"] },
   { label: "Metrik AI", path: "/metrics", icon: BarChart3, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
+  { label: "Bantuan", path: "/help", icon: CircleHelp, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
 ];
 
 function toAppRole(role?: string): AppRole {
@@ -55,11 +58,12 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const pathname = usePathname();
   const router = useRouter();
   // Must start false on the server AND on the first client render (hydration),
-  // then flip in an effect — see React's two-pass pattern. Diverging here causes
+  // then flip in an effect â€” see React's two-pass pattern. Diverging here causes
   // a hydration mismatch and a client-side re-render of the whole shell.
   const [mounted, setMounted] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentSearch, setCurrentSearch] = useState("");
+  const [selectedRole, setSelectedRole] = useState<AppRole | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setMounted(true), 0);
@@ -72,6 +76,8 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     setCurrentSearch(window.location.search);
+    const storedRole = window.localStorage.getItem("selected_role");
+    if (storedRole) setSelectedRole(toAppRole(storedRole));
   }, [pathname]);
 
   const isPublic = pathname === "/" || pathname === "/login" || pathname === "/select-role";
@@ -90,7 +96,8 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
 
   if (!user) return null;
 
-  const appRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
+  const fallbackRole = user.is_superuser ? "ADMIN" : toAppRole(user.roles?.[0]?.role);
+  const appRole = user.is_superuser ? "ADMIN" : selectedRole ?? fallbackRole;
   const items = MENU_ITEMS.filter((item) => item.roles.includes(appRole));
 
   // set by an effect (below) so the first client render matches the server

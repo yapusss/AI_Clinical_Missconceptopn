@@ -81,6 +81,9 @@ function AnswerSetContent() {
   const [notice, setNotice] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [started, setStarted] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState(45 * 60);
 
   const load = useCallback(async () => {
     if (!code) {
@@ -108,6 +111,12 @@ function AnswerSetContent() {
     }
     void load();
   }, [user, loading, router, load]);
+
+  useEffect(() => {
+    if (!started || remainingSeconds <= 0) return;
+    const timer = window.setInterval(() => setRemainingSeconds((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [started, remainingSeconds]);
 
   const handleSubmit = async (question: StudentQuestion) => {
     const text = (answers[question.question_id] ?? "").trim();
@@ -147,6 +156,7 @@ function AnswerSetContent() {
       setNotice(
         `Jawaban tersimpan pada percobaan ke-${res.attempt_no}. Menunggu analisis dan validasi dosen pengampu.`,
       );
+      if (data && activeIndex < data.questions.length - 1) setActiveIndex((index) => index + 1);
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -157,6 +167,23 @@ function AnswerSetContent() {
   if (loading || !user) return null;
 
   const answered = data ? data.questions.filter((q) => q.latest_submission).length : 0;
+  const activeQuestion = data?.questions[activeIndex];
+  const formattedTime = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
+
+  if (data && !started) {
+    return (
+      <div style={{ maxWidth: "760px", margin: "0 auto" }}>
+        <Link href="/code" className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary"><ArrowLeft size={14} /> Kembali ke input kode</Link>
+        <section className="glass-panel mt-6 rounded-xl border border-outline-variant/40 p-8">
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ClipboardList size={14} /> Instruksi Ujian</div>
+          <h1 className="mt-3 font-display text-2xl font-bold text-on-surface">{data.title}</h1>
+          <p className="mt-2 whitespace-pre-line text-sm text-on-surface-variant">{data.description || "Jawab seluruh pertanyaan dengan menjelaskan alasan konseptual Anda."}</p>
+          <ul className="mt-6 space-y-2 text-sm text-on-surface-variant"><li>{data.questions.length} pertanyaan</li><li>Durasi 45 menit</li><li>Jawaban dikirim per pertanyaan dan dapat diperbaiki sebagai percobaan berikutnya</li></ul>
+          <button type="button" onClick={() => setStarted(true)} className="btn-primary mt-8">Mulai Ujian <Send size={16} /></button>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
@@ -191,7 +218,7 @@ function AnswerSetContent() {
 
         {data && data.questions.length > 0 && (
           <div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">
-            Terjawab <span className="font-mono-ui text-primary">{answered}</span> / {data.questions.length}
+            <span className="font-mono-ui text-primary">{formattedTime}</span> · Terjawab <span className="font-mono-ui text-primary">{answered}</span> / {data.questions.length}
           </div>
         )}
       </div>
@@ -224,7 +251,7 @@ function AnswerSetContent() {
         </div>
       ) : (
         <div className="mt-8 space-y-6">
-          {data?.questions.map((question) => {
+          {activeQuestion && [activeQuestion].map((question) => {
             const latest = question.latest_submission;
             const meta = latest ? statusMeta(latest.status) : null;
             const isSubmitting = submittingId === question.question_id;
@@ -237,7 +264,7 @@ function AnswerSetContent() {
                 <header className="flex flex-col gap-3 border-b border-outline-variant/40 bg-surface-container-low px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
                     <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-surface-container-high font-mono-ui text-sm font-bold text-on-surface">
-                      {question.order_index}
+                      {question.order_index} / {data?.questions.length}
                     </span>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
@@ -305,6 +332,11 @@ function AnswerSetContent() {
             );
           })}
         </div>
+      )}
+      {started && data && data.questions.length > 1 && (
+        <nav className="mt-6 flex flex-wrap gap-2" aria-label="Navigasi pertanyaan">
+          {data.questions.map((question, index) => <button key={question.question_id} type="button" onClick={() => setActiveIndex(index)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border text-sm font-semibold ${index === activeIndex ? "border-primary bg-primary text-white" : "border-outline-variant/50 text-on-surface"}`}>{index + 1}</button>)}
+        </nav>
       )}
     </div>
   );

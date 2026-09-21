@@ -73,10 +73,16 @@ class ConceptIndicatorSerializer(serializers.Serializer):
 class QuestionVersionSerializer(serializers.Serializer):
     id = serializers.UUIDField(read_only=True)
     version_number = serializers.IntegerField(read_only=True)
-    prompt = serializers.CharField()
-    model_answer = serializers.CharField()
+    prompt = serializers.CharField(required=False, default='')
+    model_answer = serializers.CharField(required=False, default='')
     is_published = serializers.BooleanField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
+    indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
+
+
+class QuestionItemCreateSerializer(serializers.Serializer):
+    prompt = serializers.CharField()
+    model_answer = serializers.CharField()
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
 
 
@@ -86,9 +92,11 @@ class QuestionSetCreateSerializer(serializers.Serializer):
     code = serializers.CharField(max_length=64)
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, default="")
-    prompt = serializers.CharField()
-    model_answer = serializers.CharField()
+    
+    prompt = serializers.CharField(required=False)
+    model_answer = serializers.CharField(required=False)
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
+    questions = QuestionItemCreateSerializer(many=True, required=False, default=list)
     publish = serializers.BooleanField(default=False)
 
     def validate_code(self, value):
@@ -100,6 +108,18 @@ class QuestionSetCreateSerializer(serializers.Serializer):
         return val
 
     def validate(self, attrs):
+        questions = attrs.get('questions', [])
+        if questions:
+            first_q = questions[0]
+            attrs['prompt'] = first_q['prompt']
+            attrs['model_answer'] = first_q['model_answer']
+            attrs['indicators'] = first_q.get('indicators', [])
+        else:
+            if not attrs.get('prompt'):
+                raise serializers.ValidationError({'prompt': ['This field is required.']})
+            if not attrs.get('model_answer'):
+                raise serializers.ValidationError({'model_answer': ['This field is required.']})
+
         indicators = attrs.get('indicators', [])
         publish = attrs.get('publish', False)
 

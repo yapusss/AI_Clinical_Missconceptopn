@@ -8,6 +8,9 @@ const eslintConfig = defineConfig([
   {
     rules: {
       "@next/next/no-location-assign-relative-destination": "off",
+      // The app intentionally reads browser state (token/theme) inside effects to
+      // avoid hydration mismatches (see AuthProvider / AppSidebar).
+      "react-hooks/set-state-in-effect": "off",
     },
   },
   // Override default ignores of eslint-config-next.
