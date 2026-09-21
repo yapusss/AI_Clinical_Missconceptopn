@@ -14,6 +14,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from .authentication import TokenAuthentication
 from .models import (
@@ -527,35 +529,79 @@ def _normalize_import_row(raw):
     return {str(key).strip(): (value or '').strip() for key, value in raw.items() if key}
 
 
-def _read_xlsx_rows(upload):
+def _read_xlsx_rows(upload, subject_name=None):
     try:
-        workbook = load_workbook(upload, read_only=True, data_only=True)
+        workbook = load_workbook(upload, read_only=False, data_only=True)
     except Exception as exc:
         raise ValueError('File Excel tidak dapat dibaca. Gunakan template yang disediakan.') from exc
-    if not {'Bank Soal', 'Bank Jawaban'}.issubset(workbook.sheetnames):
-        raise ValueError('File Excel harus memiliki sheet "Bank Soal" dan "Bank Jawaban".')
 
-    def rows_from_sheet(name):
-        values = workbook[name].iter_rows(values_only=True)
-        headers = [str(value).strip() if value is not None else '' for value in next(values, ())]
-        return [_normalize_import_row(dict(zip(headers, row))) for row in values if any(value is not None for value in row)]
+    # Pilih sheet: coba cari sheet yang sesuai nama mata kuliah, jika tidak ada pakai sheet aktif
+    target_sheet = None
+    if subject_name:
+        for sname in workbook.sheetnames:
+            if sname.strip().lower() == subject_name.strip().lower() or sname[:31].lower() == subject_name[:31].lower():
+                target_sheet = workbook[sname]
+                break
 
-    question_rows = {row.get('order_index', ''): row for row in rows_from_sheet('Bank Soal')}
-    answer_rows = {row.get('order_index', ''): row for row in rows_from_sheet('Bank Jawaban')}
-    if not question_rows or not answer_rows:
-        raise ValueError('Sheet Bank Soal dan Bank Jawaban harus memiliki data.')
-    return [
-        {
-            'order_index': order_index,
-            'prompt': question.get('prompt', ''),
-            'topic': question.get('topic', ''),
-            'difficulty': question.get('difficulty', ''),
-            'reference_answer': answer_rows.get(order_index, {}).get('reference_answer', ''),
-            'answer_key': answer_rows.get(order_index, {}).get('answer_key', ''),
-            'indicators': answer_rows.get(order_index, {}).get('indicators', ''),
-        }
-        for order_index, question in question_rows.items()
-    ]
+    # Fallback legacy: periksa 'Bank Soal'
+    if not target_sheet:
+        if 'Bank Soal' in workbook.sheetnames:
+            target_sheet = workbook['Bank Soal']
+        else:
+            target_sheet = workbook.active
+
+    # Cari baris header secara dinamis (mencari baris yang memuat 'prompt' atau 'PERTANYAAN_KONSEPTUAL')
+    header_row_idx = None
+    headers = []
+    for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
+        row_str = [str(c).strip().upper() if c is not None else '' for c in row]
+        if any('PROMPT' in c or 'PERTANYAAN' in c for c in row_str):
+            header_row_idx = r_idx
+            headers = [str(c).strip() if c is not None else '' for c in row]
+            break
+
+    if not header_row_idx:
+        raise ValueError('Baris header tidak ditemukan. Pastikan menggunakan template yang disediakan.')
+
+    # Mapping nama kolom baru ke key standar
+    COLUMN_MAP = {
+        'KODE_PAKET_UNIK': 'code',
+        'JUDUL_UJIAN': 'title',
+        'DESKRIPSI_INSTRUKSI': 'description',
+        'NOMOR_SOAL': 'order_index',
+        'ORDER_INDEX': 'order_index',
+        'PERTANYAAN_KONSEPTUAL': 'prompt',
+        'PROMPT': 'prompt',
+        'JAWABAN_REFERENSI': 'reference_answer',
+        'REFERENCE_ANSWER': 'reference_answer',
+        'INDIKATOR_KONSEP': 'indicators',
+        'INDICATORS': 'indicators',
+        'ANSWER_KEY': 'answer_key',
+    }
+
+    normalized_headers = [COLUMN_MAP.get(h.upper(), h.lower()) for h in headers]
+
+    rows = []
+    for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
+        if r_idx <= header_row_idx:
+            continue
+        if not any(c is not None and str(c).strip() for c in row):
+            continue  # Lewati baris kosong
+        raw_dict = dict(zip(normalized_headers, row))
+        rows.append(_normalize_import_row({
+            'order_index': raw_dict.get('order_index', len(rows) + 1),
+            'prompt': raw_dict.get('prompt', ''),
+            'reference_answer': raw_dict.get('reference_answer', ''),
+            'indicators': raw_dict.get('indicators', '') or 'Ketepatan konsep:1.0000',
+            'answer_key': raw_dict.get('answer_key', f"Q-{len(rows)+1}"),
+            'code': raw_dict.get('code', ''),
+            'title': raw_dict.get('title', ''),
+            'description': raw_dict.get('description', ''),
+        }))
+
+    if not rows:
+        raise ValueError(f'Sheet "{target_sheet.title}" tidak memiliki data soal.')
+    return rows
 
 
 def _read_question_import(upload):
@@ -640,7 +686,7 @@ class QuestionImportCreateView(APIView):
         if QuestionSet.objects.filter(code__iexact=code).exists():
             return Response({'detail': 'Kode paket sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            parsed_rows = _read_question_import(request.FILES.get('file'))
+            parsed_rows = _read_question_import(request.FILES.get('file'), subject_name=subject.name)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -666,27 +712,149 @@ class QuestionImportCreateView(APIView):
             'invalid_rows': job.invalid_rows, 'errors': errors,
         }, status=status.HTTP_201_CREATED)
 
-
 class QuestionImportTemplateView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        subjects = list(Subject.objects.filter(is_active=True).order_by('name'))
+        if not subjects:
+            # Fallback jika belum ada subject di DB
+            subjects = [Subject(name="Physics", slug="physics")]
+
         workbook = Workbook()
-        questions = workbook.active
-        questions.title = 'Bank Soal'
-        questions.append(['order_index', 'prompt', 'topic', 'difficulty'])
-        questions.append([1, 'Pertanyaan konseptual', 'Topik', 'Sedang'])
-        answers = workbook.create_sheet('Bank Jawaban')
-        answers.append(['order_index', 'reference_answer', 'answer_key', 'indicators'])
-        answers.append([1, 'Jawaban referensi', 'ANS-001', 'Konsep utama:1.0000'])
+        # Hapus sheet default pertama
+        default_sheet = workbook.active
+
+        # Style Definitions
+        banner_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid") # Amber soft
+        banner_font = Font(name="Calibri", size=11, bold=True, color="92400E")
+        banner_border = Border(
+            left=Side(style="thin", color="F59E0B"),
+            right=Side(style="thin", color="F59E0B"),
+            top=Side(style="thin", color="F59E0B"),
+            bottom=Side(style="thin", color="F59E0B"),
+        )
+
+        header_fill = PatternFill(start_color="00288E", end_color="00288E", fill_type="solid") # EvalAI Academic Blue
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+
+        thin_border = Border(
+            left=Side(style="thin", color="E5E7EB"),
+            right=Side(style="thin", color="E5E7EB"),
+            top=Side(style="thin", color="E5E7EB"),
+            bottom=Side(style="thin", color="E5E7EB"),
+        )
+        data_font = Font(name="Calibri", size=10)
+
+        headers = [
+            "KODE_PAKET_UNIK",
+            "JUDUL_UJIAN",
+            "DESKRIPSI_INSTRUKSI",
+            "NOMOR_SOAL",
+            "PERTANYAAN_KONSEPTUAL",
+            "JAWABAN_REFERENSI",
+            "INDIKATOR_KONSEP",
+        ]
+
+        for idx, subj in enumerate(subjects):
+            # Batas nama sheet Excel maksimal 31 karakter
+            sheet_title = subj.name[:31]
+            ws = workbook.create_sheet(title=sheet_title)
+
+            # 1. Warning Banner (Baris 1 - 3, Kolom A - G)
+            ws.merge_cells("A1:G3")
+            banner_cell = ws["A1"]
+            banner_cell.value = (
+                f"⚠️ ANDA SEDANG BERADA DI SHEET: {subj.name.upper()}\n"
+                f"TOLONG GANTI TAB SHEET DI BAGIAN BAWAH EXCEL UNTUK MATA KULIAH LAINNYA.\n"
+                f"Pastikan seluruh soal pada sheet ini memang diperuntukkan bagi mata kuliah {subj.name}."
+            )
+            banner_cell.fill = banner_fill
+            banner_cell.font = banner_font
+            banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+            # Terapkan border pada range A1:G3
+            for r in range(1, 4):
+                for c in range(1, 8):
+                    ws.cell(row=r, column=c).border = banner_border
+
+            # Set tinggi baris banner
+            ws.row_dimensions[1].height = 18
+            ws.row_dimensions[2].height = 18
+            ws.row_dimensions[3].height = 18
+            ws.row_dimensions[4].height = 10  # Spacer row
+
+            # 2. Header Kolom (Baris 5)
+            ws.row_dimensions[5].height = 28
+            for col_num, header in enumerate(headers, start=1):
+                cell = ws.cell(row=5, column=col_num, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+            # 3. Baris Contoh Data (Baris 6 & 7)
+            sample_prefix = "FIS" if "phys" in subj.name.lower() else "BIO"
+            sample_rows = [
+                [
+                    f"{sample_prefix}-NEWT-01",
+                    f"Evaluasi Konseptual {subj.name} Bagian 1",
+                    "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
+                    1,
+                    "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
+                    "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
+                    "Hukum Newton:0.5|Analisis Gaya:0.5",
+                ],
+                [
+                    f"{sample_prefix}-NEWT-01",
+                    f"Evaluasi Konseptual {subj.name} Bagian 1",
+                    "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
+                    2,
+                    "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
+                    "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
+                    "Ketepatan konsep:1.0000",
+                ],
+            ]
+
+            for row_idx, row_data in enumerate(sample_rows, start=6):
+                ws.row_dimensions[row_idx].height = 36
+                for col_idx, val in enumerate(row_data, start=1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.font = data_font
+                    cell.border = thin_border
+                    cell.alignment = Alignment(
+                        horizontal="center" if col_idx in [1, 4] else "left",
+                        vertical="center",
+                        wrap_text=True,
+                    )
+
+            # 4. Auto-Fit Kolom (Poin 3: agar kata tidak terpotong)
+            for col in ws.columns:
+                col_letter = get_column_letter(col[0].column)
+                max_len = 0
+                for cell in col:
+                    if cell.row < 5:  # Lewati baris banner
+                        continue
+                    val_str = str(cell.value or "")
+                    lines = val_str.split("\n")
+                    longest_line = max(len(l) for l in lines) if lines else 0
+                    if longest_line > max_len:
+                        max_len = longest_line
+                
+                # Tambahkan margin padding 4 karakter (min 16, max 50 agar proporsional)
+                ws.column_dimensions[col_letter].width = min(max(max_len + 4, 16), 55)
+
+        # Hapus default sheet kosong jika ada sheet lain
+        if len(workbook.sheetnames) > 1 and "Sheet" in workbook.sheetnames:
+            del workbook["Sheet"]
+
         output = io.BytesIO()
         workbook.save(output)
         response = HttpResponse(
             output.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response['Content-Disposition'] = 'attachment; filename="template-bank-soal.xlsx"'
+        response["Content-Disposition"] = 'attachment; filename="template-bank-soal-multi-matkul.xlsx"'
         return response
 
 

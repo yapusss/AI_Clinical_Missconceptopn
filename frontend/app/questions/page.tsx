@@ -10,6 +10,7 @@ import {
   GraduationCap,
   Pencil,
   FileUp,
+  Pencil,
   Plus,
   Send,
   Trash2,
@@ -331,9 +332,9 @@ export default function QuestionsPage() {
   if (!user) return null;
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
       {/* Header Halaman */}
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
             <ClipboardList size={14} /> Paket Ujian
@@ -374,14 +375,14 @@ export default function QuestionsPage() {
       {/* Tabel Daftar Soal Responsif */}
       <div className="mt-8 rounded-xl border border-outline-variant/40 bg-surface-container-lowest shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
+          <table className="w-full text-left text-sm">
             <thead className="border-b border-outline-variant/40 bg-surface-container-low text-on-surface-variant font-semibold">
               <tr>
-                <th className="px-5 py-4 text-left">Kode</th>
-                <th className="px-5 py-4 text-left">Paket</th>
-                <th className="px-5 py-4 text-left">Mata Kuliah</th>
-                <th className="px-5 py-4 text-left">Status</th>
-                <th className="px-5 py-4 text-left">Aksi</th>
+                <th className="px-4 py-3.5 text-left whitespace-nowrap">Kode</th>
+                <th className="px-4 py-3.5 text-left">Paket</th>
+                <th className="px-4 py-3.5 text-left whitespace-nowrap">Mata Kuliah</th>
+                <th className="px-4 py-3.5 text-left whitespace-nowrap">Status</th>
+                <th className="px-4 py-3.5 text-left whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/30">
@@ -393,31 +394,33 @@ export default function QuestionsPage() {
                 return (
                   <tr key={item.id} className="hover:bg-primary-fixed/5 transition-colors">
                     {/* Kode Soal */}
-                    <td className="px-5 py-4 font-mono-ui font-bold text-primary text-left">
+                    <td className="px-4 py-3.5 font-mono-ui font-bold text-primary text-left whitespace-nowrap align-middle">
                       {item.code}
                     </td>
 
-                    {/* Judul Paket */}
-                    <td className="px-5 py-4 text-left">
-                      <div className="font-semibold text-on-surface">{item.title}</div>
-                      <div className="text-xs text-on-surface-variant">
+                    {/* Judul Paket (Otomatis patah baris jika teks panjang tanpa spasi) */}
+                    <td className="px-4 py-3.5 text-left align-middle max-w-[160px] sm:max-w-[220px]">
+                      <div className="font-semibold text-on-surface leading-snug break-all sm:break-words">
+                        {item.title}
+                      </div>
+                      <div className="text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
                         {item.question_count} pertanyaan
                       </div>
                     </td>
 
                     {/* Mata Kuliah */}
-                    <td className="px-5 py-4 text-left text-on-surface-variant">
+                    <td className="px-4 py-3.5 text-left text-on-surface-variant whitespace-nowrap align-middle">
                       {item.subject_name}
                     </td>
 
-                    {/* Status Publikasi & Aktif */}
-                    <td className="px-5 py-4 text-left">
-                      <div className="inline-flex items-center gap-2">
+                    {/* STATUS: PASTI TURUN KE BARIS BERIKUTNYA (STACK VERTIKAL) */}
+                    <td className="px-4 py-3.5 text-left align-middle whitespace-nowrap">
+                      <div className="flex flex-col items-start gap-1">
                         <span className={`badge ${published ? "badge-active" : "badge-draft"}`}>
                           {published ? "Terbit" : "Draft"}
                         </span>
                         <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${
                             item.is_active
                               ? "border border-tertiary/40 bg-tertiary/10 text-tertiary"
                               : "border border-error/40 bg-error/10 text-error"
@@ -464,8 +467,8 @@ export default function QuestionsPage() {
                           onClick={() => item.is_active ? setPendingDeactivate(item) : void toggleActiveSet(item.id)}
                           className={`btn-secondary table-action-button transition-colors ${
                             item.is_active
-                              ? "text-error hover:bg-error-container/40"
-                              : "text-tertiary hover:bg-tertiary-container/30"
+                              ? "border-error/40 bg-surface-container-lowest text-error hover:bg-error-container/40"
+                              : "border-tertiary/40 bg-surface-container-lowest text-tertiary hover:bg-tertiary-container/30"
                           }`}
                           aria-label={item.is_active ? "Nonaktifkan paket ujian" : "Aktifkan paket ujian"}
                           title={item.is_active ? "Nonaktifkan paket ujian" : "Aktifkan paket ujian"}
@@ -494,7 +497,7 @@ export default function QuestionsPage() {
         </div>
 
         {!sets.length && (
-          <p className="p-10 text-center text-sm text-on-surface-variant">
+          <p className="p-8 text-center text-sm text-on-surface-variant">
             Belum ada paket ujian.
           </p>
         )}
@@ -541,7 +544,7 @@ export default function QuestionsPage() {
               </button>
             </div>
 
-            {/* Pemilihan Mode (Hanya saat pembuatan baru) */}
+            {/* Pemilihan Mode */}
             {!creationMode && !editingId && (
               <div className="mt-6 grid gap-4 sm:grid-cols-2">
                 <button
@@ -606,9 +609,9 @@ export default function QuestionsPage() {
               </div>
             )}
 
-            {/* Mode Manual Form (Pembuatan Baru & Edit) */}
+            {/* Mode Manual Form */}
             {creationMode === "manual" && (
-              <form onSubmit={submit} className="mt-5 space-y-6">
+              <form onSubmit={submit} className="mt-5 space-y-5">
                 {/* Meta Paket Soal */}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
@@ -660,11 +663,11 @@ export default function QuestionsPage() {
                 </div>
 
                 {/* Daftar Pertanyaan */}
-                <div className="space-y-5">
+                <div className="space-y-4">
                   {questions.map((question, questionIndex) => (
                     <section
                       key={questionIndex}
-                      className="rounded-xl border border-outline-variant/40 bg-surface-container-low p-5"
+                      className="rounded-xl border border-outline-variant/40 bg-surface-container-low p-4"
                     >
                       <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
                         <h3 className="font-semibold text-on-surface">
@@ -683,7 +686,7 @@ export default function QuestionsPage() {
                       </div>
 
                       {/* Prompt Pertanyaan */}
-                      <div className="mt-4">
+                      <div className="mt-3">
                         <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                           Pertanyaan Konseptual
                         </label>
@@ -694,13 +697,13 @@ export default function QuestionsPage() {
                           }
                           required
                           placeholder="Tuliskan teks pertanyaan konseptual lengkap..."
-                          rows={4}
+                          rows={3}
                           className="form-input mt-1 w-full"
                         />
                       </div>
 
                       {/* Jawaban Referensi */}
-                      <div className="mt-4">
+                      <div className="mt-3">
                         <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                           Jawaban Referensi (Model Answer)
                         </label>
@@ -717,7 +720,7 @@ export default function QuestionsPage() {
                       </div>
 
                       {/* Indikator Konsep */}
-                      <div className="mt-4">
+                      <div className="mt-3">
                         <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                           Indikator Konsep Asesmen
                         </label>
@@ -738,12 +741,12 @@ export default function QuestionsPage() {
                                   )
                                 }
                                 required
-                                placeholder="Label indikator konsep"
-                                className="form-input"
+                                placeholder="Label indikator"
+                                className="form-input text-xs"
                               />
                               <input
                                 type="number"
-                                step="any"
+                                step="0.1"
                                 min="0"
                                 max="1"
                                 value={indicator.weight}
@@ -756,7 +759,7 @@ export default function QuestionsPage() {
                                   )
                                 }
                                 required
-                                className="form-input font-mono-ui"
+                                className="form-input font-mono-ui text-xs"
                               />
                               <button
                                 type="button"
@@ -812,7 +815,7 @@ export default function QuestionsPage() {
                                 : "text-error"
                             }`}
                           >
-                            Total bobot: {(totals[questionIndex] ?? 0).toFixed(4)}
+                            Bobot: {(totals[questionIndex] ?? 0).toFixed(4)}
                           </span>
                         </div>
                       </div>
@@ -832,14 +835,14 @@ export default function QuestionsPage() {
                 )}
 
                 {/* Checklist Publikasi */}
-                <label className="flex items-center gap-2 pt-2 text-sm text-on-surface">
+                <label className="flex items-center gap-2 pt-1 text-sm text-on-surface">
                   <input
                     type="checkbox"
                     checked={publish}
                     onChange={(event) => setPublish(event.target.checked)}
                     className="h-4 w-4 rounded border-outline-variant text-primary"
                   />
-                  Terbitkan setelah semua pertanyaan valid (memerlukan bobot tepat 1.0000)
+                  Terbitkan setelah valid (total bobot 1.0000)
                 </label>
 
                 {/* Footer Modal Actions */}
