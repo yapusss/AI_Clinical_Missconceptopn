@@ -24,9 +24,10 @@ export default function AdminUserManagement({ role, title, description, token }:
     ]);
     if (!userResponse.ok) throw new Error("Gagal memuat data akun.");
     const data = await userResponse.json();
-    const summary = await subjectResponse.json();
+    if (!subjectResponse.ok) throw new Error("Gagal memuat daftar mata kuliah.");
+    const subjectData = await subjectResponse.json();
     setUsers(data);
-    setSubjects(await subjectResponse.json());
+    setSubjects(subjectData);
   }
 
   useEffect(() => { void load().catch((caught) => setError(caught instanceof Error ? caught.message : "Gagal memuat data.")); }, [role, token]);
