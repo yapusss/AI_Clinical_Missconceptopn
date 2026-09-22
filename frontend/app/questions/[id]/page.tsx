@@ -50,20 +50,6 @@ const STATUS_META: Record<string, { label: string; badge: string }> = {
   REJECTED: { label: "Ditolak", badge: "badge-revoked" },
 };
 
-const VALIDATION_LABEL: Record<string, string> = {
-  ACCEPTED: "Diterima",
-  EDITED: "Diedit",
-  REJECTED: "Ditolak",
-};
-
-const fmtDate = (value: string) => {
-  try {
-    return new Date(value).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return value;
-  }
-};
-
 export default function QuestionSetReviewPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -125,14 +111,10 @@ export default function QuestionSetReviewPage() {
                 <div><h2 className="font-display text-lg font-bold text-on-surface">{student.student_name}</h2><p className="mt-1 text-sm text-on-surface-variant">{student.student_email}</p></div>
                 <span className={`badge ${student.answered_count === student.published_question_count && student.published_question_count > 0 ? "badge-active" : "badge-draft"}`}>Terjawab {student.answered_count} / {student.published_question_count}</span>
               </div>
-              {student.latest_submissions.length === 0 ? <p className="mt-4 text-sm text-on-surface-variant">Belum ada jawaban dikumpulkan.</p> : (
-                <div className="mt-4 divide-y divide-outline-variant/30 rounded-lg border border-outline-variant/40">
-                  {student.latest_submissions.map((submission) => {
-                    const status = STATUS_META[submission.status] ?? { label: submission.status, badge: "badge-role" };
-                    return <div key={submission.question_id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="text-sm font-semibold text-on-surface">Soal {submission.order_index} · {submission.question_prompt_preview}</p><p className="mt-1 text-xs text-on-surface-variant">Percobaan {submission.attempt_no} · {fmtDate(submission.submitted_at)}</p></div><div className="flex shrink-0 flex-wrap items-center gap-2"><span className={`badge ${status.badge}`}>{status.label}</span>{submission.validation_status && <span className="badge badge-active">{VALIDATION_LABEL[submission.validation_status] ?? submission.validation_status}</span>}{submission.analysis_id && <Link href={`/validation/${submission.analysis_id}`} className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white no-underline">Tinjau analisis <ArrowRight size={14} /></Link>}</div></div>;
-                  })}
-                </div>
-              )}
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                {student.latest_submissions.length === 0 ? <p className="text-sm text-on-surface-variant">Belum ada jawaban dikumpulkan.</p> : <div className="flex flex-wrap gap-2">{Object.entries(student.latest_submissions.reduce<Record<string, number>>((counts, submission) => ({ ...counts, [submission.status]: (counts[submission.status] ?? 0) + 1 }), {})).map(([status, count]) => { const meta = STATUS_META[status] ?? { label: status, badge: "badge-role" }; return <span key={status} className={`badge ${meta.badge}`}>{count} {meta.label}</span>; })}</div>}
+                {student.answered_count > 0 && <Link href={`/questions/${setId}/students/${student.student_id}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white no-underline">Review paket <ArrowRight size={15} /></Link>}
+              </div>
             </article>
           ))}
         </div>

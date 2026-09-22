@@ -320,6 +320,84 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(body['students'][0]['published_question_count'], 1)
         self.assertEqual(body['students'][0]['latest_submissions'], [])
 
+    def test_lecturer_package_student_review_includes_answers_and_unanswered_questions(self):
+        lecturer = User.objects.create(
+            id=uuid.uuid4(), email=f'lecturer_package_{uuid.uuid4().hex[:8]}@acm.local',
+            full_name='Lecturer Package', password_hash='!', is_active=True, is_superuser=False,
+        )
+        UserSubjectRole.objects.create(
+            user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER
+        )
+        self._add_published_question()
+        submission = Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            question_version_id=self.version.id, answer_text='Jawaban paket.', attempt_no=1,
+            status='ANALYSIS_FAILED',
+        )
+        self._auth(lecturer)
+
+        response = self.client.get(reverse('question-set-student-review', kwargs={
+            'pk': self.q_set.id, 'student_id': self.student.id,
+        }))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['package']['id'], str(self.q_set.id))
+        self.assertEqual(body['student']['id'], str(self.student.id))
+        self.assertEqual(body['published_question_count'], 2)
+        self.assertEqual(body['answered_count'], 1)
+        self.assertEqual(body['questions'][0]['submission']['id'], str(submission.id))
+        self.assertEqual(body['questions'][0]['submission']['answer_text'], 'Jawaban paket.')
+        self.assertEqual(body['questions'][0]['model_answer'], self.version.model_answer)
+        self.assertEqual(body['questions'][0]['indicators'][0]['label'], 'Ketepatan Konsep')
+        self.assertIsNone(body['questions'][0]['analysis'])
+        self.assertEqual(body['questions'][1]['status'], 'UNANSWERED')
+        self.assertIsNone(body['questions'][1]['submission'])
+
+    def test_lecturer_package_student_review_is_scoped_to_assigned_subject(self):
+        self._auth(self.other)
+        response = self.client.get(reverse('question-set-student-review', kwargs={
+            'pk': self.q_set.id, 'student_id': self.student.id,
+        }))
+        self.assertEqual(response.status_code, 403)
+
+    def test_lecturer_submission_detail_returns_answer_without_analysis(self):
+        lecturer = User.objects.create(
+            id=uuid.uuid4(), email=f'lecturer_detail_{uuid.uuid4().hex[:8]}@acm.local',
+            full_name='Lecturer Detail', password_hash='!', is_active=True, is_superuser=False,
+        )
+        UserSubjectRole.objects.create(
+            user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER
+        )
+        submission = Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            question_version_id=self.version.id, answer_text='Jawaban tanpa analisis.',
+            attempt_no=1, status='ANALYSIS_FAILED',
+        )
+
+        self._auth(lecturer)
+        response = self.client.get(reverse('lecturer-submission-detail', kwargs={'pk': submission.id}))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['id'], str(submission.id))
+        self.assertEqual(body['answer_text'], 'Jawaban tanpa analisis.')
+        self.assertEqual(body['question']['prompt'], self.version.prompt)
+        self.assertEqual(body['question']['model_answer'], self.version.model_answer)
+        self.assertEqual(body['question']['indicators'][0]['label'], 'Ketepatan Konsep')
+        self.assertEqual(body['current_analysis'], None)
+
+    def test_lecturer_submission_detail_is_scoped_to_assigned_subject(self):
+        submission = Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            question_version_id=self.version.id, answer_text='Jawaban privat.', attempt_no=1, status='SUBMITTED',
+        )
+        self._auth(self.other)
+
+        response = self.client.get(reverse('lecturer-submission-detail', kwargs={'pk': submission.id}))
+
+        self.assertEqual(response.status_code, 403)
+
     # ------------------------------------------------------------------ lookup after submit
 
     def test_lookup_shows_latest_submission(self):

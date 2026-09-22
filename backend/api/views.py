@@ -1140,6 +1140,127 @@ class QuestionSetReviewView(APIView):
         })
 
 
+class QuestionSetStudentReviewView(APIView):
+    """Full package review for one student; AI results never gate access."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, student_id):
+        try:
+            q_set = QuestionSet.objects.select_related('subject').get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            student = User.objects.get(
+                pk=student_id,
+                usersubjectrole__subject_id=q_set.subject_id,
+                usersubjectrole__role=UserSubjectRole.Role.STUDENT,
+            )
+        except User.DoesNotExist:
+            return Response({'detail': 'Mahasiswa tidak terdaftar pada mata kuliah ini.'}, status=status.HTTP_404_NOT_FOUND)
+
+        questions = list(Question.objects.filter(question_set=q_set).order_by('order_index'))
+        question_ids = [question.id for question in questions]
+        published_versions = list(
+            QuestionVersion.objects.filter(question_id__in=question_ids, is_published=True)
+            .order_by('question_id', '-version_number')
+        )
+        # A question can retain older published versions; review its current one.
+        version_by_question = {}
+        for version in published_versions:
+            version_by_question.setdefault(version.question_id, version)
+
+        package_versions = list(QuestionVersion.objects.filter(question_id__in=question_ids))
+        package_version_ids = [version.id for version in package_versions]
+        submissions = list(
+            Submission.objects.filter(
+                student=student,
+                question_version_id__in=package_version_ids,
+            ).order_by('-submitted_at', '-attempt_no')
+        )
+        version_question_ids = {version.id: version.question_id for version in package_versions}
+        latest_submissions = {}
+        for submission in submissions:
+            question_id = version_question_ids.get(submission.question_version_id)
+            if question_id:
+                latest_submissions.setdefault(question_id, submission)
+
+        analyses = {
+            analysis.submission_id: analysis
+            for analysis in LlmAnalysis.objects.filter(
+                submission_id__in=[submission.id for submission in latest_submissions.values()],
+                is_current=True,
+            )
+        }
+        validations = {
+            validation.analysis_id: validation
+            for validation in Validation.objects.filter(analysis_id__in=[analysis.id for analysis in analyses.values()])
+        }
+        indicators_by_version = {}
+        for indicator in ConceptIndicator.objects.filter(question_version_id__in=[version.id for version in version_by_question.values()]).order_by('order_index'):
+            indicators_by_version.setdefault(indicator.question_version_id, []).append({
+                'id': str(indicator.id), 'label': indicator.label,
+                'description': indicator.description or '', 'weight': str(indicator.weight),
+                'order_index': indicator.order_index,
+            })
+        references_by_version = {}
+        for reference in ReferenceAnswer.objects.filter(question_version_id__in=[version.id for version in version_by_question.values()]).order_by('-is_primary', 'created_at'):
+            references_by_version.setdefault(reference.question_version_id, []).append({
+                'id': str(reference.id), 'answer_key': reference.answer_key,
+                'answer_text': reference.answer_text, 'answer_type': reference.answer_type,
+                'is_primary': reference.is_primary,
+            })
+
+        rows = []
+        for question in questions:
+            version = version_by_question.get(question.id)
+            if not version:
+                continue
+            submission = latest_submissions.get(question.id)
+            analysis = analyses.get(submission.id) if submission else None
+            validation = validations.get(analysis.id) if analysis else None
+            rows.append({
+                'question_id': str(question.id), 'order_index': question.order_index,
+                'version_id': str(version.id), 'version_number': version.version_number,
+                'prompt': version.prompt, 'model_answer': version.model_answer,
+                'reference_answers': references_by_version.get(version.id, []),
+                'indicators': indicators_by_version.get(version.id, []),
+                'status': submission.status if submission else 'UNANSWERED',
+                'submission': {
+                    'id': str(submission.id), 'answer_text': submission.answer_text,
+                    'attempt_no': submission.attempt_no, 'submitted_at': submission.submitted_at,
+                    'status': submission.status,
+                } if submission else None,
+                'analysis': {
+                    'id': str(analysis.id), 'percentage_correct': str(analysis.percentage_correct),
+                    'tier_level': analysis.tier_level_snapshot, 'tier_label': analysis.tier_label_snapshot,
+                    'confidence': str(analysis.confidence), 'explanation': analysis.explanation,
+                    'validation': {
+                        'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
+                        'final_feedback': validation.final_feedback, 'lecturer_name': validation.lecturer.full_name,
+                        'validated_at': validation.validated_at,
+                    } if validation else None,
+                } if analysis else None,
+            })
+
+        return Response({
+            'package': {
+                'id': str(q_set.id), 'code': q_set.code, 'title': q_set.title,
+                'description': q_set.description or '', 'subject_id': str(q_set.subject_id),
+                'subject_name': q_set.subject.name,
+            },
+            'student': {'id': str(student.id), 'name': student.full_name, 'email': student.email},
+            'published_question_count': len(rows),
+            'answered_count': sum(row['submission'] is not None for row in rows),
+            'questions': rows,
+        })
+
+
 class QuestionToggleActiveView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1763,3 +1884,79 @@ class LecturerSubmissionsView(APIView):
             })
 
         return Response({'submissions': rows})
+
+
+class LecturerSubmissionDetailView(APIView):
+    """Submission-first review detail; analysis is supplementary and optional."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            submission = Submission.objects.select_related('student', 'subject').get(pk=pk)
+        except Submission.DoesNotExist:
+            return Response({'detail': 'Jawaban tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, submission.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses jawaban ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            version = QuestionVersion.objects.select_related('question__question_set').get(
+                pk=submission.question_version_id
+            )
+        except QuestionVersion.DoesNotExist:
+            return Response({'detail': 'Versi soal untuk jawaban ini tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        analysis = LlmAnalysis.objects.filter(submission=submission, is_current=True).first()
+        validation = Validation.objects.select_related('lecturer').filter(analysis=analysis).first() if analysis else None
+        q_set = version.question.question_set
+
+        return Response({
+            'id': str(submission.id),
+            'status': submission.status,
+            'submitted_at': submission.submitted_at,
+            'attempt_no': submission.attempt_no,
+            'student': {
+                'id': str(submission.student_id),
+                'name': submission.student.full_name,
+                'email': submission.student.email,
+            },
+            'subject': {'id': str(submission.subject_id), 'name': submission.subject.name},
+            'set': {'id': str(q_set.id), 'code': q_set.code, 'title': q_set.title},
+            'question': {
+                'id': str(version.question_id),
+                'version_id': str(version.id),
+                'version_number': version.version_number,
+                'prompt': version.prompt,
+                'model_answer': version.model_answer,
+                'reference_answers': [
+                    {'id': str(answer.id), 'answer_key': answer.answer_key, 'text': answer.answer_text}
+                    for answer in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
+                ],
+                'indicators': [
+                    {
+                        'order_index': indicator.order_index,
+                        'label': indicator.label,
+                        'description': indicator.description or '',
+                        'weight': str(indicator.weight),
+                    }
+                    for indicator in ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
+                ],
+            },
+            'answer_text': submission.answer_text,
+            'current_analysis': {
+                'id': str(analysis.id),
+                'run_number': analysis.run_number,
+                'percentage_correct': str(analysis.percentage_correct),
+                'tier_level': analysis.tier_level_snapshot,
+                'tier_label': analysis.tier_label_snapshot,
+                'confidence': str(analysis.confidence),
+                'created_at': analysis.created_at,
+                'validation': {
+                    'status': validation.status,
+                    'lecturer_name': validation.lecturer.full_name,
+                    'validated_at': validation.validated_at,
+                } if validation else None,
+            } if analysis else None,
+        })
