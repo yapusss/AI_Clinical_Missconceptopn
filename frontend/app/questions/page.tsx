@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CircleCheck,
+  CircleStop,
   ClipboardList,
+  Pencil,
   FileUp,
   Plus,
   Send,
@@ -410,39 +412,42 @@ export default function QuestionsPage() {
                       </div>
                     </td>
 
-                    {/* Kolom Aksi (RATA KIRI / LEFT-ALIGNED, DENGAN FLEX WRAP) */}
+                    {/* Icon-only table actions retain text labels for assistive technology. */}
                     <td className="px-5 py-4 text-left">
                       <div className="flex flex-wrap items-center justify-start gap-2">
-                        {/* Tombol Edit Soal */}
                         <button
                           type="button"
                           onClick={() => void editSet(item)}
-                          className="btn-secondary text-xs"
+                          className="btn-secondary h-10 w-10 justify-center p-0"
+                          aria-label="Edit paket ujian"
+                          title="Edit paket ujian"
                         >
-                          Edit Soal
+                          <Pencil size={16} aria-hidden="true" />
                         </button>
 
-                        {/* Tombol Nonaktifkan / Aktifkan */}
                         <button
                           type="button"
                           onClick={() => void toggleActiveSet(item.id)}
-                          className={`btn-secondary text-xs transition-colors ${
+                          className={`btn-secondary h-10 w-10 justify-center p-0 transition-colors ${
                             item.is_active
                               ? "text-error hover:bg-error-container/40"
                               : "text-tertiary hover:bg-tertiary-container/30"
                           }`}
+                          aria-label={item.is_active ? "Nonaktifkan paket ujian" : "Aktifkan paket ujian"}
+                          title={item.is_active ? "Nonaktifkan paket ujian" : "Aktifkan paket ujian"}
                         >
-                          {item.is_active ? "Nonaktifkan" : "Aktifkan"}
+                          {item.is_active ? <CircleStop size={16} aria-hidden="true" /> : <CircleCheck size={16} aria-hidden="true" />}
                         </button>
 
-                        {/* Tombol Terbitkan (jika draft) */}
                         {!published && (
                           <button
                             type="button"
                             onClick={() => void publishSet(item.id)}
-                            className="btn-secondary text-xs text-primary"
+                            className="btn-secondary h-10 w-10 justify-center p-0 text-primary"
+                            aria-label="Terbitkan paket ujian"
+                            title="Terbitkan paket ujian"
                           >
-                            <Send size={14} /> Terbitkan paket
+                            <Send size={16} aria-hidden="true" />
                           </button>
                         )}
                       </div>

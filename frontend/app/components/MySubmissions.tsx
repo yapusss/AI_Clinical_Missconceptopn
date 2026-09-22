@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { TriangleAlert } from "lucide-react";
+import { Eye, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "./AuthProvider";
 import { apiFetch } from "../lib/api";
@@ -122,7 +122,7 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                     <th className="px-6 py-4">Percobaan</th>
                     <th className="px-6 py-4">Status</th>
                     <th className="px-6 py-4">Dikirim</th>
-                    <th className="px-6 py-4 text-right">Detail</th>
+                    <th className="px-6 py-4 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/30">
@@ -166,9 +166,11 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                           <td className="px-6 py-4 text-right">
                             <Link
                               href={`/pengumpulan/${group.set_id}`}
-                              className="inline-flex items-center gap-1 rounded border border-outline-variant/50 bg-surface-container-lowest px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary-fixed/40"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded border border-outline-variant/50 bg-surface-container-lowest text-primary hover:bg-primary-fixed/40"
+                              aria-label={`Lihat detail ${group.title}`}
+                              title="Lihat detail"
                             >
-                              Lihat detail
+                              <Eye size={17} aria-hidden="true" />
                             </Link>
                           </td>
                         </tr>
