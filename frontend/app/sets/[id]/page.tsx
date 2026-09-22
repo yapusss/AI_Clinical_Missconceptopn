@@ -35,13 +35,14 @@ type StudentSet = {
   questions: StudentQuestion[];
 };
 
-type SubmitResult = {
-  submission_id: string;
+type SubmitResult = LatestSubmission & {
   question_id: string;
   question_version_id: string;
-  attempt_no: number;
-  status: string;
-  submitted_at: string;
+};
+
+type PackageSubmitResult = {
+  set_id: string;
+  submissions: SubmitResult[];
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -80,7 +81,7 @@ function AnswerSetContent() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState(45 * 60);
@@ -118,33 +119,54 @@ function AnswerSetContent() {
     return () => window.clearInterval(timer);
   }, [started, remainingSeconds]);
 
-  const handleSubmit = async (question: StudentQuestion) => {
-    const text = (answers[question.question_id] ?? "").trim();
-    if (!text) {
+  const handleContinue = () => {
+    if (!data || !activeQuestion) return;
+    if (!(answers[activeQuestion.question_id] ?? "").trim()) {
       setError("Jawaban tidak boleh kosong.");
       return;
     }
     setError("");
+    setActiveIndex((index) => Math.min(index + 1, data.questions.length - 1));
+  };
+
+  const handleSubmit = async () => {
+    if (!data) return;
+    const incomplete = data.questions.find((question) => !(answers[question.question_id] ?? "").trim());
+    if (incomplete) {
+      setError(`Jawab pertanyaan ${incomplete.order_index} sebelum mengumpulkan jawaban.`);
+      setActiveIndex(data.questions.indexOf(incomplete));
+      return;
+    }
+    setError("");
     setNotice("");
-    setSubmittingId(question.question_id);
+    setSubmitting(true);
     try {
-      const res = await apiFetch<SubmitResult>(
-        `/student/sets/${setId}/questions/${question.question_id}/submissions`,
-        { method: "POST", body: JSON.stringify({ answer_text: text }) },
+      const res = await apiFetch<PackageSubmitResult>(
+        `/student/sets/${setId}/submissions`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            answers: data.questions.map((question) => ({
+              question_id: question.question_id,
+              answer_text: answers[question.question_id].trim(),
+            })),
+          }),
+        },
       );
+      const submissionsByQuestion = new Map(res.submissions.map((submission) => [submission.question_id, submission]));
       setData((prev) =>
         prev
           ? {
               ...prev,
               questions: prev.questions.map((item) =>
-                item.question_id === question.question_id
+                submissionsByQuestion.has(item.question_id)
                   ? {
                       ...item,
                       latest_submission: {
-                        submission_id: res.submission_id,
-                        attempt_no: res.attempt_no,
-                        status: res.status,
-                        submitted_at: res.submitted_at,
+                        submission_id: submissionsByQuestion.get(item.question_id)!.submission_id,
+                        attempt_no: submissionsByQuestion.get(item.question_id)!.attempt_no,
+                        status: submissionsByQuestion.get(item.question_id)!.status,
+                        submitted_at: submissionsByQuestion.get(item.question_id)!.submitted_at,
                       },
                     }
                   : item,
@@ -152,15 +174,12 @@ function AnswerSetContent() {
             }
           : prev,
       );
-      setAnswers((prev) => ({ ...prev, [question.question_id]: "" }));
-      setNotice(
-        `Jawaban tersimpan pada percobaan ke-${res.attempt_no}. Menunggu analisis dan validasi dosen pengampu.`,
-      );
-      if (data && activeIndex < data.questions.length - 1) setActiveIndex((index) => index + 1);
+      setAnswers({});
+      router.replace("/code");
     } catch (err) {
       setError(errMsg(err));
     } finally {
-      setSubmittingId(null);
+      setSubmitting(false);
     }
   };
 
@@ -178,7 +197,7 @@ function AnswerSetContent() {
           <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ClipboardList size={14} /> Instruksi Ujian</div>
           <h1 className="mt-3 font-display text-2xl font-bold text-on-surface">{data.title}</h1>
           <p className="mt-2 whitespace-pre-line text-sm text-on-surface-variant">{data.description || "Jawab seluruh pertanyaan dengan menjelaskan alasan konseptual Anda."}</p>
-          <ul className="mt-6 space-y-2 text-sm text-on-surface-variant"><li>{data.questions.length} pertanyaan</li><li>Durasi 45 menit</li><li>Jawaban dikirim per pertanyaan dan dapat diperbaiki sebagai percobaan berikutnya</li></ul>
+          <ul className="mt-6 space-y-2 text-sm text-on-surface-variant"><li>{data.questions.length} pertanyaan</li><li>Durasi 45 menit</li><li>Jawab seluruh pertanyaan, lalu kumpulkan jawaban sebagai satu paket</li></ul>
           <button type="button" onClick={() => setStarted(true)} className="btn-primary mt-8">Mulai Ujian <Send size={16} /></button>
         </section>
       </div>
@@ -254,7 +273,7 @@ function AnswerSetContent() {
           {activeQuestion && [activeQuestion].map((question) => {
             const latest = question.latest_submission;
             const meta = latest ? statusMeta(latest.status) : null;
-            const isSubmitting = submittingId === question.question_id;
+            const isFinalQuestion = activeIndex === (data?.questions.length ?? 0) - 1;
 
             return (
               <section
@@ -314,17 +333,17 @@ function AnswerSetContent() {
                   <div className="mt-4 flex justify-end">
                     <button
                       type="button"
-                      onClick={() => handleSubmit(question)}
-                      disabled={isSubmitting}
+                      onClick={isFinalQuestion ? handleSubmit : handleContinue}
+                      disabled={submitting}
                       style={{ color: "#ffffff" }}
                       className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-semibold shadow-sm transition-colors hover:bg-primary-container disabled:opacity-50"
                     >
                       <Send size={16} color="#ffffff" />
-                      {isSubmitting
+                      {submitting
                         ? "Mengirim..."
-                        : latest
-                          ? `Kirim Percobaan ke-${latest.attempt_no + 1}`
-                          : "Kumpulkan Jawaban"}
+                        : isFinalQuestion
+                          ? "Kumpulkan Jawaban"
+                          : "Soal Selanjutnya"}
                     </button>
                   </div>
                 </div>

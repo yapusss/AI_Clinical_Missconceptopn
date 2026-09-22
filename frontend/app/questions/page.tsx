@@ -7,6 +7,7 @@ import {
   CircleStop,
   ClipboardList,
   Eye,
+  GraduationCap,
   Pencil,
   FileUp,
   Plus,
@@ -18,6 +19,7 @@ import { useAuth } from "../components/AuthProvider";
 import QuestionBankImport from "../components/QuestionBankImport";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ListToolbar from "../components/ListToolbar";
+import AppSelect from "../components/AppSelect";
 
 type Indicator = {
   label: string;
@@ -97,9 +99,6 @@ export default function QuestionsPage() {
     setSubjects(summary?.summary?.my_subjects ?? []);
     setSets(await setsResponse.json());
 
-    if (summary?.summary?.my_subjects?.[0]?.id) {
-      setSubjectId((current) => current || summary.summary.my_subjects[0].id);
-    }
   }, [token]);
 
   useEffect(() => {
@@ -443,6 +442,15 @@ export default function QuestionsPage() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => router.push(`/questions/${item.id}`)}
+                          className="btn-secondary table-action-button"
+                          aria-label={`Tinjau progres mahasiswa untuk ${item.title}`}
+                          title="Tinjau progres mahasiswa"
+                        >
+                          <GraduationCap size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void editSet(item)}
                           className="btn-secondary table-action-button"
                           aria-label="Edit paket ujian"
@@ -607,20 +615,7 @@ export default function QuestionsPage() {
                     <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                       Mata Kuliah
                     </label>
-                    <select
-                      value={subjectId}
-                      onChange={(event) => setSubjectId(event.target.value)}
-                      disabled={!!editingId}
-                      required
-                      className="form-select mt-1 w-full"
-                    >
-                      <option value="">Pilih mata kuliah</option>
-                      {subjects.map((subject) => (
-                        <option key={subject.id} value={subject.id}>
-                          {subject.name}
-                        </option>
-                      ))}
-                    </select>
+                    <AppSelect value={subjectId} onValueChange={setSubjectId} disabled={!!editingId} className="mt-1 w-full" ariaLabel="Mata Kuliah" placeholder="Pilih mata kuliah" options={subjects.map((subject) => ({ value: subject.id, label: subject.name }))} />
                   </div>
 
                   <div>

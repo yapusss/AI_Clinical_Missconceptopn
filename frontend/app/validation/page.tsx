@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
+import PageHeader from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
 
 type QueueItem = {
@@ -90,24 +91,14 @@ export default function ValidationQueuePage() {
 
   return (
     <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
-      <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-            <ShieldCheck size={14} color="var(--primary)" />
-            Validasi Analisis AI
-          </div>
-          <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-on-surface">
-            Antrian Validasi
-          </h1>
-          <p className="text-sm text-on-surface-variant">
-            Tinjau hasil analisis AI, konfirmasi miskonsepsi, lalu terima, koreksi, atau tolak.
-            AI memberi saran — Anda yang memutuskan.
-          </p>
-        </div>
-        <div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">
-          Menunggu <span className="font-mono-ui text-primary">{items.length}</span> analisis
-        </div>
-      </div>
+      <PageHeader
+        className="mt-3"
+        title="Antrian Validasi"
+        description="Tinjau hasil analisis AI, konfirmasi miskonsepsi, lalu terima, koreksi, atau tolak. AI memberi saran - Anda yang memutuskan."
+        icon={ShieldCheck}
+        eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ShieldCheck size={14} aria-hidden="true" /> Validasi Analisis AI</span>}
+        action={<div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">Menunggu <span className="font-mono-ui text-primary">{items.length}</span> analisis</div>}
+      />
 
       {!isLecturer && (
         <div

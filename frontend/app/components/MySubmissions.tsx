@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Eye, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "./AuthProvider";
+import AppSelect from "./AppSelect";
 import { apiFetch } from "../lib/api";
 import {
   fmtDate,
@@ -93,19 +94,7 @@ export default function MySubmissions({ compactHeading = false }: Props) {
               >
                 Mata Kuliah
               </label>
-              <select
-                id="subject-filter"
-                value={subjectFilter}
-                onChange={(e) => setSubjectFilter(e.target.value)}
-                className="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none"
-              >
-                <option value="ALL">Semua mata kuliah</option>
-                {subjects.map((subject) => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-              </select>
+              <AppSelect value={subjectFilter} onValueChange={setSubjectFilter} ariaLabel="Mata Kuliah" className="min-w-52" options={[{ value: "ALL", label: "Semua mata kuliah" }, ...subjects.map((subject) => ({ value: subject.id, label: subject.name }))]} />
             </div>
             <span className="text-[11px] text-on-surface-variant">
               Menampilkan {visible.length} dari {groups.length} bank soal

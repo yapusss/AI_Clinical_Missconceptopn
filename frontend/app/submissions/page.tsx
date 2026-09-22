@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
+import PageHeader from "../components/PageHeader";
+import AppSelect from "../components/AppSelect";
 import { apiFetch } from "../lib/api";
 
 type SubmissionRow = {
@@ -111,28 +113,7 @@ export default function SubmissionsPage() {
 
   return (
     <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
-      <header style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "1.5rem" }}>
-        <div
-          style={{
-            width: "48px",
-            height: "48px",
-            borderRadius: "var(--radius-md)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(99, 102, 241, 0.15)",
-            color: "var(--primary)",
-          }}
-        >
-          <ClipboardList size={26} />
-        </div>
-        <div>
-          <h1 style={{ fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>Jawaban Mahasiswa</h1>
-          <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
-            Daftar jawaban yang dikumpulkan mahasiswa untuk ditinjau.
-          </p>
-        </div>
-      </header>
+      <PageHeader className="mb-6" title="Jawaban Mahasiswa" description="Daftar jawaban yang dikumpulkan mahasiswa untuk ditinjau." icon={ClipboardList} />
 
       {error && (
         <div role="alert" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(239, 68, 68, 0.3)", background: "rgba(239, 68, 68, 0.12)", color: "#f87171", fontSize: "0.85rem", padding: "0.7rem 1rem", marginBottom: "1.25rem" }}>
@@ -152,19 +133,7 @@ export default function SubmissionsPage() {
       >
         <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
           <Search size={16} color="var(--text-dim)" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="form-select"
-            style={{ minWidth: "220px", padding: "0.55rem 0.9rem" }}
-          >
-            <option value="">Semua status</option>
-            {Object.entries(STATUS_META).map(([key, meta]) => (
-              <option key={key} value={key}>
-                {meta.label}
-              </option>
-            ))}
-          </select>
+          <AppSelect value={statusFilter} onValueChange={setStatusFilter} ariaLabel="Status jawaban" className="min-w-[220px]" options={[{ value: "", label: "Semua status" }, ...Object.entries(STATUS_META).map(([value, meta]) => ({ value, label: meta.label }))]} />
         </div>
         <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
           {fetching ? "Memproses..." : `${visible.length} pengumpulan`}

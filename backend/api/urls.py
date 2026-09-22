@@ -23,6 +23,7 @@ from .views import (
     MeView,
     QuestionDetailView,
     QuestionListCreateView,
+    QuestionSetReviewView,
     QuestionSetPublishView,
     QuestionImportCommitView,
     QuestionImportCreateView,
@@ -32,6 +33,7 @@ from .views import (
     QuestionToggleActiveView,
     RegisterView,
     StudentSetLookupView,
+    StudentPackageSubmissionCreateView,
     StudentSubmissionCreateView,
     StudentSubmissionListView,
     StudentSubmissionSetDetailView,
@@ -57,6 +59,7 @@ urlpatterns = [
     # Sprint 2 Dosen Endpoints
     path('questions', QuestionListCreateView.as_view(), name='question-list-create'),
     path('questions/<uuid:pk>', QuestionDetailView.as_view(), name='question-detail'),
+    path('questions/<uuid:pk>/review', QuestionSetReviewView.as_view(), name='question-set-review'),
     path('questions/<uuid:pk>/toggle-active', QuestionToggleActiveView.as_view(), name='question-toggle-active'),
     path('questions/<uuid:pk>/publish', QuestionSetPublishView.as_view(), name='question-set-publish'),
     path('question-imports', QuestionImportCreateView.as_view(), name='question-import-create'),
@@ -67,6 +70,7 @@ urlpatterns = [
 
     # Sprint 3 Student Endpoints (UC-01 / P3)
     path('student/sets', StudentSetLookupView.as_view(), name='student-set-lookup'),
+    path('student/sets/<uuid:pk>/submissions', StudentPackageSubmissionCreateView.as_view(), name='student-package-submission-create'),
     path('student/sets/<uuid:pk>/questions/<uuid:qid>/submissions', StudentSubmissionCreateView.as_view(), name='student-submission-create'),
     path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
     path('student/submission-sets', StudentSubmissionSetListView.as_view(), name='student-submission-set-list'),

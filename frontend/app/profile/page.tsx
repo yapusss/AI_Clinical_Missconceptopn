@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { BookOpen, KeyRound, UserRound } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
+import PageHeader from "../components/PageHeader";
 
 const ROLE_LABEL: Record<string, string> = {
   ADMIN: "Administrator",
@@ -47,12 +48,7 @@ export default function ProfilePage() {
 
   return (
     <div style={{ maxWidth: "840px", margin: "0 auto" }}>
-      <header style={{ marginBottom: "1.5rem" }}>
-        <h1 style={{ fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>Profile</h1>
-        <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
-          Informasi akun dan peran Anda.
-        </p>
-      </header>
+      <PageHeader className="mb-6" title="Profile" description="Informasi akun dan peran Anda." icon={UserRound} />
 
       <section className="glass-panel animate-fade-in" style={{ padding: "1.5rem", borderRadius: "var(--radius-lg)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "1.25rem" }}>

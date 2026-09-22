@@ -40,6 +40,7 @@ from .serializers import (
     LoginSerializer,
     QuestionSetCreateSerializer,  
     QuestionSetUpdateSerializer,  
+    PackageSubmissionCreateSerializer,
     RegisterSerializer,
     SubmissionCreateSerializer,
     UserSerializer,
@@ -1034,6 +1035,111 @@ class QuestionDetailView(APIView):
         return Response({'detail': 'Soal berhasil diperbarui.'})
 
 
+class QuestionSetReviewView(APIView):
+    """Lecturer progress overview for every enrolled student in one question set."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            q_set = QuestionSet.objects.select_related('subject').get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        questions = list(Question.objects.filter(question_set=q_set).order_by('order_index'))
+        question_ids = {question.id for question in questions}
+        versions = list(QuestionVersion.objects.filter(question_id__in=question_ids))
+        versions_by_id = {version.id: version for version in versions}
+        published_question_ids = {
+            version.question_id for version in versions if version.is_published
+        }
+
+        students = list(
+            User.objects.filter(
+                usersubjectrole__subject_id=q_set.subject_id,
+                usersubjectrole__role=UserSubjectRole.Role.STUDENT,
+            ).order_by('full_name', 'email').distinct()
+        )
+        student_ids = {student.id for student in students}
+        submissions = list(
+            Submission.objects.filter(
+                student_id__in=student_ids,
+                question_version_id__in=versions_by_id,
+            ).order_by('-submitted_at', '-attempt_no')
+        )
+
+        # Keep the newest attempt for each student/question, including attempts
+        # made against an earlier published version of that package question.
+        latest_by_student_question = {}
+        for submission in submissions:
+            version = versions_by_id.get(submission.question_version_id)
+            if version:
+                latest_by_student_question.setdefault(
+                    (submission.student_id, version.question_id), submission
+                )
+
+        latest_submissions = list(latest_by_student_question.values())
+        analyses = {
+            analysis.submission_id: analysis
+            for analysis in LlmAnalysis.objects.filter(
+                submission_id__in=[submission.id for submission in latest_submissions],
+                is_current=True,
+            )
+        }
+        validations = {
+            validation.analysis_id: validation
+            for validation in Validation.objects.filter(
+                analysis_id__in=[analysis.id for analysis in analyses.values()]
+            )
+        }
+
+        student_rows = []
+        for student in students:
+            student_submissions = []
+            for question in questions:
+                submission = latest_by_student_question.get((student.id, question.id))
+                if not submission:
+                    continue
+                version = versions_by_id[submission.question_version_id]
+                analysis = analyses.get(submission.id)
+                validation = validations.get(analysis.id) if analysis else None
+                student_submissions.append({
+                    'question_id': str(question.id),
+                    'order_index': question.order_index,
+                    'question_prompt_preview': version.prompt[:160] + ('...' if len(version.prompt) > 160 else ''),
+                    'submission_id': str(submission.id),
+                    'attempt_no': submission.attempt_no,
+                    'status': submission.status,
+                    'submitted_at': submission.submitted_at,
+                    'analysis_id': str(analysis.id) if analysis else None,
+                    'validation_status': validation.status if validation else None,
+                })
+            student_rows.append({
+                'student_id': str(student.id),
+                'student_name': student.full_name,
+                'student_email': student.email,
+                'answered_count': len(student_submissions),
+                'published_question_count': len(published_question_ids),
+                'latest_submissions': student_submissions,
+            })
+
+        return Response({
+            'id': str(q_set.id),
+            'code': q_set.code,
+            'title': q_set.title,
+            'description': q_set.description or '',
+            'subject_id': str(q_set.subject_id),
+            'subject_name': q_set.subject.name,
+            'is_active': q_set.is_active,
+            'published_question_count': len(published_question_ids),
+            'students': student_rows,
+        })
+
+
 class QuestionToggleActiveView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1160,6 +1266,12 @@ class StudentSetLookupView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if not is_student_for_subject(request.user, q_set.subject_id):
+            return Response(
+                {'detail': 'Anda tidak terdaftar pada mata kuliah ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         questions = Question.objects.filter(question_set=q_set).order_by('order_index')
 
         items = []
@@ -1277,6 +1389,99 @@ class StudentSubmissionCreateView(APIView):
             'attempt_no': submission.attempt_no,
             'status': submission.status,
             'submitted_at': submission.submitted_at,
+        }, status=status.HTTP_201_CREATED)
+
+
+class StudentPackageSubmissionCreateView(APIView):
+    """Submit every published question in a set as one atomic package."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        serializer = PackageSubmissionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        answers_by_question = {
+            answer['question_id']: answer['answer_text']
+            for answer in serializer.validated_data['answers']
+        }
+
+        try:
+            with transaction.atomic():
+                try:
+                    q_set = QuestionSet.objects.select_for_update().get(pk=pk, is_active=True)
+                except QuestionSet.DoesNotExist:
+                    return Response(
+                        {'detail': 'Soal tidak ditemukan.'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                if not is_student_for_subject(request.user, q_set.subject_id):
+                    return Response(
+                        {'detail': 'Anda tidak terdaftar pada mata kuliah ini.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                questions = list(
+                    Question.objects.select_for_update().filter(question_set=q_set).order_by('order_index')
+                )
+                published = []
+                for question in questions:
+                    version = (
+                        QuestionVersion.objects.select_for_update()
+                        .filter(question=question, is_published=True)
+                        .order_by('-version_number')
+                        .first()
+                    )
+                    if version:
+                        published.append((question, version))
+
+                published_question_ids = {question.id for question, _ in published}
+                if not published:
+                    return Response(
+                        {'detail': 'Belum ada pertanyaan yang dipublikasikan pada bank soal ini.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if set(answers_by_question) != published_question_ids:
+                    return Response(
+                        {'detail': 'Semua pertanyaan yang dipublikasikan harus dijawab tepat satu kali.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                submission_ids = []
+                for question, version in published:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "CALL sp_submit_conceptual_answer(%s, %s, %s, NULL);",
+                            [str(request.user.id), str(version.id), answers_by_question[question.id]],
+                        )
+                        row = cursor.fetchone()
+                        submission_id = str(row[0]) if row and row[0] else None
+                        if not submission_id:
+                            raise RuntimeError('Gagal menyimpan salah satu jawaban.')
+                    submission_ids.append((question, version, submission_id))
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        submissions = {
+            str(submission.id): submission
+            for submission in Submission.objects.filter(
+                id__in=[submission_id for _, _, submission_id in submission_ids]
+            )
+        }
+        return Response({
+            'set_id': str(q_set.id),
+            'submissions': [
+                {
+                    'submission_id': submission_id,
+                    'question_id': str(question.id),
+                    'question_version_id': str(version.id),
+                    'attempt_no': submissions[submission_id].attempt_no,
+                    'status': submissions[submission_id].status,
+                    'submitted_at': submissions[submission_id].submitted_at,
+                }
+                for question, version, submission_id in submission_ids
+            ],
         }, status=status.HTTP_201_CREATED)
 
 

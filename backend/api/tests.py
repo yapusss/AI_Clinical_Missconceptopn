@@ -128,6 +128,12 @@ class StudentSubmissionAPITests(TransactionTestCase):
         )
         return q, v
 
+    def _submit_package(self, answers, user=None):
+        if user is not None:
+            self._auth(user)
+        url = reverse('student-package-submission-create', kwargs={'pk': self.q_set.id})
+        return self.client.post(url, {'answers': answers}, format='json')
+
     # ------------------------------------------------------------------ lookup
 
     def test_lookup_success(self):
@@ -220,6 +226,38 @@ class StudentSubmissionAPITests(TransactionTestCase):
         resp = self.client.post(url, {'answer_text': 'Jawaban.'}, format='json')
         self.assertEqual(resp.status_code, 404)
 
+    def test_package_submit_creates_all_published_question_submissions(self):
+        self._auth(self.student)
+        other_question, other_version = self._add_published_question()
+
+        response = self._submit_package([
+            {'question_id': str(self.question.id), 'answer_text': 'Jawaban soal pertama.'},
+            {'question_id': str(other_question.id), 'answer_text': 'Jawaban soal kedua.'},
+        ])
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(len(body['submissions']), 2)
+        self.assertEqual(
+            set(Submission.objects.filter(student=self.student).values_list('question_version_id', flat=True)),
+            {self.version.id, other_version.id},
+        )
+
+    def test_package_submit_requires_every_published_question_and_is_atomic(self):
+        self._auth(self.student)
+        self._add_published_question()
+
+        response = self._submit_package([
+            {'question_id': str(self.question.id), 'answer_text': 'Hanya jawaban pertama.'},
+        ])
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Submission.objects.filter(student=self.student).count(), 0)
+
+    def test_lookup_not_enrolled_blocked(self):
+        self._auth(self.other)
+        self.assertEqual(self._lookup().status_code, 403)
+
     # ------------------------------------------------------------------ list
 
     def test_submission_list(self):
@@ -256,6 +294,31 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self._auth(other)
         resp = self.client.get(reverse('student-submission-list'))
         self.assertEqual(resp.json(), [])
+
+    def test_lecturer_review_includes_enrolled_student_without_submission(self):
+        lecturer = User.objects.create(
+            id=uuid.uuid4(),
+            email=f'lecturer_{uuid.uuid4().hex[:8]}@acm.local',
+            full_name='Lecturer Test',
+            password_hash='!',
+            is_active=True,
+            is_superuser=False,
+        )
+        UserSubjectRole.objects.create(
+            user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER
+        )
+        self._auth(lecturer)
+
+        resp = self.client.get(reverse('question-set-review', kwargs={'pk': self.q_set.id}))
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['published_question_count'], 1)
+        self.assertEqual(len(body['students']), 1)
+        self.assertEqual(body['students'][0]['student_id'], str(self.student.id))
+        self.assertEqual(body['students'][0]['answered_count'], 0)
+        self.assertEqual(body['students'][0]['published_question_count'], 1)
+        self.assertEqual(body['students'][0]['latest_submissions'], [])
 
     # ------------------------------------------------------------------ lookup after submit
 

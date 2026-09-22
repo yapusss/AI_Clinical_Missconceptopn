@@ -178,6 +178,20 @@ class SubmissionCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Jawaban tidak boleh kosong.')
         return val
 
+
+class PackageSubmissionAnswerSerializer(SubmissionCreateSerializer):
+    question_id = serializers.UUIDField()
+
+
+class PackageSubmissionCreateSerializer(serializers.Serializer):
+    answers = PackageSubmissionAnswerSerializer(many=True, allow_empty=False)
+
+    def validate_answers(self, answers):
+        question_ids = [answer['question_id'] for answer in answers]
+        if len(question_ids) != len(set(question_ids)):
+            raise serializers.ValidationError('Setiap pertanyaan hanya boleh dijawab satu kali.')
+        return answers
+
 # ============================================================================
 # SPRINT 5: VALIDATION SERIALIZERS (DOSEN / P5)
 # ============================================================================

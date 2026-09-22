@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../../components/AuthProvider";
+import AppSelect from "../../components/AppSelect";
 import { apiFetch } from "../../lib/api";
 
 type IndicatorScore = {
@@ -518,17 +519,7 @@ export default function ValidationDetailPage() {
                       <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                         Tier akhir
                       </label>
-                      <select
-                        value={finalTier}
-                        onChange={(e) => setFinalTier(Number(e.target.value))}
-                        className="form-select mt-1"
-                      >
-                        {tiers.map((t) => (
-                          <option key={t.level} value={t.level}>
-                            Tier {t.level} — {t.label}
-                          </option>
-                        ))}
-                      </select>
+                      <AppSelect value={String(finalTier)} onValueChange={(value) => setFinalTier(Number(value))} className="mt-1" ariaLabel="Tier akhir" options={tiers.map((tier) => ({ value: String(tier.level), label: `Tier ${tier.level} - ${tier.label}` }))} />
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-semibold uppercase text-on-surface-variant">

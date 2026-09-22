@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { KeyRound, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
+import PageHeader from "../components/PageHeader";
 import MySubmissions from "../components/MySubmissions";
 import { apiFetch } from "../lib/api";
 
@@ -72,19 +73,7 @@ export default function SoalPage() {
 
   return (
     <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
-      <div>
-        <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-          <KeyRound size={14} color="var(--primary)" />
-          Evaluasi Mahasiswa
-        </div>
-        <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-on-surface">
-          Soal Konseptual
-        </h1>
-        <p className="text-sm text-on-surface-variant">
-          Masukkan kode soal dari dosen untuk mengerjakan lembar evaluasi, lalu pantau jawaban yang sudah
-          Anda kumpulkan di bawah ini.
-        </p>
-      </div>
+      <PageHeader title="Soal Konseptual" description="Masukkan kode soal dari dosen untuk mengerjakan lembar evaluasi, lalu pantau jawaban yang sudah Anda kumpulkan di bawah ini." icon={KeyRound} eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><KeyRound size={14} aria-hidden="true" /> Evaluasi Mahasiswa</span>} />
 
       {error && (
         <div
