@@ -10,9 +10,15 @@ from .validation_views import (
 from .views import (
     DashboardView,
     AdminManagedUserDetailView,
+    AdminHelpArticleDetailView,
+    AdminHelpArticleListView,
     AdminManagedUserListView,
+    AdminSubjectDetailView,
     AdminSubjectListView,
+    AdminTopicDetailView,
+    AdminTopicListView,
     LecturerSubmissionsView,
+    HelpArticleListView,
     LoginView,
     MeView,
     QuestionDetailView,
@@ -40,6 +46,12 @@ urlpatterns = [
     path('admin/users/<str:role>', AdminManagedUserListView.as_view(), name='admin-managed-user-list'),
     path('admin/users/<str:role>/<uuid:pk>', AdminManagedUserDetailView.as_view(), name='admin-managed-user-detail'),
     path('admin/subjects', AdminSubjectListView.as_view(), name='admin-subject-list'),
+    path('admin/help/<str:role>', AdminHelpArticleListView.as_view(), name='admin-help-list'),
+    path('admin/help/articles/<uuid:pk>', AdminHelpArticleDetailView.as_view(), name='admin-help-detail'),
+    path('help', HelpArticleListView.as_view(), name='help-list'),
+    path('admin/subjects/<uuid:pk>', AdminSubjectDetailView.as_view(), name='admin-subject-detail'),
+    path('admin/subjects/<uuid:subject_id>/topics', AdminTopicListView.as_view(), name='admin-topic-list'),
+    path('admin/topics/<uuid:pk>', AdminTopicDetailView.as_view(), name='admin-topic-detail'),
     path('lecturer/submissions', LecturerSubmissionsView.as_view(), name='lecturer-submissions'),
 
     # Sprint 2 Dosen Endpoints

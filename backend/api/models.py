@@ -94,6 +94,27 @@ class Topic(models.Model):
         return self.name
 
 
+class HelpArticle(models.Model):
+    class Role(models.TextChoices):
+        ADMIN = 'ADMIN'
+        LECTURER = 'LECTURER'
+        STUDENT = 'STUDENT'
+        GENERAL = 'GENERAL'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    role = models.CharField(max_length=20, choices=Role.choices)
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+    order_index = models.PositiveIntegerField(default=0)
+    is_published = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'help_articles'
+        ordering = ('order_index', 'title')
+
+
 class QuestionSet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')

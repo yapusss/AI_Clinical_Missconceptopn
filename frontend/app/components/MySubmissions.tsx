@@ -166,11 +166,11 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                           <td className="px-6 py-4 text-right">
                             <Link
                               href={`/pengumpulan/${group.set_id}`}
-                              className="inline-flex h-10 w-10 items-center justify-center rounded border border-outline-variant/50 bg-surface-container-lowest text-primary hover:bg-primary-fixed/40"
+                              className="table-action-button inline-flex items-center justify-center rounded border border-outline-variant/50 bg-surface-container-lowest text-primary hover:bg-primary-fixed/40"
                               aria-label={`Lihat detail ${group.title}`}
                               title="Lihat detail"
                             >
-                              <Eye size={17} aria-hidden="true" />
+                              <Eye size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
                             </Link>
                           </td>
                         </tr>

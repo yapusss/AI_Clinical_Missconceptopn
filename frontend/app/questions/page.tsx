@@ -6,6 +6,7 @@ import {
   CircleCheck,
   CircleStop,
   ClipboardList,
+  Eye,
   Pencil,
   FileUp,
   Plus,
@@ -15,6 +16,8 @@ import {
 } from "lucide-react";
 import { useAuth } from "../components/AuthProvider";
 import QuestionBankImport from "../components/QuestionBankImport";
+import ConfirmDialog from "../components/ConfirmDialog";
+import ListToolbar from "../components/ListToolbar";
 
 type Indicator = {
   label: string;
@@ -43,6 +46,11 @@ type QuestionSet = {
   latest_versions: { is_published: boolean }[];
 };
 
+type QuestionSetDetail = QuestionSet & {
+  description?: string;
+  versions?: { prompt: string; model_answer: string; indicators?: Indicator[] }[];
+};
+
 const blankQuestion = (): ExamQuestion => ({
   prompt: "",
   model_answer: "",
@@ -69,10 +77,14 @@ export default function QuestionsPage() {
 
   // UI states
   const [showForm, setShowForm] = useState(false);
+  const [viewingSet, setViewingSet] = useState<QuestionSetDetail | null>(null);
+  const [pendingDeactivate, setPendingDeactivate] = useState<QuestionSet | null>(null);
+  const [pendingQuestionRemoval, setPendingQuestionRemoval] = useState<number | null>(null);
   const [creationMode, setCreationMode] = useState<"manual" | "template" | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -110,6 +122,7 @@ export default function QuestionsPage() {
       ),
     [questions]
   );
+  const visibleSets = sets.filter((item) => `${item.code} ${item.title} ${item.subject_name} ${item.is_active ? "aktif" : "nonaktif"}`.toLowerCase().includes(search.toLowerCase()));
 
   const updateQuestion = (
     index: number,
@@ -295,6 +308,19 @@ export default function QuestionsPage() {
     }
   }
 
+  async function viewSet(item: QuestionSet) {
+    if (!token) return;
+    setError("");
+    try {
+      const response = await fetch(`/api/questions/${item.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Gagal memuat detail paket ujian.");
+      setViewingSet({ ...item, ...data });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Gagal memuat detail paket ujian.");
+    }
+  }
+
   if (!mounted || loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white via-[#F0F7FF] to-[#E6F0FA] font-body">
@@ -321,17 +347,6 @@ export default function QuestionsPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            reset();
-            setShowForm(true);
-            setCreationMode(null);
-          }}
-          className="btn-primary"
-        >
-          <Plus size={18} /> Buat Paket Ujian
-        </button>
       </header>
 
       {/* Alerts */}
@@ -355,6 +370,8 @@ export default function QuestionsPage() {
         </div>
       )}
 
+      <div className="mt-6"><ListToolbar addLabel="Buat paket ujian" onAdd={() => { reset(); setShowForm(true); setCreationMode(null); }} searchValue={search} onSearchChange={setSearch} searchPlaceholder="Cari kode, judul, atau mata kuliah..." /></div>
+
       {/* Tabel Daftar Soal Responsif */}
       <div className="mt-8 rounded-xl border border-outline-variant/40 bg-surface-container-lowest shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -369,7 +386,7 @@ export default function QuestionsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/30">
-              {sets.map((item) => {
+              {visibleSets.map((item) => {
                 const published =
                   item.latest_versions?.length > 0 &&
                   item.latest_versions.every((version) => version.is_published);
@@ -417,18 +434,27 @@ export default function QuestionsPage() {
                       <div className="flex flex-wrap items-center justify-start gap-2">
                         <button
                           type="button"
+                          onClick={() => void viewSet(item)}
+                          className="btn-secondary table-action-button"
+                          aria-label={`Lihat detail ${item.title}`}
+                          title="Lihat detail"
+                        >
+                          <Eye size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void editSet(item)}
-                          className="btn-secondary h-10 w-10 justify-center p-0"
+                          className="btn-secondary table-action-button"
                           aria-label="Edit paket ujian"
                           title="Edit paket ujian"
                         >
-                          <Pencil size={16} aria-hidden="true" />
+                          <Pencil size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => void toggleActiveSet(item.id)}
-                          className={`btn-secondary h-10 w-10 justify-center p-0 transition-colors ${
+                          onClick={() => item.is_active ? setPendingDeactivate(item) : void toggleActiveSet(item.id)}
+                          className={`btn-secondary table-action-button transition-colors ${
                             item.is_active
                               ? "text-error hover:bg-error-container/40"
                               : "text-tertiary hover:bg-tertiary-container/30"
@@ -436,18 +462,18 @@ export default function QuestionsPage() {
                           aria-label={item.is_active ? "Nonaktifkan paket ujian" : "Aktifkan paket ujian"}
                           title={item.is_active ? "Nonaktifkan paket ujian" : "Aktifkan paket ujian"}
                         >
-                          {item.is_active ? <CircleStop size={16} aria-hidden="true" /> : <CircleCheck size={16} aria-hidden="true" />}
+                          {item.is_active ? <CircleStop size={18} stroke="#dc2626" strokeWidth={2.5} aria-hidden="true" /> : <CircleCheck size={18} stroke="#059669" strokeWidth={2.5} aria-hidden="true" />}
                         </button>
 
                         {!published && (
                           <button
                             type="button"
                             onClick={() => void publishSet(item.id)}
-                            className="btn-secondary h-10 w-10 justify-center p-0 text-primary"
+                            className="btn-secondary table-action-button text-primary"
                             aria-label="Terbitkan paket ujian"
                             title="Terbitkan paket ujian"
                           >
-                            <Send size={16} aria-hidden="true" />
+                            <Send size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
                           </button>
                         )}
                       </div>
@@ -465,6 +491,22 @@ export default function QuestionsPage() {
           </p>
         )}
       </div>
+
+      {viewingSet && (
+        <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/60 p-4">
+          <div className="my-8 w-full max-w-3xl rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-outline-variant/30 pb-4">
+              <div><p className="font-mono-ui text-xs font-bold text-primary">{viewingSet.code}</p><h2 className="mt-1 font-display text-xl font-bold text-on-surface">{viewingSet.title}</h2><p className="mt-1 text-sm text-on-surface-variant">{viewingSet.subject_name}</p></div>
+              <button type="button" onClick={() => setViewingSet(null)} aria-label="Tutup detail" className="text-on-surface-variant hover:text-on-surface">×</button>
+            </div>
+            {viewingSet.description && <p className="mt-4 whitespace-pre-line text-sm text-on-surface-variant">{viewingSet.description}</p>}
+            <div className="mt-5 space-y-4">{(viewingSet.versions ?? []).map((version, index) => <section key={index} className="rounded-xl border border-outline-variant/40 bg-surface-container-low p-4"><h3 className="font-semibold text-on-surface">Pertanyaan {index + 1}</h3><p className="mt-2 whitespace-pre-line text-sm text-on-surface">{version.prompt}</p><p className="mt-3 text-xs font-semibold uppercase text-on-surface-variant">Jawaban referensi</p><p className="mt-1 whitespace-pre-line text-sm text-on-surface-variant">{version.model_answer}</p>{version.indicators?.length ? <div className="mt-3 flex flex-wrap gap-2">{version.indicators.map((indicator, indicatorIndex) => <span key={indicatorIndex} className="badge badge-role">{indicator.label} · {indicator.weight}</span>)}</div> : null}</section>)}</div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog open={!!pendingDeactivate} title="Nonaktifkan paket ujian?" description={`Paket "${pendingDeactivate?.title ?? ""}" tidak lagi dapat digunakan mahasiswa sampai diaktifkan kembali.`} confirmLabel="Nonaktifkan" onCancel={() => setPendingDeactivate(null)} onConfirm={() => { if (pendingDeactivate) void toggleActiveSet(pendingDeactivate.id); setPendingDeactivate(null); }} />
+      <ConfirmDialog open={pendingQuestionRemoval !== null} title="Hapus pertanyaan?" description="Pertanyaan yang belum disimpan ini akan dihapus dari formulir paket ujian." confirmLabel="Hapus pertanyaan" onCancel={() => setPendingQuestionRemoval(null)} onConfirm={() => { if (pendingQuestionRemoval !== null) setQuestions((current) => current.filter((_, index) => index !== pendingQuestionRemoval)); setPendingQuestionRemoval(null); }} />
 
       {/* Modal Dialog Form Buat / Edit Paket */}
       {showForm && (
@@ -636,11 +678,7 @@ export default function QuestionsPage() {
                         {questions.length > 1 && !editingId && (
                           <button
                             type="button"
-                            onClick={() =>
-                              setQuestions((current) =>
-                                current.filter((_, index) => index !== questionIndex)
-                              )
-                            }
+                            onClick={() => setPendingQuestionRemoval(questionIndex)}
                             className="text-error hover:text-on-error-container"
                             title="Hapus pertanyaan ini"
                           >

@@ -214,6 +214,41 @@ select option {
   background: var(--bg-card-hover);
 }
 
+/* Fixed-size table controls need to override .btn-secondary padding. */
+.table-action-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  flex: 0 0 40px;
+}
+
+.course-read-only table button {
+  display: none;
+}
+
+.table-action-button svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+}
+
+.list-toolbar-add { padding: 0.65rem 1rem; white-space: nowrap; }
+.list-toolbar-search { display: flex; flex: 1; min-width: 220px; align-items: center; gap: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); padding: 0 12px; color: var(--text-dim); }
+.list-toolbar-search input { width: 100%; min-height: 42px; border: 0; outline: 0; background: transparent; color: var(--text-main); font-size: .875rem; }
+.list-toolbar-icon { display: inline-flex; height: 42px; min-width: 42px; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--text-muted); cursor: pointer; }
+.list-toolbar-icon:hover { border-color: var(--primary); color: var(--primary); }
+@media (max-width: 640px) { .list-toolbar { align-items: stretch; flex-direction: column; } .list-toolbar > div:last-child { justify-content: flex-end; } .list-toolbar-search { min-width: 0; } }
+
 .btn-danger {
   background: rgba(239, 68, 68, 0.15);
   color: #ef4444 !important;

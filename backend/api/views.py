@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 from decimal import Decimal
+from django.utils.text import slugify
 from django.db import connection, transaction
 from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
@@ -18,6 +19,7 @@ from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
     ConceptIndicator,     
+    HelpArticle,
     LlmAnalysis,
     Misconception,
     Question,             
@@ -169,6 +171,61 @@ def require_admin(request):
     return request.user.is_superuser
 
 
+HELP_ROLES = {choice for choice, _ in HelpArticle.Role.choices}
+
+
+def serialize_help_article(article):
+    return {'id': str(article.id), 'role': article.role, 'title': article.title, 'body': article.body, 'order_index': article.order_index, 'is_published': article.is_published}
+
+
+class HelpArticleListView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        role = request.query_params.get('role', 'GENERAL')
+        if role not in HELP_ROLES:
+            return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not request.user.is_superuser:
+            user_roles = set(UserSubjectRole.objects.filter(user=request.user).values_list('role', flat=True))
+            if role not in user_roles:
+                role = 'GENERAL'
+        return Response([serialize_help_article(article) for article in HelpArticle.objects.filter(role=role, is_published=True)])
+
+
+class AdminHelpArticleListView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request, role):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        if role not in HELP_ROLES: return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response([serialize_help_article(article) for article in HelpArticle.objects.filter(role=role)])
+
+    def post(self, request, role):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        title, body = str(request.data.get('title', '')).strip(), str(request.data.get('body', '')).strip()
+        if role not in HELP_ROLES or not title or not body: return Response({'detail': 'Role, judul, dan isi wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        article = HelpArticle.objects.create(role=role, title=title, body=body, order_index=int(request.data.get('order_index', 0)), is_published=bool(request.data.get('is_published', True)))
+        return Response(serialize_help_article(article), status=status.HTTP_201_CREATED)
+
+
+class AdminHelpArticleDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def patch(self, request, pk):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        try: article = HelpArticle.objects.get(pk=pk)
+        except HelpArticle.DoesNotExist: return Response({'detail': 'Artikel tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        for field in ('title', 'body', 'order_index', 'is_published'):
+            if field in request.data: setattr(article, field, request.data[field])
+        if not str(article.title).strip() or not str(article.body).strip(): return Response({'detail': 'Judul dan isi wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        article.save(); return Response(serialize_help_article(article))
+
+    def delete(self, request, pk):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        deleted, _ = HelpArticle.objects.filter(pk=pk).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT if deleted else status.HTTP_404_NOT_FOUND)
+
+
 def managed_role_from_path(role):
     if role == 'lecturers':
         return UserSubjectRole.Role.LECTURER
@@ -276,12 +333,158 @@ class AdminSubjectListView(APIView):
     authentication_classes = [TokenAuthentication]
 
     def get(self, request):
+        if require_admin(request):
+            subjects = Subject.objects.order_by('name')
+        else:
+            subject_ids = UserSubjectRole.objects.filter(user=request.user, role=UserSubjectRole.Role.LECTURER).values_list('subject_id', flat=True)
+            subjects = Subject.objects.filter(id__in=subject_ids).order_by('name')
+        return Response([serialize_admin_subject(subject) for subject in subjects])
+
+    def post(self, request):
         if not require_admin(request):
             return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
-        return Response([
-            {'id': str(subject.id), 'name': subject.name, 'slug': subject.slug}
-            for subject in Subject.objects.filter(is_active=True).order_by('name')
-        ])
+        name = str(request.data.get('name', '')).strip()
+        slug = slugify(str(request.data.get('slug', '')).strip() or name)
+        if not name or not slug:
+            return Response({'detail': 'Nama dan kode mata kuliah wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        if Subject.objects.filter(name__iexact=name).exists() or Subject.objects.filter(slug=slug).exists():
+            return Response({'detail': 'Nama atau kode mata kuliah sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+        lecturer_ids, error = valid_lecturer_ids(request.data.get('lecturer_ids', []))
+        if error:
+            return Response({'lecturer_ids': [error]}, status=status.HTTP_400_BAD_REQUEST)
+        subject = Subject.objects.create(
+            id=uuid.uuid4(), name=name, slug=slug,
+            description=str(request.data.get('description', '')).strip() or None,
+            is_active=bool(request.data.get('is_active', True)),
+        )
+        replace_subject_lecturers(subject, lecturer_ids)
+        return Response(serialize_admin_subject(subject), status=status.HTTP_201_CREATED)
+
+
+def valid_lecturer_ids(raw_ids):
+    lecturer_ids = list(dict.fromkeys(raw_ids or []))
+    if not all(isinstance(item, str) for item in lecturer_ids):
+        return [], 'Daftar dosen tidak valid.'
+    found_ids = set(User.objects.filter(id__in=lecturer_ids, is_superuser=False).values_list('id', flat=True))
+    if len(found_ids) != len(lecturer_ids):
+        return [], 'Ada dosen yang tidak ditemukan.'
+    return lecturer_ids, None
+
+
+def replace_subject_lecturers(subject, lecturer_ids):
+    UserSubjectRole.objects.filter(subject=subject, role=UserSubjectRole.Role.LECTURER).delete()
+    UserSubjectRole.objects.bulk_create([
+        UserSubjectRole(user_id=lecturer_id, subject=subject, role=UserSubjectRole.Role.LECTURER)
+        for lecturer_id in lecturer_ids
+    ])
+
+
+def serialize_admin_subject(subject):
+    lecturer_roles = UserSubjectRole.objects.filter(
+        subject=subject, role=UserSubjectRole.Role.LECTURER
+    ).select_related('user').order_by('user__full_name')
+    return {
+        'id': str(subject.id), 'name': subject.name, 'slug': subject.slug,
+        'description': subject.description or '', 'is_active': subject.is_active,
+        'lecturers': [{'id': str(role.user_id), 'full_name': role.user.full_name, 'email': role.user.email} for role in lecturer_roles],
+        'topic_count': Topic.objects.filter(subject=subject).count(),
+    }
+
+
+class AdminSubjectDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request, pk):
+        try:
+            subject = Subject.objects.get(pk=pk)
+        except Subject.DoesNotExist:
+            return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not require_admin(request) and not is_lecturer_for_subject(request.user, subject.id):
+            return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+        return Response(serialize_admin_subject(subject))
+
+    def patch(self, request, pk):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            subject = Subject.objects.get(pk=pk)
+        except Subject.DoesNotExist:
+            return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        name = str(request.data.get('name', subject.name)).strip()
+        slug = slugify(str(request.data.get('slug', subject.slug)).strip() or name)
+        if not name or not slug:
+            return Response({'detail': 'Nama dan kode mata kuliah wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        if Subject.objects.exclude(pk=subject.pk).filter(name__iexact=name).exists() or Subject.objects.exclude(pk=subject.pk).filter(slug=slug).exists():
+            return Response({'detail': 'Nama atau kode mata kuliah sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+        if 'lecturer_ids' in request.data:
+            lecturer_ids, error = valid_lecturer_ids(request.data['lecturer_ids'])
+            if error:
+                return Response({'lecturer_ids': [error]}, status=status.HTTP_400_BAD_REQUEST)
+            replace_subject_lecturers(subject, lecturer_ids)
+        subject.name = name
+        subject.slug = slug
+        if 'description' in request.data:
+            subject.description = str(request.data['description']).strip() or None
+        if 'is_active' in request.data:
+            subject.is_active = bool(request.data['is_active'])
+        subject.save()
+        return Response(serialize_admin_subject(subject))
+
+
+def serialize_admin_topic(topic):
+    return {'id': str(topic.id), 'name': topic.name, 'description': topic.description or ''}
+
+
+class AdminTopicListView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request, subject_id):
+        if not require_admin(request) and not is_lecturer_for_subject(request.user, subject_id):
+            return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+        return Response([serialize_admin_topic(topic) for topic in Topic.objects.filter(subject_id=subject_id).order_by('name')])
+
+    def post(self, request, subject_id):
+        try:
+            subject = Subject.objects.get(pk=subject_id, is_active=True)
+        except Subject.DoesNotExist:
+            return Response({'detail': 'Mata kuliah aktif tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not require_admin(request) and not is_lecturer_for_subject(request.user, subject.id):
+            return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+        name = str(request.data.get('name', '')).strip()
+        if not name:
+            return Response({'name': ['Nama topik wajib diisi.']}, status=status.HTTP_400_BAD_REQUEST)
+        topic = Topic.objects.create(id=uuid.uuid4(), subject=subject, name=name, description=str(request.data.get('description', '')).strip() or None)
+        return Response(serialize_admin_topic(topic), status=status.HTTP_201_CREATED)
+
+
+class AdminTopicDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def patch(self, request, pk):
+        try:
+            topic = Topic.objects.get(pk=pk)
+        except Topic.DoesNotExist:
+            return Response({'detail': 'Topik tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not require_admin(request) and not is_lecturer_for_subject(request.user, topic.subject_id):
+            return Response({'detail': 'Anda tidak memiliki akses ke topik ini.'}, status=status.HTTP_403_FORBIDDEN)
+        name = str(request.data.get('name', topic.name)).strip()
+        if not name:
+            return Response({'name': ['Nama topik wajib diisi.']}, status=status.HTTP_400_BAD_REQUEST)
+        topic.name = name
+        if 'description' in request.data:
+            topic.description = str(request.data['description']).strip() or None
+        topic.save()
+        return Response(serialize_admin_topic(topic))
+
+    def delete(self, request, pk):
+        try:
+            topic = Topic.objects.get(pk=pk)
+        except Topic.DoesNotExist:
+            return Response({'detail': 'Topik tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not require_admin(request) and not is_lecturer_for_subject(request.user, topic.subject_id):
+            return Response({'detail': 'Anda tidak memiliki akses ke topik ini.'}, status=status.HTTP_403_FORBIDDEN)
+        topic.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ============================================================================

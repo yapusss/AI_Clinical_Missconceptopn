@@ -158,7 +158,6 @@ export default function DashboardPage() {
         ? [
             { icon: FilePlus, label: "Buat bank soal baru", href: "/questions" },
             { icon: ShieldCheck, label: "Tinjau validasi", href: "/validation" },
-            { icon: BarChart3, label: "Lihat metrik AI", href: "/metrics" },
           ]
         : primaryRole === "ADMIN"
           ? [

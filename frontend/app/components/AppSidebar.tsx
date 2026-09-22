@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  BarChart3,
+  BookOpen,
   Building2,
   ClipboardList,
   FileSearch,
@@ -21,6 +21,7 @@ import {
 
 import { useAuth } from "./AuthProvider";
 import ThemeToggle from "./ThemeToggle";
+import Breadcrumb from "./Breadcrumb";
 
 type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 
@@ -42,14 +43,16 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
   { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
   { label: "Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
+  { label: "Mata Kuliah", path: "/admin/subjects", icon: BookOpen, roles: ["LECTURER"] },
   { label: "Jawaban Mahasiswa", path: "/submissions", icon: ClipboardList, roles: ["ADMIN", "LECTURER"] },
   { label: "Validasi", path: "/validation", icon: ShieldCheck, roles: ["ADMIN", "LECTURER"] },
-  { label: "Metrik AI", path: "/metrics", icon: BarChart3, roles: ["ADMIN", "LECTURER"] },
   { label: "Settings", path: "/settings", icon: Settings, roles: ["ADMIN"] },
+  { label: "Kelola Mata Kuliah", path: "/admin/subjects", icon: BookOpen, roles: ["ADMIN"] },
   { label: "Kelola Dosen", path: "/admin/lecturers", icon: UserRound, roles: ["ADMIN"] },
   { label: "Kelola Mahasiswa", path: "/admin/students", icon: GraduationCap, roles: ["ADMIN"] },
   { label: "Profile", path: "/profile", icon: UserRound, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
-  { label: "Bantuan", path: "/help", icon: CircleHelp, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
+  { label: "Pusat Bantuan", path: "/help", icon: CircleHelp, roles: ["ADMIN"] },
+  { label: "Bantuan", path: "/help", icon: CircleHelp, roles: ["LECTURER", "STUDENT", "GENERAL"] },
 ];
 
 function toAppRole(role?: string): AppRole {
@@ -114,7 +117,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
       const target = new URLSearchParams(path.split("?")[1]).get("view");
       return new URLSearchParams(currentSearch).get("view") === target;
     }
-    return pathname === path;
+    return pathname === path || (path === "/admin/subjects" && pathname.startsWith("/admin/subjects/"));
   };
 
   const handleLogout = () => {
@@ -278,6 +281,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
       </aside>
 
       <main className="app-main">
+        <Breadcrumb />
         {children}
       </main>
     </div>
