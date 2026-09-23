@@ -10,7 +10,6 @@ import {
   GraduationCap,
   Pencil,
   FileUp,
-  Pencil,
   Plus,
   Send,
   Trash2,
