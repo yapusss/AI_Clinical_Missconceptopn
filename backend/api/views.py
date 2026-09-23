@@ -714,20 +714,17 @@ class QuestionImportCreateView(APIView):
 
 class QuestionImportTemplateView(APIView):
     authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         subjects = list(Subject.objects.filter(is_active=True).order_by('name'))
         if not subjects:
-            # Fallback jika belum ada subject di DB
             subjects = [Subject(name="Physics", slug="physics")]
 
         workbook = Workbook()
-        # Hapus sheet default pertama
         default_sheet = workbook.active
 
         # Style Definitions
-        banner_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid") # Amber soft
+        banner_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
         banner_font = Font(name="Calibri", size=11, bold=True, color="92400E")
         banner_border = Border(
             left=Side(style="thin", color="F59E0B"),
@@ -736,7 +733,7 @@ class QuestionImportTemplateView(APIView):
             bottom=Side(style="thin", color="F59E0B"),
         )
 
-        header_fill = PatternFill(start_color="00288E", end_color="00288E", fill_type="solid") # EvalAI Academic Blue
+        header_fill = PatternFill(start_color="00288E", end_color="00288E", fill_type="solid")
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
 
         thin_border = Border(
@@ -747,6 +744,7 @@ class QuestionImportTemplateView(APIView):
         )
         data_font = Font(name="Calibri", size=10)
 
+        # 6 Kolom Utama (KOLOM INDIKATOR SUDAH DIHAPUS)
         headers = [
             "KODE_PAKET_UNIK",
             "JUDUL_UJIAN",
@@ -754,32 +752,28 @@ class QuestionImportTemplateView(APIView):
             "NOMOR_SOAL",
             "PERTANYAAN_KONSEPTUAL",
             "JAWABAN_REFERENSI",
-            "INDIKATOR_KONSEP",
         ]
 
         for idx, subj in enumerate(subjects):
-            # Batas nama sheet Excel maksimal 31 karakter
             sheet_title = subj.name[:31]
             ws = workbook.create_sheet(title=sheet_title)
 
-            # 1. Warning Banner (Baris 1 - 3, Kolom A - G)
-            ws.merge_cells("A1:G3")
+            # 1. Warning Banner (Baris 1 - 3, Kolom A - F)
+            ws.merge_cells("A1:F3")
             banner_cell = ws["A1"]
             banner_cell.value = (
                 f"⚠️ ANDA SEDANG BERADA DI SHEET: {subj.name.upper()}\n"
                 f"TOLONG GANTI TAB SHEET DI BAGIAN BAWAH EXCEL UNTUK MATA KULIAH LAINNYA.\n"
-                f"Pastikan seluruh soal pada sheet ini memang diperuntukkan bagi mata kuliah {subj.name}."
+                f"Pastikan seluruh soal pada sheet ini diperuntukkan bagi mata kuliah {subj.name}."
             )
             banner_cell.fill = banner_fill
             banner_cell.font = banner_font
             banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-            # Terapkan border pada range A1:G3
             for r in range(1, 4):
-                for c in range(1, 8):
+                for c in range(1, 7):
                     ws.cell(row=r, column=c).border = banner_border
 
-            # Set tinggi baris banner
             ws.row_dimensions[1].height = 18
             ws.row_dimensions[2].height = 18
             ws.row_dimensions[3].height = 18
@@ -793,7 +787,7 @@ class QuestionImportTemplateView(APIView):
                 cell.font = header_font
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-            # 3. Baris Contoh Data (Baris 6 & 7)
+            # 3. Baris Contoh Data (Baris 6 & 7) - Tanpa kolom indikator
             sample_prefix = "FIS" if "phys" in subj.name.lower() else "BIO"
             sample_rows = [
                 [
@@ -803,7 +797,6 @@ class QuestionImportTemplateView(APIView):
                     1,
                     "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
                     "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
-                    "Hukum Newton:0.5|Analisis Gaya:0.5",
                 ],
                 [
                     f"{sample_prefix}-NEWT-01",
@@ -812,7 +805,6 @@ class QuestionImportTemplateView(APIView):
                     2,
                     "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
                     "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
-                    "Ketepatan konsep:1.0000",
                 ],
             ]
 
@@ -828,23 +820,20 @@ class QuestionImportTemplateView(APIView):
                         wrap_text=True,
                     )
 
-            # 4. Auto-Fit Kolom (Poin 3: agar kata tidak terpotong)
+            # 4. Auto-Fit Kolom (Kolom A s/d F)
             for col in ws.columns:
                 col_letter = get_column_letter(col[0].column)
                 max_len = 0
                 for cell in col:
-                    if cell.row < 5:  # Lewati baris banner
+                    if cell.row < 5:
                         continue
                     val_str = str(cell.value or "")
                     lines = val_str.split("\n")
                     longest_line = max(len(l) for l in lines) if lines else 0
                     if longest_line > max_len:
                         max_len = longest_line
-                
-                # Tambahkan margin padding 4 karakter (min 16, max 50 agar proporsional)
-                ws.column_dimensions[col_letter].width = min(max(max_len + 4, 16), 55)
+                ws.column_dimensions[col_letter].width = min(max(max_len + 4, 18), 55)
 
-        # Hapus default sheet kosong jika ada sheet lain
         if len(workbook.sheetnames) > 1 and "Sheet" in workbook.sheetnames:
             del workbook["Sheet"]
 
