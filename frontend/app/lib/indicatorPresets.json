@@ -1,0 +1,14 @@
+[
+  {
+    "label": "Akurasi",
+    "description": "Ketepatan konsep ilmiah dan kesesuaian prinsip dasar fisika."
+  },
+  {
+    "label": "Penjelasan",
+    "description": "Kejelasan penalaran, alur argumen, dan langkah logika."
+  },
+  {
+    "label": "Kelengkapan",
+    "description": "Kelengkapan seluruh variabel, satuan, dan elemen jawaban."
+  }
+]

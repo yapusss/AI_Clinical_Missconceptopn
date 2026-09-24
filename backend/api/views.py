@@ -1024,6 +1024,15 @@ class QuestionListCreateView(APIView):
                     created_by=request.user,
                 )
 
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(),
+                    question_version=qv,
+                    answer_key=f"ANS-{q_idx:03d}",
+                    answer_text=q_item['model_answer'],
+                    answer_type='CANONICAL',
+                    is_primary=True,
+                )
+
                 indicators_data = q_item.get('indicators', [])
                 for idx, ind in enumerate(indicators_data, start=1):
                     ConceptIndicator.objects.create(
@@ -1068,14 +1077,13 @@ class QuestionDetailView(APIView):
             versions = []
             for version in QuestionVersion.objects.filter(question=question).order_by('-version_number'):
                 indicators = ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
-                versions.append({
-                    'id': str(version.id),
-                    'version_number': version.version_number,
-                    'prompt': version.prompt,
-                    'model_answer': version.model_answer,
-                    'is_published': version.is_published,
-                    'created_at': version.created_at,
-                    'reference_answers': [
+
+                refs = list(
+                    ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
+                )
+
+                if refs:
+                    ref_answers = [
                         {
                             'id': str(reference.id),
                             'answer_key': reference.answer_key,
@@ -1083,8 +1091,27 @@ class QuestionDetailView(APIView):
                             'answer_type': reference.answer_type,
                             'is_primary': reference.is_primary,
                         }
-                        for reference in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
-                    ],
+                        for reference in refs
+                    ]
+                else:
+                    ref_answers = [
+                        {
+                            'id': str(version.id),
+                            'answer_key': 'CANONICAL',
+                            'answer_text': version.model_answer,
+                            'answer_type': 'CANONICAL',
+                            'is_primary': True,
+                        }
+                    ]
+
+                versions.append({
+                    'id': str(version.id),
+                    'version_number': version.version_number,
+                    'prompt': version.prompt,
+                    'model_answer': version.model_answer,
+                    'is_published': version.is_published,
+                    'created_at': version.created_at,
+                    'reference_answers': ref_answers,
                     'indicators': [
                         {
                             'id': str(indicator.id),
@@ -1156,11 +1183,32 @@ class QuestionDetailView(APIView):
                     is_published=False,
                     created_by=request.user,
                 )
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(),
+                    question_version=target_v,
+                    answer_key='CANONICAL',
+                    answer_text=model_answer,
+                    answer_type='CANONICAL',
+                    is_primary=True,
+                )
             elif latest_v:
                 latest_v.prompt = prompt
                 latest_v.model_answer = model_answer
                 latest_v.save()
                 target_v = latest_v
+                ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
+                if ref:
+                    ref.answer_text = model_answer
+                    ref.save(update_fields=['answer_text'])
+                else:
+                    ReferenceAnswer.objects.create(
+                        id=uuid.uuid4(),
+                        question_version=target_v,
+                        answer_key='CANONICAL',
+                        answer_text=model_answer,
+                        answer_type='CANONICAL',
+                        is_primary=True,
+                    )
             else:
                 target_v = QuestionVersion.objects.create(
                     id=uuid.uuid4(),
@@ -1170,6 +1218,14 @@ class QuestionDetailView(APIView):
                     model_answer=model_answer,
                     is_published=False,
                     created_by=request.user,
+                )
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(),
+                    question_version=target_v,
+                    answer_key='CANONICAL',
+                    answer_text=model_answer,
+                    answer_type='CANONICAL',
+                    is_primary=True,
                 )
 
             if 'indicators' in data:
