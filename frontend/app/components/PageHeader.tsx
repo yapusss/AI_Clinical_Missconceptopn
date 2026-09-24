@@ -32,7 +32,7 @@ export default function PageHeader({
           {description && <p className="mt-0.5 text-sm text-on-surface-variant leading-relaxed">{description}</p>}
         </div>
       </div>
-      {action}
+      {action && <div className="shrink-0 sm:self-center">{action}</div>}
     </header>
   );
 }

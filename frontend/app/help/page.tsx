@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { BookOpen, CircleHelp, GraduationCap, LayoutDashboard, Lightbulb, ShieldCheck } from "lucide-react";
 import { useAuth } from "../components/AuthProvider";
 import AdminHelpManager from "../components/AdminHelpManager";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
 
 type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 
@@ -85,21 +87,14 @@ export default function HelpPage() {
   const Icon = content.icon;
 
   return (
-    <div style={{ maxWidth: "960px", margin: "0 auto" }}>
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><CircleHelp size={14} /> Pusat Bantuan</div>
-          <h1 className="mt-2 font-display text-2xl font-bold text-on-surface">{content.label}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-on-surface-variant">{content.intro}</p>
-        </div>
-        <div className="flex items-center gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-low px-3 py-2 text-xs font-semibold text-on-surface-variant"><Icon size={16} color="var(--primary)" /> Role aktif: {content.label.replace("Panduan ", "")}</div>
-      </header>
+    <PageContainer>
+      <PageHeader title={content.label} description={content.intro} icon={CircleHelp} eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><CircleHelp size={14} /> Pusat Bantuan</span>} action={<div className="flex items-center gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-low px-3 py-2 text-xs font-semibold text-on-surface-variant"><Icon size={16} color="var(--primary)" /> Role aktif: {content.label.replace("Panduan ", "")}</div>} />
 
       <div className="mt-8 grid gap-4 md:grid-cols-2">
         {content.sections.map((section, index) => <section key={section.title} className="glass-card p-5"><div className="flex items-start gap-3"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-fixed text-sm font-bold text-primary">{index + 1}</span><div className="min-w-0"><h2 className="font-display text-base font-bold text-on-surface">{section.title}</h2>{section.body && <p className="mt-2 whitespace-pre-line text-sm leading-6 text-on-surface-variant">{section.body}</p>}{section.steps && <ol className="mt-2 space-y-2 text-sm leading-6 text-on-surface-variant">{section.steps.map((step) => <li key={step}>{step}</li>)}</ol>}</div></div></section>)}
       </div>
 
       <section className="mt-6 rounded-xl border border-primary-fixed-dim bg-primary-fixed/40 p-5"><div className="flex items-start gap-3"><Lightbulb size={19} color="var(--primary)" /><div><h2 className="font-display text-base font-bold text-on-surface">Butuh bantuan lebih lanjut?</h2><p className="mt-1 text-sm text-on-surface-variant">Sertakan email akun, mata kuliah, kode paket, dan langkah terakhir yang dilakukan saat melaporkan kendala kepada administrator.</p></div></div></section>
-    </div>
+    </PageContainer>
   );
 }

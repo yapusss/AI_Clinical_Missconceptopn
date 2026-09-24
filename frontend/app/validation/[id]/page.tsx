@@ -17,6 +17,8 @@ import {
 
 import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
+import PageContainer from "../../components/PageContainer";
+import PageHeader from "../../components/PageHeader";
 import { apiFetch } from "../../lib/api";
 
 type IndicatorScore = {
@@ -227,7 +229,7 @@ export default function ValidationDetailPage() {
   const indicatorByOrder = new Map(data?.question.indicators.map((i) => [i.order_index, i]));
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+    <PageContainer>
       <Link
         href="/validation"
         className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary"
@@ -259,23 +261,7 @@ export default function ValidationDetailPage() {
         <p className="mt-8 text-sm text-on-surface-variant">Memuat detail analisis...</p>
       ) : !data ? null : (
         <>
-          <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-                <ClipboardCheck size={14} color="var(--primary)" />
-                Tinjau Analisis AI
-              </div>
-              <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-on-surface">
-                {data.set.title}
-              </h1>
-              <p className="text-sm text-on-surface-variant">
-                {data.student.name} • Kode{" "}
-                <span className="font-mono-ui font-bold text-primary">{data.set.code}</span> •{" "}
-                {data.subject.name} • Percobaan ke-{data.answer.attempt_no} •{" "}
-                {data.run_number > 1 ? `analisis ulang ke-${data.run_number}` : "analisis pertama"}
-              </p>
-            </div>
-            <div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-right">
+          <PageHeader className="mt-3" title={data.set.title} description={`${data.student.name} • Kode ${data.set.code} • ${data.subject.name} • Percobaan ke-${data.answer.attempt_no} • ${data.run_number > 1 ? `analisis ulang ke-${data.run_number}` : "analisis pertama"}`} icon={ClipboardCheck} eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ClipboardCheck size={14} /> Tinjau Analisis AI</span>} action={<div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-right">
               <span
                 className={`badge ${
                   data.submission_status === "PENDING_VALIDATION"
@@ -294,8 +280,7 @@ export default function ValidationDetailPage() {
               <p className="mt-1 text-[11px] text-on-surface-variant">
                 Model {data.llm.model_identifier} • {data.llm.execution_time_ms ?? "-"}ms
               </p>
-            </div>
-          </div>
+            </div>} />
 
           {/* Side-by-side: student answer vs model answer */}
           <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -600,6 +585,6 @@ export default function ValidationDetailPage() {
           ) : null}
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

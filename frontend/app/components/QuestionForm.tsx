@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
+import PageContainer from "./PageContainer";
+import PageHeader from "./PageHeader";
 import indicatorPresets from "../lib/indicatorPresets.json";
 
 export type Indicator = {
@@ -643,7 +645,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-6 sm:px-6">
+    <PageContainer>
       <div className="flex items-center justify-between mb-4">
         <button
           type="button"
@@ -679,14 +681,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
         </div>
       </div>
 
-      <header className="mb-6">
-        <h1 className="font-display text-2xl font-bold text-on-surface">
-          {isEditing ? "Edit Paket Soal" : "Buat Paket Ujian Baru"}
-        </h1>
-        <p className="text-sm text-on-surface-variant mt-1">
-          Atur informasi paket soal, pertanyaan esai konseptual, dan rubrik penilaian berbobot total 100.
-        </p>
-      </header>
+      <PageHeader className="mb-6" title={isEditing ? "Edit Paket Soal" : "Buat Paket Ujian Baru"} description="Atur informasi paket soal, pertanyaan esai konseptual, dan rubrik penilaian berbobot total 100." icon={FileText} />
 
       {error && (
         <div role="alert" className="mb-5 flex gap-2 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container">
@@ -976,6 +971,6 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

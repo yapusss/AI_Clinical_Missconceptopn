@@ -7,6 +7,7 @@ import { BookOpen, KeyRound, UserRound } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
 import PageHeader from "../components/PageHeader";
+import PageContainer from "../components/PageContainer";
 
 const ROLE_LABEL: Record<string, string> = {
   ADMIN: "Administrator",
@@ -47,7 +48,7 @@ export default function ProfilePage() {
   const uniqueRoles = [...new Set(roleList.map((r) => r.role))];
 
   return (
-    <div style={{ maxWidth: "840px", margin: "0 auto" }}>
+    <PageContainer>
       <PageHeader className="mb-6" title="Profile" description="Informasi akun dan peran Anda." icon={UserRound} />
 
       <section className="glass-panel animate-fade-in" style={{ padding: "1.5rem", borderRadius: "var(--radius-lg)" }}>
@@ -162,6 +163,6 @@ export default function ProfilePage() {
           </p>
         )}
       </section>
-    </div>
+    </PageContainer>
   );
 }

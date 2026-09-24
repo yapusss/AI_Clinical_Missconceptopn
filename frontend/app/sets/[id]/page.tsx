@@ -13,6 +13,8 @@ import {
 
 import { useAuth } from "../../components/AuthProvider";
 import { apiFetch } from "../../lib/api";
+import PageContainer from "../../components/PageContainer";
+import PageHeader from "../../components/PageHeader";
 
 type LatestSubmission = {
   submission_id: string;
@@ -225,7 +227,7 @@ function AnswerSetContent() {
 
   if (data && !started) {
     return (
-      <div style={{ maxWidth: "760px", margin: "0 auto" }}>
+      <PageContainer>
         <Link
           href="/code"
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary"
@@ -233,16 +235,7 @@ function AnswerSetContent() {
           <ArrowLeft size={14} /> Kembali ke input kode
         </Link>
         <section className="glass-panel mt-6 rounded-xl border border-outline-variant/40 p-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-            <ClipboardList size={14} /> Instruksi Ujian
-          </div>
-          <h1 className="mt-3 font-display text-2xl font-bold text-on-surface">
-            {data.title}
-          </h1>
-          <p className="mt-2 whitespace-pre-line text-sm text-on-surface-variant">
-            {data.description ||
-              "Jawab seluruh pertanyaan dengan menjelaskan alasan konseptual Anda."}
-          </p>
+          <PageHeader title={data.title} description={data.description || "Jawab seluruh pertanyaan dengan menjelaskan alasan konseptual Anda."} icon={ClipboardList} eyebrow={<span className="text-xs font-bold uppercase tracking-wider text-primary">Instruksi Ujian</span>} />
           <ul className="mt-6 space-y-2 text-sm text-on-surface-variant">
             <li>{data.questions.length} pertanyaan</li>
             <li>Durasi 45 menit</li>
@@ -259,12 +252,12 @@ function AnswerSetContent() {
             Mulai Ujian <Send size={16} />
           </button>
         </section>
-      </div>
+      </PageContainer>
     );
   }
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+    <PageContainer>
       <Link
         href="/code"
         className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary"
@@ -273,39 +266,12 @@ function AnswerSetContent() {
         Kembali ke input kode
       </Link>
 
-      <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-            <ClipboardList size={14} color="var(--primary)" />
-            Lembar Evaluasi Mahasiswa
-          </div>
-          <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-on-surface">
-            {data?.title ?? "Memuat soal..."}
-          </h1>
-          <p className="text-sm text-on-surface-variant">
-            {data ? (
-              <>
-                Kode Soal{" "}
-                <span className="font-mono-ui font-bold text-primary">
-                  {data.code}
-                </span>{" "}
-                • {data.subject_name} • {data.questions.length} pertanyaan
-              </>
-            ) : (
-              "Menyiapkan lembar evaluasi..."
-            )}
-          </p>
-        </div>
-
-        {data && data.questions.length > 0 && (
-          <div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">
+      <PageHeader className="mt-3" title={data?.title ?? "Memuat soal..."} description={data ? `Kode Soal ${data.code} • ${data.subject_name} • ${data.questions.length} pertanyaan` : "Menyiapkan lembar evaluasi..."} icon={ClipboardList} eyebrow={<span className="text-xs font-bold uppercase tracking-wider text-primary">Lembar Evaluasi Mahasiswa</span>} action={data && data.questions.length > 0 ? <div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">
             <span className="font-mono-ui text-primary">{formattedTime}</span> ·
             Terjawab{" "}
             <span className="font-mono-ui text-primary">{answered}</span> /{" "}
             {data.questions.length}
-          </div>
-        )}
-      </div>
+          </div> : undefined} />
 
       {error && (
         <div
@@ -443,7 +409,7 @@ function AnswerSetContent() {
           ))}
         </nav>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

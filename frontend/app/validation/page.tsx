@@ -12,6 +12,7 @@ import {
 
 import { useAuth } from "../components/AuthProvider";
 import PageHeader from "../components/PageHeader";
+import PageContainer from "../components/PageContainer";
 import { apiFetch } from "../lib/api";
 
 type QueueItem = {
@@ -90,7 +91,7 @@ export default function ValidationQueuePage() {
     user.is_superuser || (user.roles ?? []).some((r) => r.role === "LECTURER");
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+    <PageContainer>
       <PageHeader
         className="mt-3"
         title="Antrian Validasi"
@@ -173,6 +174,6 @@ export default function ValidationQueuePage() {
           ))}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

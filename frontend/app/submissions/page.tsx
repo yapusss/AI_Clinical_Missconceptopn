@@ -13,6 +13,7 @@ import {
 
 import { useAuth } from "../components/AuthProvider";
 import PageHeader from "../components/PageHeader";
+import PageContainer from "../components/PageContainer";
 import AppSelect from "../components/AppSelect";
 import { apiFetch } from "../lib/api";
 
@@ -112,7 +113,7 @@ export default function SubmissionsPage() {
   const visible = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+    <PageContainer>
       <PageHeader className="mb-6" title="Jawaban Mahasiswa" description="Daftar jawaban yang dikumpulkan mahasiswa untuk ditinjau." icon={ClipboardList} />
 
       {error && (
@@ -248,6 +249,6 @@ export default function SubmissionsPage() {
           );
         })}
       </div>
-    </div>
+    </PageContainer>
   );
 }

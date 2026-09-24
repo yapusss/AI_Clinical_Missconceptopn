@@ -17,6 +17,8 @@ import {
 
 import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
+import PageContainer from "../../components/PageContainer";
+import PageHeader from "../../components/PageHeader";
 import { apiFetch } from "../../lib/api";
 import {
   fmtDate,
@@ -210,7 +212,7 @@ export default function SubmissionSetDetailPage() {
   if (loading || !user) return null;
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+    <PageContainer>
       {/* Back Link */}
       <div className="mb-3">
         <Link
@@ -237,22 +239,7 @@ export default function SubmissionSetDetailPage() {
       ) : group && activeQuestion ? (
         <div className="space-y-4">
           {/* Header */}
-          <header className="px-1">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-primary">
-              <GraduationCap size={13} />
-              Diagnosis &amp; Evaluasi Mahasiswa
-            </div>
-            <h1 className="mt-1 font-display text-xl font-extrabold tracking-tight text-on-surface sm:text-2xl">
-              {group.title}
-            </h1>
-            <p className="mt-0.5 text-xs text-on-surface-variant">
-              Mata Kuliah: <strong className="text-on-surface">{group.subject_name}</strong>
-              {group.topic_name && (
-                <> • Topik: <span className="font-semibold text-primary">{group.topic_name}</span></>
-              )}
-              {" "}• Kode: <span className="font-mono-ui font-bold text-primary">{group.code}</span>
-            </p>
-          </header>
+          <PageHeader title={group.title} description={`Mata Kuliah: ${group.subject_name}${group.topic_name ? ` • Topik: ${group.topic_name}` : ""} • Kode: ${group.code}`} icon={GraduationCap} eyebrow={<span className="text-xs font-bold uppercase tracking-wider text-primary">Diagnosis &amp; Evaluasi Mahasiswa</span>} />
 
           {/* Unified Container */}
           <main className="glass-panel overflow-hidden rounded-2xl border border-outline-variant/40 shadow-sm">
@@ -454,6 +441,6 @@ export default function SubmissionSetDetailPage() {
           </main>
         </div>
       ) : null}
-    </div>
+    </PageContainer>
   );
 }

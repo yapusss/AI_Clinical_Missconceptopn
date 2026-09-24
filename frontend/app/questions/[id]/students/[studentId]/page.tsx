@@ -7,6 +7,7 @@ import { ArrowLeft, BrainCircuit, ClipboardList, TriangleAlert } from "lucide-re
 
 import { useAuth } from "../../../../components/AuthProvider";
 import PageHeader from "../../../../components/PageHeader";
+import PageContainer from "../../../../components/PageContainer";
 import { apiFetch } from "../../../../lib/api";
 
 type PackageReview = {
@@ -50,7 +51,7 @@ export default function StudentPackageReviewPage() {
   }, [loading, user, router, load]);
 
   if (loading || !user) return null;
-  return <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+  return <PageContainer>
     <Link href={`/questions/${setId}`} className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline"><ArrowLeft size={16} /> Kembali ke progres mahasiswa</Link>
     {data && <PageHeader className="mt-4" title={data.student.name} description={`${data.package.title} · ${data.package.subject_name}`} icon={ClipboardList} eyebrow={<span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">{data.package.code}</span>} action={<span className="badge badge-role">Terjawab {data.answered_count} / {data.published_question_count}</span>} />}
     {error && <div role="alert" className="mt-6 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"><TriangleAlert size={20} />{error}</div>}
@@ -60,5 +61,5 @@ export default function StudentPackageReviewPage() {
       <section className="mt-5 border-t border-outline-variant/30 pt-5"><h3 className="text-sm font-bold text-on-surface">Jawaban referensi</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-on-surface">{question.model_answer}</p>{question.indicators.length > 0 && <ul className="mt-3 space-y-1 text-sm text-on-surface-variant">{question.indicators.map((indicator) => <li key={indicator.id}><strong className="text-on-surface">{indicator.order_index}. {indicator.label}</strong> ({Number(indicator.weight) * 100}%) {indicator.description}</li>)}</ul>}</section>
       {question.analysis && <section className="mt-5 rounded-lg border border-outline-variant/40 bg-surface-container-low p-4"><div className="flex gap-3"><BrainCircuit className="mt-0.5 shrink-0 text-primary" size={19} /><div><h3 className="text-sm font-bold text-on-surface">Analisis AI</h3><p className="mt-1 text-sm text-on-surface-variant">Skor {Number(question.analysis.percentage_correct).toFixed(1)}% · {question.analysis.tier_label} · Kepercayaan {(Number(question.analysis.confidence) * 100).toFixed(0)}%</p>{question.analysis.explanation && <p className="mt-2 whitespace-pre-wrap text-sm text-on-surface-variant">{question.analysis.explanation}</p>}{question.analysis.validation && <p className="mt-2 text-sm text-on-surface-variant">Validasi: {question.analysis.validation.status} oleh {question.analysis.validation.lecturer_name}</p>}</div></div></section>}
     </article>)}</div>}
-  </div>;
+  </PageContainer>;
 }

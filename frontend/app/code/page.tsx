@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, KeyRound, TriangleAlert, X } from "lucide-react";
+import { ArrowRight, KeyRound, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
 import PageHeader from "../components/PageHeader";
+import PageContainer from "../components/PageContainer";
 import MySubmissions from "../components/MySubmissions";
+import FormModal from "../components/FormModal";
 import { apiFetch } from "../lib/api";
 
 type StudentSet = {
@@ -77,7 +79,7 @@ export default function SoalPage() {
   if (loading || !user) return null;
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+    <PageContainer>
       {/* Clean Header: Key Icon vertically centered with Title and Description */}
       <PageHeader
         title="Soal Konseptual"
@@ -113,51 +115,27 @@ export default function SoalPage() {
 
       {/* Pop-up Modal for Entering the Code */}
       {showModal && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-code-title"
+        <FormModal
+          title="Mulai Evaluasi Soal"
+          subtitle="Masukkan kode unik yang diberikan oleh dosen."
+          icon={KeyRound}
+          onClose={() => setShowModal(false)}
+          onSubmit={onSubmit}
+          maxWidth="max-w-md"
+          closeLabel="Tutup pop up"
+          footer={<><button type="button" onClick={() => setShowModal(false)} disabled={submitting} className="btn-secondary w-full sm:w-auto !py-2 !px-4 text-xs font-semibold">Batal</button><button type="submit" disabled={submitting} className="btn-primary w-full sm:w-auto !py-2 !px-4 text-xs font-semibold disabled:opacity-50">{submitting ? "Memeriksa..." : "Buka Lembar Evaluasi"}<ArrowRight size={14} /></button></>}
         >
-          <div className="w-full max-w-md rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl animate-fade-in">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between gap-3 border-b border-outline-variant/30 pb-3.5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex size-9 items-center justify-center rounded-lg bg-primary-fixed text-primary">
-                  <KeyRound size={18} />
-                </div>
-                <div>
-                  <h2 id="modal-code-title" className="font-display text-base font-bold text-on-surface">
-                    Mulai Evaluasi Soal
-                  </h2>
-                  <p className="text-xs text-on-surface-variant">
-                    Masukkan kode unik yang diberikan oleh dosen.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowModal(false)}
-                className="rounded-lg p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors"
-                aria-label="Tutup pop up"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Error Banner inside Modal */}
+          <section className="rounded-xl border border-outline-variant/50 p-4">
             {error && (
               <div
                 role="alert"
-                className="mt-4 flex items-center gap-2.5 rounded-xl border border-error/40 bg-error-container p-3 text-xs text-on-error-container"
+                className="mb-4 flex items-center gap-2.5 rounded-xl border border-error/40 bg-error-container p-3 text-xs text-on-error-container"
               >
                 <TriangleAlert size={16} className="shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
-            {/* Code Input Form */}
-            <form onSubmit={onSubmit} className="mt-4 space-y-4">
               <div>
                 <label
                   htmlFor="modal-input-code"
@@ -179,30 +157,9 @@ export default function SoalPage() {
                   Kode paket bersifat unik untuk setiap evaluasi konseptual.
                 </p>
               </div>
-
-              {/* Modal Actions */}
-              <div className="flex items-center justify-end gap-2.5 border-t border-outline-variant/30 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  disabled={submitting}
-                  className="btn-secondary !py-2 !px-4 text-xs font-semibold"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {submitting ? "Memeriksa..." : "Buka Lembar Evaluasi"}
-                  <ArrowRight size={14} />
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+          </section>
+        </FormModal>
       )}
-    </div>
+    </PageContainer>
   );
 }

@@ -17,6 +17,8 @@ import {
 import { useAuth } from "../components/AuthProvider";
 import { apiFetch } from "../lib/api";
 import ThemeToggle from "../components/ThemeToggle";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
 
 type SubjectSummary = { slug: string; name: string };
 type NotifSettings = { submissionAlerts: boolean; emailDigest: boolean; marketing: boolean };
@@ -202,29 +204,8 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ maxWidth: "960px", margin: "0 auto" }}>
-      <header style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "1.5rem" }}>
-        <div
-          style={{
-            width: "48px",
-            height: "48px",
-            borderRadius: "var(--radius-md)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(99, 102, 241, 0.15)",
-            color: "var(--primary)",
-          }}
-        >
-          <ShieldCheck size={26} />
-        </div>
-        <div>
-          <h1 style={{ fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>Settings</h1>
-          <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
-            Konfigurasi akun, tampilan, notifikasi dan sistem.
-          </p>
-        </div>
-      </header>
+    <PageContainer>
+      <PageHeader className="mb-6" title="Settings" description="Konfigurasi akun, tampilan, notifikasi dan sistem." icon={ShieldCheck} />
 
       {notice && (
         <div role="status" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(99, 102, 241, 0.25)", background: "rgba(99, 102, 241, 0.1)", color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.7rem 1rem", marginBottom: "1.25rem" }}>
@@ -357,6 +338,6 @@ export default function SettingsPage() {
           />
         </SectionCard>
       </div>
-    </div>
+    </PageContainer>
   );
 }

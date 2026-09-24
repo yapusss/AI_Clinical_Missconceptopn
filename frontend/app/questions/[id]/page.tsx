@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, ClipboardList, GraduationCap, TriangleAlert } fr
 
 import { useAuth } from "../../components/AuthProvider";
 import PageHeader from "../../components/PageHeader";
+import PageContainer from "../../components/PageContainer";
 import { apiFetch } from "../../lib/api";
 
 type LatestSubmission = {
@@ -84,7 +85,7 @@ export default function QuestionSetReviewPage() {
   if (loading || !user) return null;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <PageContainer>
       <Link href="/questions" className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline">
         <ArrowLeft size={16} /> Kembali ke paket ujian
       </Link>
@@ -119,6 +120,6 @@ export default function QuestionSetReviewPage() {
           ))}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
 
 type Role = { role: string; subject_slug: string; subject_name: string };
@@ -169,27 +171,8 @@ export default function DashboardPage() {
   const MetaIcon = meta.icon;
 
   return (
-    <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
-      <header style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "1.5rem" }}>
-        <div
-          style={{
-            width: "48px",
-            height: "48px",
-            borderRadius: "var(--radius-md)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(99, 102, 241, 0.15)",
-            color: "var(--primary)",
-          }}
-        >
-          <MetaIcon size={26} />
-        </div>
-        <div>
-          <h1 style={{ fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>{meta.label}</h1>
-          <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>{meta.desc}</p>
-        </div>
-      </header>
+    <PageContainer>
+      <PageHeader className="mb-6" title={meta.label} description={meta.desc} icon={MetaIcon} />
 
       {view && (
         <div role="status" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(99, 102, 241, 0.25)", background: "rgba(99, 102, 241, 0.1)", color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.7rem 1rem", marginBottom: "1.25rem" }}>
@@ -293,6 +276,6 @@ export default function DashboardPage() {
           </div>
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

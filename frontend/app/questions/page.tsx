@@ -18,6 +18,8 @@ import {
 import { useAuth } from "../components/AuthProvider";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ListToolbar from "../components/ListToolbar";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
 
 type Indicator = {
   label: string;
@@ -156,20 +158,13 @@ export default function QuestionsPage() {
   if (!user) return null;
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-            <ClipboardList size={14} /> Paket Ujian
-          </div>
-          <h1 className="mt-2 font-display text-2xl font-bold text-on-surface">
-            Manajemen Paket Ujian
-          </h1>
-          <p className="text-sm text-on-surface-variant">
-            Satu kode berisi pertanyaan konseptual yang dikerjakan sebagai satu evaluasi.
-          </p>
-        </div>
-      </header>
+    <PageContainer>
+      <PageHeader
+        title="Manajemen Paket Ujian"
+        description="Satu kode berisi pertanyaan konseptual yang dikerjakan sebagai satu evaluasi."
+        icon={ClipboardList}
+        eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ClipboardList size={14} /> Paket Ujian</span>}
+      />
 
       {error && (
         <div
@@ -523,6 +518,6 @@ export default function QuestionsPage() {
           setPendingDeactivate(null);
         }}
       />
-    </div>
+    </PageContainer>
   );
 }
