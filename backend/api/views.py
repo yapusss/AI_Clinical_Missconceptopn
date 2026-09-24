@@ -1817,10 +1817,10 @@ class StudentSubmissionListView(APIView):
 
 
 def _build_submission_set_groups(user):
-    """Group a student's submissions per question set (read-only aggregation).
+    """Group a student's submissions per question set with comprehensive pedagogical diagnostics.
 
-    Mirrors what the student is allowed to see: only published question versions,
-    and every published question is reported (answered or not).
+    Exposes rubric points breakdown, attempt-bound evaluations, model answer benchmarks,
+    and verified misconceptions without leaking internal unvalidated AI hypotheses.
     """
     submissions = list(
         Submission.objects.filter(student=user).order_by('submitted_at')
@@ -1838,10 +1838,27 @@ def _build_submission_set_groups(user):
     set_ids = {q.question_set_id for q in questions.values()}
     sets_map = {
         s.id: s
-        for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject')
+        for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject', 'topic')
     }
 
-    # Published question count per set (a question counts once, latest version wins)
+    # Fetch concept indicators for all versions in scope
+    indicators_by_version = {}
+    for ind in ConceptIndicator.objects.filter(question_version_id__in=version_ids).order_by('order_index'):
+        indicators_by_version.setdefault(ind.question_version_id, []).append(ind)
+
+    # Fetch current analyses and validations for every attempt
+    sub_ids = [s.id for s in submissions]
+    analyses = {
+        a.submission_id: a
+        for a in LlmAnalysis.objects.filter(submission_id__in=sub_ids, is_current=True)
+    }
+    validations = {
+        v.analysis_id: v
+        for v in Validation.objects.filter(
+            analysis_id__in=[a.id for a in analyses.values()]
+        ).select_related('lecturer')
+    }
+
     published_rows = (
         QuestionVersion.objects.filter(
             is_published=True, question__question_set_id__in=set_ids
@@ -1880,16 +1897,73 @@ def _build_submission_set_groups(user):
                 max_attempt = max(max_attempt, s.attempt_no)
                 if last_submitted is None or s.submitted_at > last_submitted:
                     last_submitted = s.submitted_at
+
+                analysis = analyses.get(s.id)
+                validation = validations.get(analysis.id) if analysis else None
+                evaluation_payload = None
+
+                if s.status == 'VALIDATED' and validation:
+                    v_indicators = indicators_by_version.get(s.question_version_id, [])
+                    breakdown = analysis.concept_breakdown_json or {}
+                    indicator_results = {
+                        item.get('order_index'): item
+                        for item in breakdown.get('indicators', [])
+                    }
+
+                    # Construct explainable rubric scoring breakdown
+                    rubric_breakdown = []
+                    for ind in v_indicators:
+                        res = indicator_results.get(ind.order_index, {})
+                        score_enum = res.get('score', 'MISSING')
+                        credit_factor = 1.0 if score_enum == 'PRESENT' else (0.5 if score_enum == 'PARTIAL' else 0.0)
+                        weight_float = float(ind.weight)
+                        earned_points = round(weight_float * credit_factor * 100, 2)
+
+                        rubric_breakdown.append({
+                            'order_index': ind.order_index,
+                            'label': ind.label,
+                            'description': ind.description or '',
+                            'max_weight_percent': round(weight_float * 100, 1),
+                            'earned_points_percent': earned_points,
+                            'status': score_enum,
+                            'evidence': res.get('evidence', ''),
+                        })
+
+                    # Filter lecturer-confirmed misconceptions
+                    confirmed_misconceptions = []
+                    for m in breakdown.get('misconception_matches', []):
+                        if m.get('lecturer_confirmed') is True:
+                            confirmed_misconceptions.append({
+                                'label': m.get('label'),
+                                'reasoning': m.get('reasoning'),
+                            })
+
+                    final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
+
+                    evaluation_payload = {
+                        'percentage_correct': final_score,
+                        'is_score_modified': validation.is_score_modified,
+                        'original_ai_score': float(validation.original_percentage),
+                        'tier_level': validation.final_tier_level_snapshot or analysis.tier_level_snapshot,
+                        'tier_label': validation.final_tier_label_snapshot or analysis.tier_label_snapshot,
+                        'clinical_feedback': validation.final_feedback or analysis.explanation,
+                        'confirmed_misconceptions': confirmed_misconceptions,
+                        'rubric_breakdown': rubric_breakdown,
+                        'suggested_materials': analysis.suggested_materials_json or [],
+                        'validator_name': validation.lecturer.full_name,
+                        'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
+                    }
+
                 attempts.append({
                     'submission_id': str(s.id),
                     'attempt_no': s.attempt_no,
                     'status': s.status,
                     'answer_text': s.answer_text,
                     'submitted_at': s.submitted_at,
-                    # Reserved for P5/P6: score, tier, explanation, suggested materials
-                    'evaluation': None,
+                    'evaluation': evaluation_payload,
                 })
 
+            # Retrieve prompt and reference model answer from latest version
             latest_version = versions[sorted(subs, key=lambda x: x.attempt_no)[-1].question_version_id]
             questions_payload.append({
                 'question_id': str(qid),
@@ -1897,11 +1971,11 @@ def _build_submission_set_groups(user):
                 'version_id': str(latest_version.id),
                 'version_number': latest_version.version_number,
                 'prompt': latest_version.prompt,
+                'model_answer': latest_version.model_answer,
                 'answered': True,
                 'attempts': attempts,
             })
 
-        # Published questions this student has not answered yet
         unanswered = Question.objects.filter(question_set_id=set_id).exclude(
             id__in=list(question_map.keys())
         ).order_by('order_index')
@@ -1917,12 +1991,12 @@ def _build_submission_set_groups(user):
                 'version_id': str(v.id),
                 'version_number': v.version_number,
                 'prompt': v.prompt,
+                'model_answer': v.model_answer,
                 'answered': False,
                 'attempts': [],
             })
 
         questions_payload.sort(key=lambda item: item['order_index'])
-
         status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
 
         results.append({
@@ -1931,6 +2005,8 @@ def _build_submission_set_groups(user):
             'title': q_set.title,
             'subject_id': str(q_set.subject_id),
             'subject_name': q_set.subject.name,
+            'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
+            'topic_name': q_set.topic.name if q_set.topic else None,
             'question_count': published_count.get(set_id, 0),
             'answered_count': sum(1 for item in questions_payload if item['answered']),
             'total_attempts': sum(status_counts.values()),
@@ -1943,7 +2019,6 @@ def _build_submission_set_groups(user):
 
     results.sort(key=lambda item: item['last_submitted_at'], reverse=True)
     return results
-
 
 class StudentSubmissionSetListView(APIView):
     """Daftar pengumpulan mahasiswa dikelompokkan per bank soal (UC-01)."""
