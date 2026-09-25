@@ -1,54 +1,212 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, FileUp, TriangleAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, FileSpreadsheet, FileUp, TriangleAlert } from "lucide-react";
+import AppSelect from "./AppSelect";
 
-type Subject = { id: string; name: string };
+type Subject = {
+  id: string;
+  name: string;
+};
 
-export default function QuestionBankImport({ subjects, token, onImported }: { subjects: Subject[]; token: string; onImported: () => void }) {
-  const [subjectId, setSubjectId] = useState(subjects[0]?.id ?? "");
-  const [code, setCode] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+export default function QuestionBankImport({
+  token,
+}: {
+  token: string;
+}) {
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [selectedSubjectId, setSelectedSubjectId] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [job, setJob] = useState<{ id: string; status: string; total_rows: number; valid_rows: number; invalid_rows: number; errors: { row: number; messages: string[] }[] } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    fetch("/api/dashboard/summary", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setSubjects(data?.summary?.my_subjects ?? []);
+      })
+      .catch(() => {});
+  }, [token]);
+
   async function downloadTemplate() {
-    const response = await fetch("/api/question-import-template", { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok) { setError("Template tidak dapat diunduh."); return; }
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement("a"); link.href = url; link.download = "template-bank-soal.xlsx"; link.click(); URL.revokeObjectURL(url);
+    setError("");
+    if (!selectedSubjectId) {
+      setError("Tolong pilih mata kuliah terlebih dahulu.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/question-import-template?subject_id=${selectedSubjectId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `template-bank-soal.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      setError("Terjadi error saat mengunduh template Excel.");
+    }
   }
 
   async function upload(event: React.FormEvent) {
     event.preventDefault();
-    if (!file) { setError("Pilih file CSV atau Excel terlebih dahulu."); return; }
-    setBusy(true); setError("");
-    const body = new FormData(); body.append("subject_id", subjectId); body.append("code", code); body.append("title", title); body.append("description", description); body.append("file", file);
+    if (!file) {
+      setError("Silakan pilih atau tarik file Excel terlebih dahulu.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+
+    const body = new FormData();
+    body.append("file", file);
+    if (selectedSubjectId) {
+      body.append("subject_id", selectedSubjectId);
+    }
+
     try {
-      const response = await fetch("/api/question-imports", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Import gagal.");
-      setJob({ id: data.import_id, status: data.status, total_rows: data.total_rows, valid_rows: data.valid_rows, invalid_rows: data.invalid_rows, errors: data.errors ?? [] });
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Import gagal."); } finally { setBusy(false); }
+      const response = await fetch("/api/question-imports", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body,
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || "Terjadi error saat memproses file.");
+      }
+
+      if (data.package && data.package.questions?.length > 0) {
+        sessionStorage.setItem("imported_package", JSON.stringify(data.package));
+        window.location.href = "/questions/create";
+      } else {
+        throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
+      }
+    } catch (caught) {
+      const msg = caught instanceof Error ? caught.message : "Terjadi error saat memproses file.";
+      setError(msg.startsWith("Terjadi error") ? msg : `Terjadi error: ${msg}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function commit() {
-    if (!job) return;
-    setBusy(true); setError("");
-    try {
-      const response = await fetch(`/api/question-imports/${job.id}/commit`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Commit import gagal.");
-      setJob(null); setFile(null); setCode(""); setTitle(""); setDescription(""); onImported();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Commit import gagal."); } finally { setBusy(false); }
-  }
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-outline-variant/30 pb-3">
+        <div className="flex items-center gap-2 text-on-surface">
+          <FileSpreadsheet size={20} className="text-primary shrink-0" />
+          <h3 className="font-semibold text-sm">Impor Bank Soal Excel</h3>
+        </div>
 
-  return <section className="mt-8 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-lg font-bold text-on-surface">Import bank soal + bank jawaban</h2><p className="mt-1 text-xs text-on-surface-variant">Nomor soal mencocokkan pertanyaan dan jawaban. ID teknis dibuat otomatis oleh sistem.</p></div><button type="button" onClick={() => void downloadTemplate()} className="btn-secondary text-xs">Unduh template Excel</button></div>
-    <form onSubmit={upload} className="mt-4 grid gap-3 sm:grid-cols-2"><select value={subjectId} onChange={(event) => setSubjectId(event.target.value)} required className="form-select"><option value="">Pilih mata kuliah</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} required placeholder="Kode paket" className="form-input" /><input value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="Judul paket" className="form-input sm:col-span-2" /><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Deskripsi atau instruksi" rows={2} className="form-input sm:col-span-2" /><input type="file" accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required className="form-input sm:col-span-2" /><button type="submit" disabled={busy} className="btn-primary sm:col-span-2"><FileUp size={16} />{busy ? "Memproses..." : "Validasi file"}</button></form>
-    {error && <div role="alert" className="mt-4 flex gap-2 rounded-lg border border-error/40 bg-error-container p-3 text-xs text-on-error-container"><TriangleAlert size={16} />{error}</div>}
-    {job && <div className="mt-4 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-4"><div className="flex flex-wrap gap-3 text-xs text-on-surface"><span>Total: <b>{job.total_rows}</b></span><span>Valid: <b className="text-tertiary">{job.valid_rows}</b></span><span>Error: <b className="text-error">{job.invalid_rows}</b></span></div>{job.errors.length > 0 && <ul className="mt-3 space-y-1 text-xs text-error">{job.errors.slice(0, 8).map((item) => <li key={item.row}>Baris {item.row}: {item.messages.join(" ")}</li>)}</ul>}{job.status === "READY_TO_IMPORT" ? <button type="button" onClick={() => void commit()} disabled={busy} className="btn-primary mt-4 text-xs"><CheckCircle2 size={15} /> Commit sebagai paket draft</button> : <p className="mt-3 text-xs text-error">Perbaiki file berdasarkan error di atas lalu upload ulang.</p>}</div>}
-  </section>;
+        <div className="flex items-center gap-2">
+          <AppSelect
+            value={selectedSubjectId}
+            onValueChange={(val) => {
+              setSelectedSubjectId(val);
+              setError("");
+            }}
+            className="w-48 text-xs"
+            ariaLabel="Pilih Mata Kuliah"
+            placeholder="Pilih Mata Kuliah"
+            options={[
+              { value: "", label: "Pilih Mata Kuliah" },
+              ...subjects.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+          />
+
+          <button
+            type="button"
+            onClick={downloadTemplate}
+            className="btn-secondary text-xs flex items-center gap-1.5 shrink-0"
+          >
+            <Download size={14} /> Unduh Template Excel
+          </button>
+        </div>
+      </div>
+
+      <form onSubmit={upload} className="space-y-4">
+        <label
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            if (e.dataTransfer.files?.[0]) {
+              setFile(e.dataTransfer.files[0]);
+              setError("");
+            }
+          }}
+          className={`relative flex flex-col items-center justify-center min-h-[220px] w-full rounded-2xl border-2 border-dashed p-6 text-center cursor-pointer transition-colors ${
+            isDragging
+              ? "border-primary bg-primary-fixed/20"
+              : "border-outline-variant/60 bg-surface-container-low hover:border-primary/60 hover:bg-surface-container-high"
+          }`}
+        >
+          <input
+            type="file"
+            accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={(e) => {
+              if (e.target.files?.[0]) {
+                setFile(e.target.files[0]);
+                setError("");
+              }
+            }}
+            className="hidden"
+          />
+
+          <div className="p-3 rounded-full bg-primary-fixed text-primary mb-3">
+            <FileUp size={28} />
+          </div>
+
+          {file ? (
+            <div className="space-y-1">
+              <p className="font-semibold text-sm text-on-surface">{file.name}</p>
+              <p className="text-xs text-on-surface-variant font-mono-ui">
+                {(file.size / 1024).toFixed(1)} KB
+              </p>
+              <p className="text-xs text-primary font-medium mt-2">
+                Klik atau tarik file lain untuk mengganti
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <p className="font-semibold text-sm text-on-surface">
+                Tarik & lepas file Excel (.xlsx) di sini
+              </p>
+              <p className="text-xs text-on-surface-variant">
+                atau klik untuk memilih file dari perangkat Anda
+              </p>
+            </div>
+          )}
+        </label>
+
+        {error && (
+          <div role="alert" className="flex items-center gap-2 rounded-lg border border-error/40 bg-error-container p-3 text-xs text-on-error-container">
+            <TriangleAlert size={16} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={!file || busy}
+          className="btn-primary w-full py-2.5 text-sm font-semibold justify-center disabled:opacity-50"
+        >
+          {busy ? "Memvalidasi file..." : "Validasi File"}
+        </button>
+      </form>
+    </div>
+  );
 }

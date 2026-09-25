@@ -23,6 +23,7 @@ from .views import (
     LoginView,
     MeView,
     QuestionDetailView,
+    QuestionExportView,
     QuestionListCreateView,
     QuestionSetReviewView,
     QuestionSetStudentReviewView,
@@ -59,9 +60,9 @@ urlpatterns = [
     path('lecturer/submissions', LecturerSubmissionsView.as_view(), name='lecturer-submissions'),
     path('lecturer/submissions/<uuid:pk>', LecturerSubmissionDetailView.as_view(), name='lecturer-submission-detail'),
 
-    # Sprint 2 Dosen Endpoints
     path('questions', QuestionListCreateView.as_view(), name='question-list-create'),
     path('questions/<uuid:pk>', QuestionDetailView.as_view(), name='question-detail'),
+    path('questions/<uuid:pk>/export', QuestionExportView.as_view(), name='question-set-export'),
     path('questions/<uuid:pk>/review', QuestionSetReviewView.as_view(), name='question-set-review'),
     path('questions/<uuid:pk>/students/<uuid:student_id>/review', QuestionSetStudentReviewView.as_view(), name='question-set-student-review'),
     path('questions/<uuid:pk>/toggle-active', QuestionToggleActiveView.as_view(), name='question-toggle-active'),
@@ -72,7 +73,6 @@ urlpatterns = [
     path('question-imports/<uuid:pk>/commit', QuestionImportCommitView.as_view(), name='question-import-commit'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
 
-    # Sprint 3 Student Endpoints (UC-01 / P3)
     path('student/sets', StudentSetLookupView.as_view(), name='student-set-lookup'),
     path('student/sets/<uuid:pk>/submissions', StudentPackageSubmissionCreateView.as_view(), name='student-package-submission-create'),
     path('student/sets/<uuid:pk>/questions/<uuid:qid>/submissions', StudentSubmissionCreateView.as_view(), name='student-submission-create'),
@@ -80,7 +80,6 @@ urlpatterns = [
     path('student/submission-sets', StudentSubmissionSetListView.as_view(), name='student-submission-set-list'),
     path('student/submission-sets/<uuid:pk>', StudentSubmissionSetDetailView.as_view(), name='student-submission-set-detail'),
 
-    # Sprint 5 Lecturer Validation (UC-05 / P5) + Model Metrics
     path('validations/queue', ValidationQueueView.as_view(), name='validation-queue'),
     path('validations/tiers', ValidationTiersView.as_view(), name='validation-tiers'),
     path('validations/<uuid:analysis_id>', ValidationDetailView.as_view(), name='validation-detail'),

@@ -7,8 +7,6 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  FileText,
-  Layers,
   Plus,
   Send,
   Trash2,
@@ -41,6 +39,7 @@ export type Subject = {
 
 type Props = {
   isEditing?: boolean;
+  isReadOnly?: boolean;
   setId?: string;
   initialData?: {
     code: string;
@@ -64,7 +63,7 @@ const blankQuestion = (): ExamQuestion => ({
   indicators: defaultIndicators(),
 });
 
-export default function QuestionForm({ isEditing = false, setId, initialData }: Props) {
+export default function QuestionForm({ isEditing = false, isReadOnly = false, setId, initialData }: Props) {
   const router = useRouter();
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -79,11 +78,11 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   );
   const [publish, setPublish] = useState(initialData?.is_published ?? false);
 
-  const [viewMode, setViewMode] = useState<"per_question" | "all_questions">("per_question");
   const [activeIndex, setActiveIndex] = useState(0);
 
   const [isDirty, setIsDirty] = useState(false);
-  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [showExitModal, setShowExitModal] = useState(false);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [pendingQuestionRemoval, setPendingQuestionRemoval] = useState<number | null>(null);
   const [validationModalError, setValidationModalError] = useState<string | null>(null);
 
@@ -104,35 +103,59 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
       .then((data) => {
         const list: Subject[] = data?.summary?.my_subjects ?? [];
         setSubjects(list);
-        if (!initialData?.subject_id && list.length > 0) {
-          setSubjectId(list[0].id);
-        }
+        setSubjectId((curr) => {
+          if (curr) return curr;
+          if (initialData?.subject_id) return initialData.subject_id;
+          const stored = !isEditing ? sessionStorage.getItem("imported_package") : null;
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (parsed.subject_id) return parsed.subject_id;
+            } catch {}
+          }
+          return list.length > 0 ? list[0].id : "";
+        });
       })
       .catch(() => {});
-  }, [initialData]);
+  }, [initialData, isEditing]);
 
   useEffect(() => {
     if (initialData) {
-      setSubjectId(initialData.subject_id);
-      setCode(initialData.code);
-      setTitle(initialData.title);
-      setDescription(initialData.description);
-      if (initialData.questions.length > 0) {
+      if (initialData.subject_id) setSubjectId(initialData.subject_id);
+      if (initialData.code) setCode(initialData.code);
+      if (initialData.title) setTitle(initialData.title);
+      if (initialData.description) setDescription(initialData.description);
+      if (initialData.questions && initialData.questions.length > 0) {
         setQuestions(initialData.questions);
       }
       setPublish(initialData.is_published ?? false);
+    } else if (!isEditing) {
+      const stored = sessionStorage.getItem("imported_package");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed.subject_id) setSubjectId(parsed.subject_id);
+          if (parsed.code) setCode(parsed.code);
+          if (parsed.title) setTitle(parsed.title);
+          if (parsed.description) setDescription(parsed.description);
+          if (parsed.questions && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+            setQuestions(parsed.questions);
+            setActiveIndex(0);
+          }
+        } catch {}
+      }
     }
-  }, [initialData]);
+  }, [initialData, isEditing]);
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isDirty) {
+      if (isDirty && !isReadOnly) {
         e.preventDefault();
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isDirty]);
+  }, [isDirty, isReadOnly]);
 
   const questionTotals = useMemo(() => {
     return questions.map((q) =>
@@ -150,6 +173,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   }, [questions, questionTotals]);
 
   const updateQuestionField = (index: number, field: "prompt" | "model_answer", value: string) => {
+    if (isReadOnly) return;
     setIsDirty(true);
     setQuestions((current) =>
       current.map((q, i) => (i === index ? { ...q, [field]: value } : q))
@@ -157,13 +181,14 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   };
 
   const addQuestion = () => {
+    if (isReadOnly) return;
     setIsDirty(true);
     setQuestions((current) => [...current, blankQuestion()]);
     setActiveIndex(questions.length);
   };
 
   const confirmRemoveQuestion = () => {
-    if (pendingQuestionRemoval === null) return;
+    if (isReadOnly || pendingQuestionRemoval === null) return;
     setIsDirty(true);
     const indexToRemove = pendingQuestionRemoval;
     setQuestions((current) => current.filter((_, i) => i !== indexToRemove));
@@ -174,6 +199,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   };
 
   const handleIndicatorPresetChange = (qIndex: number, indIndex: number, selectedLabel: string) => {
+    if (isReadOnly) return;
     setIsDirty(true);
     const isCustom = selectedLabel === "Lainnya";
     const foundPreset = indicatorPresets.find((p) => p.label === selectedLabel);
@@ -246,6 +272,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
     field: "label" | "description" | "weight",
     value: string | number
   ) => {
+    if (isReadOnly) return;
     setIsDirty(true);
     setQuestions((current) =>
       current.map((q, i) => {
@@ -262,6 +289,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   };
 
   const addIndicatorToQuestion = (qIndex: number) => {
+    if (isReadOnly) return;
     const currentQ = questions[qIndex];
     if (!currentQ || currentQ.indicators.length >= maxIndicatorsAllowed) return;
     setIsDirty(true);
@@ -285,6 +313,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   };
 
   const removeIndicatorFromQuestion = (qIndex: number, indIndex: number) => {
+    if (isReadOnly) return;
     setIsDirty(true);
     setQuestions((current) =>
       current.map((q, i) => {
@@ -344,8 +373,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
     return null;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeSave = async (forceDraft: boolean = false) => {
     const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
     if (!token) {
       router.replace("/login");
@@ -367,6 +395,8 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
 
     setBusy(true);
 
+    const targetPublish = forceDraft ? false : publish;
+
     const payloadQuestions = questions.map((q) => ({
       prompt: q.prompt,
       model_answer: q.model_answer,
@@ -385,7 +415,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
           prompt: payloadQuestions[0]?.prompt ?? "",
           model_answer: payloadQuestions[0]?.model_answer ?? "",
           indicators: payloadQuestions[0]?.indicators ?? [],
-          publish,
+          publish: targetPublish,
         };
 
         const res = await fetch(`/api/questions/${setId}`, {
@@ -403,6 +433,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
         }
 
         setIsDirty(false);
+        sessionStorage.removeItem("imported_package");
         setMessage("Paket ujian berhasil diperbarui.");
         setTimeout(() => router.push("/questions"), 1000);
       } else {
@@ -412,7 +443,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
           title,
           description,
           questions: payloadQuestions,
-          publish,
+          publish: targetPublish,
         };
 
         const res = await fetch("/api/questions", {
@@ -436,6 +467,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
         }
 
         setIsDirty(false);
+        sessionStorage.removeItem("imported_package");
         setMessage("Paket ujian berhasil dibuat.");
         setTimeout(() => router.push("/questions"), 1000);
       }
@@ -451,9 +483,14 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   };
 
   const handleExit = () => {
+    if (isReadOnly) {
+      router.push("/questions");
+      return;
+    }
     if (isDirty) {
-      setShowExitConfirm(true);
+      setShowExitModal(true);
     } else {
+      sessionStorage.removeItem("imported_package");
       router.push("/questions");
     }
   };
@@ -461,7 +498,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
   const renderQuestionCard = (q: ExamQuestion, qIndex: number) => {
     const total = questionTotals[qIndex] ?? 0;
     const hasCustom = q.indicators.some((ind) => ind.isCustom);
-    const canAddMoreIndicators = q.indicators.length < maxIndicatorsAllowed;
+    const canAddMoreIndicators = q.indicators.length < maxIndicatorsAllowed && !isReadOnly;
 
     return (
       <div
@@ -476,11 +513,11 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
             </span>
             <h3 className="font-semibold text-on-surface">Pertanyaan Nomor {qIndex + 1}</h3>
           </div>
-          {questions.length > 1 && !isEditing && (
+          {questions.length > 1 && !isEditing && !isReadOnly && (
             <button
               type="button"
               onClick={() => setPendingQuestionRemoval(qIndex)}
-              className="inline-flex items-center justify-center p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors shadow-sm"
+              className="inline-flex items-center justify-center p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors shadow-sm cursor-pointer"
               title="Hapus pertanyaan ini"
               aria-label={`Hapus Pertanyaan ${qIndex + 1}`}
             >
@@ -496,10 +533,11 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
           <textarea
             value={q.prompt}
             onChange={(e) => updateQuestionField(qIndex, "prompt", e.target.value)}
+            disabled={isReadOnly}
             required
             rows={3}
             placeholder="Tuliskan butir soal konseptual di sini..."
-            className="form-input mt-1 w-full"
+            className="form-input mt-1 w-full disabled:opacity-80"
           />
         </div>
 
@@ -510,10 +548,11 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
           <textarea
             value={q.model_answer}
             onChange={(e) => updateQuestionField(qIndex, "model_answer", e.target.value)}
+            disabled={isReadOnly}
             required
             rows={3}
             placeholder="Tuliskan jawaban model referensi ilmiah yang menjadi acuan penilaian..."
-            className="form-input mt-1 w-full"
+            className="form-input mt-1 w-full disabled:opacity-80"
           />
         </div>
 
@@ -524,7 +563,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                 Indikator Rubrik Penilaian
               </h4>
               <p className="text-[11px] text-on-surface-variant">
-                Pilih kriteria penilaian dari daftar tetap atau tambahkan satu kriteria khusus.
+                Kriteria penilaian dari daftar tetap atau kriteria khusus.
               </p>
             </div>
             <span
@@ -547,8 +586,9 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                   <div className="flex flex-wrap items-center gap-2">
                     <select
                       value={currentLabel}
+                      disabled={isReadOnly}
                       onChange={(e) => handleIndicatorPresetChange(qIndex, indIndex, e.target.value)}
-                      className="form-select flex-1 min-w-[140px] text-xs"
+                      className="form-select flex-1 min-w-[140px] text-xs disabled:opacity-80"
                     >
                       {indicatorPresets.map((preset) => (
                         <option key={preset.label} value={preset.label}>
@@ -564,12 +604,13 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                       <input
                         type="text"
                         value={ind.label}
+                        disabled={isReadOnly}
                         onChange={(e) =>
                           updateIndicatorField(qIndex, indIndex, "label", e.target.value)
                         }
                         placeholder="Nama kriteria kustom"
                         required
-                        className="form-input flex-1 min-w-[140px] text-xs"
+                        className="form-input flex-1 min-w-[140px] text-xs disabled:opacity-80"
                       />
                     )}
 
@@ -579,6 +620,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                         min="0"
                         max="100"
                         step="1"
+                        disabled={isReadOnly}
                         value={ind.weight === 0 ? "" : ind.weight}
                         placeholder="0"
                         onChange={(e) => {
@@ -586,59 +628,64 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                           updateIndicatorField(qIndex, indIndex, "weight", val === "" ? 0 : Number(val));
                         }}
                         required
-                        className="w-10 bg-transparent text-right font-mono-ui text-xs text-on-surface outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-10 bg-transparent text-right font-mono-ui text-xs text-on-surface outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-80"
                       />
                       <span className="ml-1 text-xs font-mono-ui text-on-surface-variant font-medium select-none">
                         / 100
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => removeIndicatorFromQuestion(qIndex, indIndex)}
-                      disabled={q.indicators.length <= 1}
-                      className="text-error hover:text-on-error-container disabled:opacity-30 px-2 py-1 font-bold text-base"
-                      title="Hapus indikator"
-                    >
-                      ×
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => removeIndicatorFromQuestion(qIndex, indIndex)}
+                        disabled={q.indicators.length <= 1}
+                        className="text-error hover:text-on-error-container disabled:opacity-30 px-2 py-1 font-bold text-base cursor-pointer"
+                        title="Hapus indikator"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
 
                   <input
                     type="text"
                     value={ind.description}
+                    disabled={isReadOnly}
                     onChange={(e) =>
                       updateIndicatorField(qIndex, indIndex, "description", e.target.value)
                     }
                     placeholder="Deskripsi atau panduan penilaian kriteria ini..."
-                    className="form-input w-full text-xs"
+                    className="form-input w-full text-xs disabled:opacity-80"
                   />
                 </div>
               );
             })}
           </div>
 
-          <div className="mt-3 flex items-center justify-between">
-            {canAddMoreIndicators ? (
-              <button
-                type="button"
-                onClick={() => addIndicatorToQuestion(qIndex)}
-                className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1"
-              >
-                <Plus size={14} /> Tambah Indikator
-              </button>
-            ) : (
-              <span className="text-[11px] text-on-surface-variant font-medium">
-                Semua pilihan indikator telah digunakan.
-              </span>
-            )}
+          {!isReadOnly && (
+            <div className="mt-3 flex items-center justify-between">
+              {canAddMoreIndicators ? (
+                <button
+                  type="button"
+                  onClick={() => addIndicatorToQuestion(qIndex)}
+                  className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus size={14} /> Tambah Indikator
+                </button>
+              ) : (
+                <span className="text-[11px] text-on-surface-variant font-medium">
+                  Semua pilihan indikator telah digunakan.
+                </span>
+              )}
 
-            {hasCustom && (
-              <span className="text-[11px] text-on-surface-variant">
-                Opsi &quot;Lainnya&quot; telah digunakan (maksimal 1 per soal)
-              </span>
-            )}
-          </div>
+              {hasCustom && (
+                <span className="text-[11px] text-on-surface-variant">
+                  Opsi &quot;Lainnya&quot; telah digunakan (maksimal 1 per soal)
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -654,34 +701,18 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
         >
           <ArrowLeft size={14} /> Kembali ke daftar paket
         </button>
-
-        <div className="flex items-center rounded-lg border border-outline-variant/40 bg-surface-container-low p-1 text-xs">
-          <button
-            type="button"
-            onClick={() => setViewMode("per_question")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors ${
-              viewMode === "per_question"
-                ? "bg-primary text-white"
-                : "text-on-surface-variant hover:text-on-surface"
-            }`}
-          >
-            <FileText size={14} /> Per Soal
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("all_questions")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors ${
-              viewMode === "all_questions"
-                ? "bg-primary text-white"
-                : "text-on-surface-variant hover:text-on-surface"
-            }`}
-          >
-            <Layers size={14} /> Semua Soal
-          </button>
-        </div>
       </div>
 
-      <PageHeader className="mb-6" title={isEditing ? "Edit Paket Soal" : "Buat Paket Ujian Baru"} description="Atur informasi paket soal, pertanyaan esai konseptual, dan rubrik penilaian berbobot total 100." icon={FileText} />
+      <header className="mb-6">
+        <h1 className="font-display text-2xl font-bold text-on-surface">
+          {isReadOnly ? "Lihat Paket Soal" : isEditing ? "Edit Paket Soal" : "Buat Paket Ujian Baru"}
+        </h1>
+        <p className="text-sm text-on-surface-variant mt-1">
+          {isReadOnly
+            ? "Tinjau butir pertanyaan konseptual dan rubrik penilaian paket ini."
+            : "Atur informasi paket soal, pertanyaan esai konseptual, dan rubrik penilaian berbobot total 100."}
+        </p>
+      </header>
 
       {error && (
         <div role="alert" className="mb-5 flex gap-2 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container">
@@ -697,7 +728,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
         </div>
       )}
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={(e) => { e.preventDefault(); setShowSubmitModal(true); }}>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           <div className="lg:col-span-3 space-y-6">
             <section className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 space-y-4">
@@ -710,10 +741,11 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                   <AppSelect
                     value={subjectId}
                     onValueChange={(val) => {
+                      if (isReadOnly) return;
                       setIsDirty(true);
                       setSubjectId(val);
                     }}
-                    disabled={isEditing}
+                    disabled={isEditing || isReadOnly}
                     className="mt-1 w-full"
                     ariaLabel="Mata Kuliah"
                     placeholder="Pilih mata kuliah"
@@ -731,10 +763,10 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                       setIsDirty(true);
                       setCode(e.target.value.toUpperCase());
                     }}
-                    disabled={isEditing}
+                    disabled={isEditing || isReadOnly}
                     required
                     placeholder="Misal: FIS-NEWT-01"
-                    className="form-input mt-1 w-full font-mono-ui"
+                    className="form-input mt-1 w-full font-mono-ui disabled:opacity-80"
                   />
                 </div>
 
@@ -748,9 +780,10 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                       setIsDirty(true);
                       setTitle(e.target.value);
                     }}
+                    disabled={isReadOnly}
                     required
                     placeholder="Judul asesmen konseptual..."
-                    className="form-input mt-1 w-full"
+                    className="form-input mt-1 w-full disabled:opacity-80"
                   />
                 </div>
 
@@ -764,89 +797,88 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                       setIsDirty(true);
                       setDescription(e.target.value);
                     }}
+                    disabled={isReadOnly}
                     placeholder="Petunjuk atau instruksi untuk mahasiswa..."
                     rows={2}
-                    className="form-input mt-1 w-full"
+                    className="form-input mt-1 w-full disabled:opacity-80"
                   />
                 </div>
               </div>
             </section>
 
-            {viewMode === "per_question" ? (
-              <div className="space-y-4">
-                {questions[activeIndex] && renderQuestionCard(questions[activeIndex], activeIndex)}
+            <div className="space-y-4">
+              {questions[activeIndex] && renderQuestionCard(questions[activeIndex], activeIndex)}
 
-                <div className="flex items-center justify-between pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveIndex((prev) => Math.max(0, prev - 1))}
-                    disabled={activeIndex === 0}
-                    className="btn-secondary text-xs disabled:opacity-40"
-                  >
-                    <ArrowLeft size={14} /> Soal Sebelumnya
-                  </button>
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveIndex((prev) => Math.max(0, prev - 1))}
+                  disabled={activeIndex === 0}
+                  className="btn-secondary text-xs disabled:opacity-40 cursor-pointer"
+                >
+                  <ArrowLeft size={14} /> Soal Sebelumnya
+                </button>
 
-                  <span className="text-xs text-on-surface-variant font-mono-ui">
-                    Soal {activeIndex + 1} dari {questions.length}
-                  </span>
+                <span className="text-xs text-on-surface-variant font-mono-ui">
+                  Soal {activeIndex + 1} dari {questions.length}
+                </span>
 
-                  {activeIndex === questions.length - 1 ? (
+                {activeIndex === questions.length - 1 ? (
+                  !isReadOnly ? (
                     <button
                       type="button"
                       onClick={addQuestion}
-                      className="btn-primary text-xs"
+                      className="btn-primary text-xs cursor-pointer"
                     >
                       <Plus size={14} /> Tambah Soal
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setActiveIndex((prev) => Math.min(questions.length - 1, prev + 1))}
-                      className="btn-secondary text-xs"
-                    >
-                      Soal Selanjutnya <ArrowRight size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {questions.map((q, idx) => renderQuestionCard(q, idx))}
-              </div>
-            )}
-
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-outline-variant/30 pt-4">
-              <label className="flex items-center gap-2 text-sm text-on-surface cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={publish}
-                  onChange={(e) => {
-                    setIsDirty(true);
-                    setPublish(e.target.checked);
-                  }}
-                  className="h-4 w-4 rounded border-outline-variant text-primary"
-                />
-                Terbitkan paket sekarang (semua soal harus valid dan berbobot 100)
-              </label>
-
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleExit}
-                  className="btn-secondary px-6 py-2.5 min-w-[140px] text-sm font-semibold justify-center"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="btn-primary px-6 py-2.5 min-w-[140px] text-sm font-semibold justify-center"
-                >
-                  <Send size={16} />
-                  {busy ? "Menyimpan..." : isEditing ? "Perbarui Paket" : "Simpan Paket"}
-                </button>
+                  ) : <div />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setActiveIndex((prev) => Math.min(questions.length - 1, prev + 1))}
+                    className="btn-secondary text-xs cursor-pointer"
+                  >
+                    Soal Selanjutnya <ArrowRight size={14} />
+                  </button>
+                )}
               </div>
             </div>
+
+            {!isReadOnly && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-outline-variant/30 pt-4">
+                <label className="flex items-center gap-2 text-sm text-on-surface cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={publish}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPublish(e.target.checked);
+                    }}
+                    className="h-4 w-4 rounded border-outline-variant text-primary"
+                  />
+                  Terbitkan paket sekarang (semua soal harus valid dan berbobot 100)
+                </label>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleExit}
+                    className="btn-secondary px-6 py-2.5 min-w-[140px] text-sm font-semibold justify-center cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="btn-primary px-6 py-2.5 min-w-[140px] text-sm font-semibold justify-center cursor-pointer"
+                  >
+                    <Send size={16} />
+                    {busy ? "Menyimpan..." : isEditing ? "Perbarui Paket" : "Simpan Paket"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <aside className="lg:col-span-1 sticky top-6 space-y-4">
@@ -861,21 +893,14 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
               <div className="flex flex-wrap items-center gap-2.5 py-4">
                 {questions.map((_, idx) => {
                   const isValid = questionValidity[idx];
-                  const isActive = viewMode === "per_question" && activeIndex === idx;
+                  const isActive = activeIndex === idx;
 
                   return (
                     <button
                       key={idx}
                       type="button"
-                      onClick={() => {
-                        if (viewMode === "per_question") {
-                          setActiveIndex(idx);
-                        } else {
-                          const elem = document.getElementById(`question-card-${idx}`);
-                          elem?.scrollIntoView({ behavior: "smooth" });
-                        }
-                      }}
-                      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-mono-ui text-xs font-bold transition-all !text-white shadow-sm ${
+                      onClick={() => setActiveIndex(idx)}
+                      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-mono-ui text-xs font-bold transition-all !text-white shadow-sm cursor-pointer ${
                         isActive
                           ? "bg-primary ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest"
                           : "bg-slate-700 hover:bg-slate-600"
@@ -893,11 +918,11 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
                 })}
               </div>
 
-              {!isEditing && (
+              {!isEditing && !isReadOnly && (
                 <button
                   type="button"
                   onClick={addQuestion}
-                  className="w-full btn-secondary text-xs mt-2 justify-center"
+                  className="w-full btn-secondary text-xs mt-2 justify-center cursor-pointer"
                 >
                   <Plus size={14} /> Tambah Soal
                 </button>
@@ -928,17 +953,71 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
       />
 
       <ConfirmDialog
-        open={showExitConfirm}
-        title="Tinggalkan Halaman?"
-        description="Anda belum menyimpan soal ini, apakah ingin tetap keluar dan membuang perubahan?"
-        confirmLabel="Buang Perubahan"
-        onCancel={() => setShowExitConfirm(false)}
+        open={showSubmitModal}
+        title={isEditing ? "Perbarui Paket Ujian?" : "Simpan Paket Ujian?"}
+        description={
+          publish
+            ? "Apakah Anda yakin ingin menyimpan dan langsung menerbitkan paket soal ini untuk mahasiswa?"
+            : "Apakah Anda yakin ingin menyimpan paket soal ini sebagai draft?"
+        }
+        confirmLabel={isEditing ? "Ya, Perbarui" : "Ya, Simpan"}
+        onCancel={() => setShowSubmitModal(false)}
         onConfirm={() => {
-          setIsDirty(false);
-          setShowExitConfirm(false);
-          router.push("/questions");
+          setShowSubmitModal(false);
+          void executeSave(false);
         }}
       />
+
+      {showExitModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-display text-lg font-bold text-on-surface">Tinggalkan Halaman?</h3>
+              <button
+                type="button"
+                onClick={() => setShowExitModal(false)}
+                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-sm leading-6 text-on-surface-variant">
+              Anda belum menyimpan soal ini. Apakah ingin menyimpannya sebagai draft atau membuang perubahan?
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowExitModal(false)}
+                className="btn-secondary text-xs cursor-pointer"
+              >
+                Lanjut Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDirty(false);
+                  setShowExitModal(false);
+                  sessionStorage.removeItem("imported_package");
+                  router.push("/questions");
+                }}
+                className="btn-danger text-xs cursor-pointer"
+              >
+                Buang Soal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitModal(false);
+                  void executeSave(true);
+                }}
+                className="btn-primary text-xs cursor-pointer"
+              >
+                Simpan ke Draft
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {validationModalError && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
@@ -951,7 +1030,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
               <button
                 type="button"
                 onClick={() => setValidationModalError(null)}
-                className="text-on-surface-variant hover:text-on-surface"
+                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
               >
                 <X size={18} />
               </button>
@@ -963,7 +1042,7 @@ export default function QuestionForm({ isEditing = false, setId, initialData }: 
               <button
                 type="button"
                 onClick={() => setValidationModalError(null)}
-                className="btn-primary text-xs"
+                className="btn-primary text-xs cursor-pointer"
               >
                 Mengerti
               </button>
