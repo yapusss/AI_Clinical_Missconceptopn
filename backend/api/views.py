@@ -20,19 +20,19 @@ from openpyxl.utils import get_column_letter
 from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
-    ConceptIndicator,     
+    ConceptIndicator,
     HelpArticle,
     LlmAnalysis,
     Misconception,
-    Question,             
+    Question,
     QuestionSet,
-    QuestionVersion,      
+    QuestionVersion,
     ImportJob,
     ImportRow,
     ReferenceAnswer,
     Subject,
     Submission,
-    Topic,                
+    Topic,
     User,
     UserSubjectRole,
     Validation,
@@ -40,8 +40,8 @@ from .models import (
 from .serializers import (
     AdminManagedUserSerializer,
     LoginSerializer,
-    QuestionSetCreateSerializer,  
-    QuestionSetUpdateSerializer,  
+    QuestionSetCreateSerializer,
+    QuestionSetUpdateSerializer,
     PackageSubmissionCreateSerializer,
     RegisterSerializer,
     SubmissionCreateSerializer,
@@ -526,16 +526,21 @@ def _parse_import_indicators(raw_value):
 
 
 def _normalize_import_row(raw):
-    return {str(key).strip(): (value or '').strip() for key, value in raw.items() if key}
+    return {
+        str(key).strip(): str(value).strip() if value is not None else ''
+        for key, value in raw.items()
+        if key
+    }
 
 
 def _read_xlsx_rows(upload, subject_name=None):
+    if hasattr(upload, 'seek'):
+        upload.seek(0)
     try:
         workbook = load_workbook(upload, read_only=False, data_only=True)
     except Exception as exc:
-        raise ValueError('File Excel tidak dapat dibaca. Gunakan template yang disediakan.') from exc
+        raise ValueError('File Excel tidak dapat dibaca. Pastikan format file .xlsx valid.') from exc
 
-    # Pilih sheet: coba cari sheet yang sesuai nama mata kuliah, jika tidak ada pakai sheet aktif
     target_sheet = None
     if subject_name:
         for sname in workbook.sheetnames:
@@ -543,14 +548,20 @@ def _read_xlsx_rows(upload, subject_name=None):
                 target_sheet = workbook[sname]
                 break
 
-    # Fallback legacy: periksa 'Bank Soal'
     if not target_sheet:
-        if 'Bank Soal' in workbook.sheetnames:
-            target_sheet = workbook['Bank Soal']
-        else:
-            target_sheet = workbook.active
+        for sname in workbook.sheetnames:
+            ws = workbook[sname]
+            for row in ws.iter_rows(values_only=True):
+                row_str = [str(c).strip().upper() if c is not None else '' for c in row]
+                if any('PERTANYAAN' in c or 'PROMPT' in c for c in row_str):
+                    target_sheet = ws
+                    break
+            if target_sheet:
+                break
 
-    # Cari baris header secara dinamis (mencari baris yang memuat 'prompt' atau 'PERTANYAAN_KONSEPTUAL')
+    if not target_sheet:
+        target_sheet = workbook.active
+
     header_row_idx = None
     headers = []
     for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
@@ -563,16 +574,25 @@ def _read_xlsx_rows(upload, subject_name=None):
     if not header_row_idx:
         raise ValueError('Baris header tidak ditemukan. Pastikan menggunakan template yang disediakan.')
 
-    # Mapping nama kolom baru ke key standar
     COLUMN_MAP = {
-        'KODE_PAKET_UNIK': 'code',
-        'JUDUL_UJIAN': 'title',
-        'DESKRIPSI_INSTRUKSI': 'description',
         'NOMOR_SOAL': 'order_index',
         'ORDER_INDEX': 'order_index',
+        'NO_SOAL': 'order_index',
+        'NO': 'order_index',
+        'KODE_PAKET_UNIK': 'code',
+        'KODE_PAKET': 'code',
+        'CODE': 'code',
+        'JUDUL_UJIAN': 'title',
+        'JUDUL': 'title',
+        'TITLE': 'title',
+        'DESKRIPSI_INSTRUKSI': 'description',
+        'DESKRIPSI': 'description',
+        'DESCRIPTION': 'description',
         'PERTANYAAN_KONSEPTUAL': 'prompt',
+        'PERTANYAAN': 'prompt',
         'PROMPT': 'prompt',
         'JAWABAN_REFERENSI': 'reference_answer',
+        'JAWABAN': 'reference_answer',
         'REFERENCE_ANSWER': 'reference_answer',
         'INDIKATOR_KONSEP': 'indicators',
         'INDICATORS': 'indicators',
@@ -586,7 +606,7 @@ def _read_xlsx_rows(upload, subject_name=None):
         if r_idx <= header_row_idx:
             continue
         if not any(c is not None and str(c).strip() for c in row):
-            continue  # Lewati baris kosong
+            continue
         raw_dict = dict(zip(normalized_headers, row))
         rows.append(_normalize_import_row({
             'order_index': raw_dict.get('order_index', len(rows) + 1),
@@ -600,19 +620,22 @@ def _read_xlsx_rows(upload, subject_name=None):
         }))
 
     if not rows:
-        raise ValueError(f'Sheet "{target_sheet.title}" tidak memiliki data soal.')
-    return rows
+        raise ValueError(f'Sheet "{target_sheet.title}" tidak memiliki baris data soal.')
+    return rows, target_sheet.title
 
 
-def _read_question_import(upload):
+def _read_question_import(upload, subject_name=None):
     if not upload:
         raise ValueError('File CSV atau Excel wajib diunggah.')
     if upload.size > 10 * 1024 * 1024:
         raise ValueError('Ukuran file maksimal 10 MB.')
     if upload.name.lower().endswith(('.xlsx', '.xlsm')):
-        raw_rows = _read_xlsx_rows(upload)
+        raw_rows, detected_sheet = _read_xlsx_rows(upload, subject_name=subject_name)
         headers = set(raw_rows[0]) if raw_rows else set()
     else:
+        detected_sheet = None
+        if hasattr(upload, 'seek'):
+            upload.seek(0)
         try:
             text = upload.read().decode('utf-8-sig')
         except UnicodeDecodeError as exc:
@@ -620,34 +643,36 @@ def _read_question_import(upload):
         reader = csv.DictReader(io.StringIO(text))
         headers = {header.strip() for header in (reader.fieldnames or []) if header}
         raw_rows = list(reader)
+
     missing = sorted(IMPORT_REQUIRED_COLUMNS - headers)
     if missing:
         raise ValueError(f'Kolom wajib tidak ditemukan: {", ".join(missing)}.')
 
     rows = []
-    for row_number, raw in enumerate(raw_rows, start=2):
+    for row_number, raw in enumerate(raw_rows, start=6):
         normalized = _normalize_import_row(raw)
         errors = []
-        key = f"Q-{normalized.get('order_index', row_number - 1)}"
+        key = f"Q-{normalized.get('order_index', row_number - 5)}"
         if not normalized.get('prompt'):
             errors.append('prompt wajib diisi.')
         if not normalized.get('reference_answer'):
             errors.append('reference_answer wajib diisi.')
         try:
-            order_index = int(normalized.get('order_index', ''))
+            order_index = int(float(normalized.get('order_index', '0')))
             if order_index < 1:
-                raise ValueError
-        except ValueError:
-            order_index = 0
-            errors.append('order_index harus berupa bilangan bulat positif.')
+                order_index = len(rows) + 1
+        except (ValueError, TypeError):
+            order_index = len(rows) + 1
+
         try:
             indicators = _parse_import_indicators(normalized.get('indicators', ''))
         except ValueError as exc:
             indicators = []
             errors.append(str(exc))
+
         rows.append({
             'row_number': row_number,
-            'question_key': key or None,
+            'question_key': key,
             'raw_data': normalized,
             'status': 'INVALID' if errors else 'VALID',
             'errors': errors,
@@ -655,14 +680,7 @@ def _read_question_import(upload):
             'indicators': indicators,
         })
 
-    seen_orders = set()
-    for row in rows:
-        if row['order_index'] in seen_orders and row['order_index'] > 0:
-            row['status'] = 'INVALID'
-            row['errors'].append('order_index duplikat dalam file.')
-        if row['order_index'] > 0:
-            seen_orders.add(row['order_index'])
-    return rows
+    return rows, detected_sheet
 
 
 class QuestionImportCreateView(APIView):
@@ -671,59 +689,90 @@ class QuestionImportCreateView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        subject_id = request.data.get('subject_id')
-        try:
-            subject = Subject.objects.get(pk=subject_id)
-        except (Subject.DoesNotExist, ValueError, TypeError):
-            return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not is_lecturer_for_subject(request.user, subject.id):
-            return Response({'detail': 'Anda tidak berwenang mengimpor soal untuk mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'detail': 'File wajib diunggah.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        code = (request.data.get('code') or '').strip().upper()
-        title = (request.data.get('title') or '').strip()
-        if not code or not title:
-            return Response({'detail': 'code dan title wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
-        if QuestionSet.objects.filter(code__iexact=code).exists():
-            return Response({'detail': 'Kode paket sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+        subject = None
+        subject_id = request.data.get('subject_id')
+        if subject_id:
+            subject = Subject.objects.filter(pk=subject_id).first()
+
         try:
-            parsed_rows = _read_question_import(request.FILES.get('file'), subject_name=subject.name)
+            parsed_rows, detected_sheet = _read_question_import(file_obj, subject_name=subject.name if subject else None)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'detail': f'Terjadi error saat membaca format file: {str(exc)}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        errors = [
-            {'row': row['row_number'], 'question_key': row['question_key'], 'messages': row['errors']}
-            for row in parsed_rows if row['status'] == 'INVALID'
-        ]
-        job = ImportJob.objects.create(
-            id=uuid.uuid4(), subject=subject, requested_by=request.user,
-            file_name=request.FILES['file'].name, package_code=code,
-            package_title=title, package_description=request.data.get('description', ''),
-            status='READY_TO_IMPORT' if not errors and parsed_rows else 'VALIDATION_FAILED',
-            total_rows=len(parsed_rows), valid_rows=len(parsed_rows) - len(errors),
-            invalid_rows=len(errors), error_summary=errors,
-        )
-        ImportRow.objects.bulk_create([
-            ImportRow(import_job=job, row_number=row['row_number'], question_key=row['question_key'], raw_data=row['raw_data'], status=row['status'], errors=row['errors'])
-            for row in parsed_rows
-        ])
+        if not subject and detected_sheet:
+            subject = Subject.objects.filter(name__iexact=detected_sheet).first()
+
+        if not subject:
+            if request.user.is_superuser:
+                subject = Subject.objects.filter(is_active=True).first()
+            else:
+                user_subjects = UserSubjectRole.objects.filter(
+                    user=request.user, role=UserSubjectRole.Role.LECTURER
+                ).values_list('subject_id', flat=True)
+                subject = Subject.objects.filter(id__in=user_subjects, is_active=True).first()
+
+        if not subject:
+            return Response({'detail': 'Mata kuliah tidak ditemukan atau Anda belum memiliki akses ke mata kuliah terkait.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        first_data = parsed_rows[0]['raw_data'] if parsed_rows else {}
+        code = (request.data.get('code') or first_data.get('code') or f"IMP-{uuid.uuid4().hex[:6].upper()}").strip().upper()
+        title = (request.data.get('title') or first_data.get('title') or f"Paket Impor {subject.name}").strip()
+        description = (request.data.get('description') or first_data.get('description') or '').strip()
+
+        questions_payload = []
+        for r in parsed_rows:
+            raw = r['raw_data']
+            if raw.get('prompt') and raw.get('reference_answer'):
+                questions_payload.append({
+                    'prompt': raw.get('prompt', ''),
+                    'model_answer': raw.get('reference_answer', ''),
+                    'indicators': [
+                        {'label': 'Akurasi', 'description': 'Ketepatan konsep ilmiah dan kesesuaian prinsip dasar fisika.', 'weight': 40, 'isCustom': False},
+                        {'label': 'Penjelasan', 'description': 'Kejelasan penalaran, alur argumen, dan langkah logika.', 'weight': 30, 'isCustom': False},
+                        {'label': 'Kelengkapan', 'description': 'Kelengkapan seluruh variabel, satuan, dan elemen jawaban.', 'weight': 30, 'isCustom': False},
+                    ]
+                })
+
+        if not questions_payload:
+            return Response({'detail': 'Tidak ada butir soal yang valid di dalam file.'}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response({
-            'import_id': str(job.id), 'status': job.status,
-            'total_rows': job.total_rows, 'valid_rows': job.valid_rows,
-            'invalid_rows': job.invalid_rows, 'errors': errors,
-        }, status=status.HTTP_201_CREATED)
+            'package': {
+                'subject_id': str(subject.id),
+                'code': code,
+                'title': title,
+                'description': description,
+                'questions': questions_payload,
+            }
+        }, status=status.HTTP_200_OK)
+
 
 class QuestionImportTemplateView(APIView):
     authentication_classes = [TokenAuthentication]
 
     def get(self, request):
-        subjects = list(Subject.objects.filter(is_active=True).order_by('name'))
-        if not subjects:
-            subjects = [Subject(name="Physics", slug="physics")]
+        subject_id = request.query_params.get('subject_id')
+        target_subject = None
+        if subject_id:
+            target_subject = Subject.objects.filter(pk=subject_id, is_active=True).first()
+
+        if not target_subject:
+            target_subject = Subject.objects.filter(is_active=True).first()
+
+        if not target_subject:
+            target_subject = Subject(name="Physics", slug="physics")
 
         workbook = Workbook()
-        default_sheet = workbook.active
+        ws = workbook.active
+        sheet_title = target_subject.name[:31]
+        ws.title = sheet_title
 
-        # Style Definitions
         banner_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
         banner_font = Font(name="Calibri", size=11, bold=True, color="92400E")
         banner_border = Border(
@@ -744,98 +793,82 @@ class QuestionImportTemplateView(APIView):
         )
         data_font = Font(name="Calibri", size=10)
 
-        # 6 Kolom Utama (KOLOM INDIKATOR SUDAH DIHAPUS)
         headers = [
+            "NOMOR_SOAL",
             "KODE_PAKET_UNIK",
             "JUDUL_UJIAN",
             "DESKRIPSI_INSTRUKSI",
-            "NOMOR_SOAL",
             "PERTANYAAN_KONSEPTUAL",
             "JAWABAN_REFERENSI",
         ]
 
-        for idx, subj in enumerate(subjects):
-            sheet_title = subj.name[:31]
-            ws = workbook.create_sheet(title=sheet_title)
+        ws.merge_cells("A1:F4")
+        banner_cell = ws["A1"]
+        banner_cell.value = (
+            f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
+            f"Pastikan seluruh soal pada file ini diperuntukkan bagi mata kuliah {target_subject.name}.\n"
+            f"Isi kolom pertanyaan dan jawaban referensi mulai dari baris ke-6."
+        )
+        banner_cell.fill = banner_fill
+        banner_cell.font = banner_font
+        banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-            # 1. Warning Banner (Baris 1 - 3, Kolom A - F)
-            ws.merge_cells("A1:F3")
-            banner_cell = ws["A1"]
-            banner_cell.value = (
-                f"⚠️ ANDA SEDANG BERADA DI SHEET: {subj.name.upper()}\n"
-                f"TOLONG GANTI TAB SHEET DI BAGIAN BAWAH EXCEL UNTUK MATA KULIAH LAINNYA.\n"
-                f"Pastikan seluruh soal pada sheet ini diperuntukkan bagi mata kuliah {subj.name}."
-            )
-            banner_cell.fill = banner_fill
-            banner_cell.font = banner_font
-            banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for r in range(1, 5):
+            for c in range(1, 7):
+                ws.cell(row=r, column=c).border = banner_border
+            ws.row_dimensions[r].height = 18
 
-            for r in range(1, 4):
-                for c in range(1, 7):
-                    ws.cell(row=r, column=c).border = banner_border
+        ws.row_dimensions[5].height = 28
+        for col_num, header in enumerate(headers, start=1):
+            cell = ws.cell(row=5, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-            ws.row_dimensions[1].height = 18
-            ws.row_dimensions[2].height = 18
-            ws.row_dimensions[3].height = 18
-            ws.row_dimensions[4].height = 10  # Spacer row
+        sample_prefix = "FIS" if "phys" in target_subject.name.lower() else "BIO"
+        sample_rows = [
+            [
+                1,
+                f"{sample_prefix}-NEWT-01",
+                f"Evaluasi Konseptual {target_subject.name} Bagian 1",
+                "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
+                "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
+                "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
+            ],
+            [
+                2,
+                f"{sample_prefix}-NEWT-01",
+                f"Evaluasi Konseptual {target_subject.name} Bagian 1",
+                "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
+                "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
+                "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
+            ],
+        ]
 
-            # 2. Header Kolom (Baris 5)
-            ws.row_dimensions[5].height = 28
-            for col_num, header in enumerate(headers, start=1):
-                cell = ws.cell(row=5, column=col_num, value=header)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for row_idx, row_data in enumerate(sample_rows, start=6):
+            ws.row_dimensions[row_idx].height = 36
+            for col_idx, val in enumerate(row_data, start=1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                cell.font = data_font
+                cell.border = thin_border
+                cell.alignment = Alignment(
+                    horizontal="center" if col_idx in [1, 2] else "left",
+                    vertical="center",
+                    wrap_text=True,
+                )
 
-            # 3. Baris Contoh Data (Baris 6 & 7) - Tanpa kolom indikator
-            sample_prefix = "FIS" if "phys" in subj.name.lower() else "BIO"
-            sample_rows = [
-                [
-                    f"{sample_prefix}-NEWT-01",
-                    f"Evaluasi Konseptual {subj.name} Bagian 1",
-                    "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
-                    1,
-                    "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
-                    "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
-                ],
-                [
-                    f"{sample_prefix}-NEWT-01",
-                    f"Evaluasi Konseptual {subj.name} Bagian 1",
-                    "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
-                    2,
-                    "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
-                    "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
-                ],
-            ]
-
-            for row_idx, row_data in enumerate(sample_rows, start=6):
-                ws.row_dimensions[row_idx].height = 36
-                for col_idx, val in enumerate(row_data, start=1):
-                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
-                    cell.font = data_font
-                    cell.border = thin_border
-                    cell.alignment = Alignment(
-                        horizontal="center" if col_idx in [1, 4] else "left",
-                        vertical="center",
-                        wrap_text=True,
-                    )
-
-            # 4. Auto-Fit Kolom (Kolom A s/d F)
-            for col in ws.columns:
-                col_letter = get_column_letter(col[0].column)
-                max_len = 0
-                for cell in col:
-                    if cell.row < 5:
-                        continue
-                    val_str = str(cell.value or "")
-                    lines = val_str.split("\n")
-                    longest_line = max(len(l) for l in lines) if lines else 0
-                    if longest_line > max_len:
-                        max_len = longest_line
-                ws.column_dimensions[col_letter].width = min(max(max_len + 4, 18), 55)
-
-        if len(workbook.sheetnames) > 1 and "Sheet" in workbook.sheetnames:
-            del workbook["Sheet"]
+        for col in ws.columns:
+            col_letter = get_column_letter(col[0].column)
+            max_len = 0
+            for cell in col:
+                if cell.row < 5:
+                    continue
+                val_str = str(cell.value or "")
+                lines = val_str.split("\n")
+                longest_line = max(len(l) for l in lines) if lines else 0
+                if longest_line > max_len:
+                    max_len = longest_line
+            ws.column_dimensions[col_letter].width = min(max(max_len + 4, 18), 55)
 
         output = io.BytesIO()
         workbook.save(output)
@@ -843,10 +876,69 @@ class QuestionImportTemplateView(APIView):
             output.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response["Content-Disposition"] = 'attachment; filename="template-bank-soal-multi-matkul.xlsx"'
+        response["Content-Disposition"] = f'attachment; filename="template-{target_subject.slug}.xlsx"'
         return response
 
+class QuestionExportView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
+    def get(self, request, pk):
+        try:
+            q_set = QuestionSet.objects.select_related('subject').get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengekspor paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        workbook = Workbook()
+        ws = workbook.active
+        ws.title = q_set.subject.name[:31]
+
+        headers = [
+            "NOMOR_SOAL",
+            "KODE_PAKET_UNIK",
+            "JUDUL_UJIAN",
+            "DESKRIPSI_INSTRUKSI",
+            "PERTANYAAN_KONSEPTUAL",
+            "JAWABAN_REFERENSI",
+        ]
+
+        header_fill = PatternFill(start_color="00288E", end_color="00288E", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+
+        for col_num, header in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        questions = Question.objects.filter(question_set=q_set).order_by('order_index')
+        row_idx = 2
+        for q in questions:
+            v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
+            ws.cell(row=row_idx, column=1, value=q.order_index)
+            ws.cell(row=row_idx, column=2, value=q_set.code)
+            ws.cell(row=row_idx, column=3, value=q_set.title)
+            ws.cell(row=row_idx, column=4, value=q_set.description or "")
+            ws.cell(row=row_idx, column=5, value=v.prompt if v else "")
+            ws.cell(row=row_idx, column=6, value=v.model_answer if v else "")
+            row_idx += 1
+
+        for col in ws.columns:
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = 30
+
+        output = io.BytesIO()
+        workbook.save(output)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{q_set.code}-export.xlsx"'
+        return response
+        
 class QuestionImportDetailView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1059,6 +1151,7 @@ class QuestionListCreateView(APIView):
             'message': 'Soal berhasil disimpan.',
         }, status=status.HTTP_201_CREATED)
 
+
 class QuestionDetailView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1246,6 +1339,9 @@ class QuestionDetailView(APIView):
                 target_v.refresh_from_db()
 
         return Response({'detail': 'Soal berhasil diperbarui.'})
+
+
+
 
 
 class QuestionSetReviewView(APIView):
@@ -1565,6 +1661,7 @@ class QuestionPublishView(APIView):
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+
 # SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
 # ============================================================================
 
@@ -1867,6 +1964,8 @@ class StudentSubmissionListView(APIView):
             })
 
         return Response(results)
+
+
 # ============================================================================
 # SPRINT 4: STUDENT SUBMISSION GROUPING BY QUESTION SET
 # ============================================================================
@@ -2100,6 +2199,8 @@ class StudentSubmissionSetDetailView(APIView):
             {'detail': 'Pengumpulan untuk bank soal ini tidak ditemukan.'},
             status=status.HTTP_404_NOT_FOUND,
         )
+
+
 class LecturerSubmissionsView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -2162,7 +2263,7 @@ class LecturerSubmissionsView(APIView):
                 'question_code': qset.code if qset else None,
                 'question_title': qset.title if qset else None,
                 'version_number': version.version_number if version else None,
-                'prompt_preview': (version.prompt[:240] + 'â€¦') if version and version.prompt else '',
+                'prompt_preview': (version.prompt[:240] + '…') if version and version.prompt else '',
                 'answer': s.answer_text,
                 'status': s.status,
                 'submitted_at': s.submitted_at.isoformat() if s.submitted_at else None,

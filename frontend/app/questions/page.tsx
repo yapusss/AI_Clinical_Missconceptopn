@@ -6,11 +6,15 @@ import {
   CircleCheck,
   CircleStop,
   ClipboardList,
+  Download,
   Eye,
+  FileSpreadsheet,
   FileText,
+  FileUp,
   GraduationCap,
   Layers,
   Pencil,
+  Plus,
   Send,
   TriangleAlert,
   X,
@@ -20,6 +24,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import ListToolbar from "../components/ListToolbar";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
+import QuestionBankImport from "../components/QuestionBankImport";
 
 type Indicator = {
   label: string;
@@ -49,6 +54,11 @@ type QuestionSet = {
   latest_versions: { is_published: boolean }[];
 };
 
+type Subject = {
+  id: string;
+  name: string;
+};
+
 type QuestionSetDetail = QuestionSet & {
   description?: string;
   questions?: QuestionItem[];
@@ -59,10 +69,14 @@ export default function QuestionsPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
 
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [sets, setSets] = useState<QuestionSet[]>([]);
   const [viewingSet, setViewingSet] = useState<QuestionSetDetail | null>(null);
   const [viewModalMode, setViewModalMode] = useState<"per_question" | "all_questions">("per_question");
   const [activeModalIndex, setActiveModalIndex] = useState(0);
+
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [activeImportTab, setActiveImportTab] = useState(false);
 
   const [pendingDeactivate, setPendingDeactivate] = useState<QuestionSet | null>(null);
   const [message, setMessage] = useState("");
@@ -71,10 +85,14 @@ export default function QuestionsPage() {
 
   const load = useCallback(async () => {
     if (!token) return;
-    const setsResponse = await fetch("/api/questions", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    setSets(await setsResponse.json());
+    const [summaryRes, setsRes] = await Promise.all([
+      fetch("/api/dashboard/summary", { headers: { Authorization: `Bearer ${token}` } }),
+      fetch("/api/questions", { headers: { Authorization: `Bearer ${token}` } }),
+    ]);
+
+    const summary = await summaryRes.json();
+    setSubjects(summary?.summary?.my_subjects ?? []);
+    setSets(await setsRes.json());
   }, [token]);
 
   useEffect(() => {
@@ -92,6 +110,48 @@ export default function QuestionsPage() {
       .toLowerCase()
       .includes(search.toLowerCase())
   );
+
+  async function downloadTemplate() {
+    if (!token) return;
+    try {
+      const response = await fetch("/api/question-import-template", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Gagal mengunduh template Excel.");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "template-bank-soal-multi-matkul.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal mengunduh template.");
+    }
+  }
+
+  async function exportPackage(item: QuestionSet) {
+    if (!token) return;
+    try {
+      const response = await fetch(`/api/questions/${item.id}/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Gagal mengekspor paket ke Excel.");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${item.code}-export.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal mengekspor paket.");
+    }
+  }
 
   async function publishSet(id: string) {
     if (!token) return;
@@ -189,7 +249,10 @@ export default function QuestionsPage() {
       <div className="mt-6">
         <ListToolbar
           addLabel="Buat paket ujian"
-          onAdd={() => router.push("/questions/create")}
+          onAdd={() => {
+            setActiveImportTab(false);
+            setShowCreateModal(true);
+          }}
           searchValue={search}
           onSearchChange={setSearch}
           searchPlaceholder="Cari kode, judul, atau mata kuliah..."
@@ -253,14 +316,14 @@ export default function QuestionsPage() {
                     <td className="px-5 py-4 text-left">
                       <div className="flex flex-wrap items-center justify-start gap-2">
                         <button
-                          type="button"
-                          onClick={() => void viewSet(item)}
-                          className="btn-secondary table-action-button"
-                          aria-label={`Lihat detail ${item.title}`}
-                          title="Lihat detail"
-                        >
-                          <Eye size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
-                        </button>
+                            type="button"
+                            onClick={() => router.push(`/questions/${item.id}/view`)}
+                            className="btn-secondary table-action-button"
+                            aria-label={`Lihat detail ${item.title}`}
+                            title="Lihat detail"
+                          >
+                            <Eye size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
+                          </button>
                         <button
                           type="button"
                           onClick={() => router.push(`/questions/${item.id}`)}
@@ -278,6 +341,15 @@ export default function QuestionsPage() {
                           title="Edit paket ujian"
                         >
                           <Pencil size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void exportPackage(item)}
+                          className="btn-secondary table-action-button"
+                          aria-label="Export paket ke Excel"
+                          title="Export ke Excel"
+                        >
+                          <Download size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
                         </button>
 
                         <button
@@ -328,6 +400,90 @@ export default function QuestionsPage() {
           </p>
         )}
       </div>
+
+      {showCreateModal && (
+        <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/60 p-4">
+          <div className="my-8 w-full max-w-2xl rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-4">
+              <div>
+                <h2 className="font-display text-xl font-bold text-on-surface">
+                  {activeImportTab ? "Import Bank Soal" : "Kelola Paket Ujian"}
+                </h2>
+                <p className="mt-1 text-xs text-on-surface-variant">
+                  Pilih metode pembuatan paket soal atau gunakan format template Excel.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="text-on-surface-variant hover:text-on-surface"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {!activeImportTab ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    router.push("/questions/create");
+                  }}
+                  className="glass-card flex flex-col items-start p-5 text-left transition-colors hover:border-primary cursor-pointer"
+                >
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-primary-fixed text-primary">
+                    <Plus size={22} />
+                  </span>
+                  <h3 className="mt-4 font-display text-base font-bold text-on-surface">
+                    Buat Manual
+                  </h3>
+                  <p className="mt-1 text-sm text-on-surface-variant">
+                    Buka editor khusus per-soal dengan palet nomor soal ujian dan rubrik penilaian 100.
+                  </p>
+                  <span className="mt-4 text-xs font-bold text-primary">
+                    Mulai Buat Soal →
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveImportTab(true)}
+                  className="glass-card flex flex-col items-start p-5 text-left transition-colors hover:border-primary cursor-pointer"
+                >
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-primary-fixed text-primary">
+                    <FileUp size={22} />
+                  </span>
+                  <h3 className="mt-4 font-display text-base font-bold text-on-surface">
+                    Import dari Excel
+                  </h3>
+                  <p className="mt-1 text-sm text-on-surface-variant">
+                    Unggah file soal dan jawaban secara massal menggunakan file Excel (.xlsx).
+                  </p>
+                  <span className="mt-4 text-xs font-bold text-primary">
+                    Buka Form Import →
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setActiveImportTab(false)}
+                  className="mb-4 text-xs font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  ← Kembali ke pilihan metode
+                </button>
+                {token && (
+                  <QuestionBankImport
+                    token={token}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {viewingSet && (
         <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/60 p-4">
@@ -448,16 +604,16 @@ export default function QuestionsPage() {
 
                     <div className="md:col-span-1 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3">
                       <p className="text-xs font-semibold text-on-surface mb-2">Pilih Nomor Soal</p>
-                      <div className="grid grid-cols-3 gap-1.5">
+                      <div className="flex flex-wrap gap-2">
                         {qList.map((_, idx) => (
                           <button
                             key={idx}
                             type="button"
                             onClick={() => setActiveModalIndex(idx)}
-                            className={`h-8 rounded font-mono-ui text-xs font-bold ${
+                            className={`flex h-8 w-8 items-center justify-center rounded-full font-mono-ui text-xs font-bold !text-white transition-colors ${
                               activeModalIndex === idx
-                                ? "bg-primary text-white"
-                                : "bg-surface-container-low text-on-surface hover:bg-surface-container-high"
+                                ? "bg-primary shadow ring-2 ring-primary/40"
+                                : "bg-slate-700 hover:bg-slate-600"
                             }`}
                           >
                             {idx + 1}
