@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand
 
-from api.models import Subject, User, UserSubjectRole
+from api.models import Subject, User, UserSubjectRole, UserRole
 
 PASSWORD = 'demo12345'
 
@@ -45,7 +45,13 @@ class Command(BaseCommand):
                 self.stdout.write(f'user created: {email}')
             else:
                 self.stdout.write(f'user exists: {email}')
+
+            if is_superuser:
+                UserRole.objects.get_or_create(user=user, role=UserRole.Role.ADMIN)
+                self.stdout.write(f'global role ensured: {email} -> ADMIN')
+
             if role:
+                UserRole.objects.get_or_create(user=user, role=role)
                 for subject in subjects.values():
                     _, role_created = UserSubjectRole.objects.get_or_create(
                         user=user, subject=subject, role=role,

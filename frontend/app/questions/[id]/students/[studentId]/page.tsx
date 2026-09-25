@@ -699,11 +699,10 @@ export default function StudentPackageReviewPage() {
                       </div>
 
                       <div>
-                        <label htmlFor="final-tier" className="block text-[11px] font-bold uppercase text-on-surface-variant">
+                        <span className="block text-[11px] font-bold uppercase text-on-surface-variant">
                           Tier Akhir
-                        </label>
+                        </span>
                         <AppSelect
-                          id="final-tier"
                           value={String(finalTier)}
                           onValueChange={(val) => setFinalTier(Number(val))}
                           className="mt-1 w-full text-xs"

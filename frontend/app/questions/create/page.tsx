@@ -10,6 +10,8 @@ export default function CreateQuestionPage() {
     title: string;
     description: string;
     subject_id: string;
+    topic_id?: string;
+    topic_name?: string;
     questions: ExamQuestion[];
   } | null>(null);
 

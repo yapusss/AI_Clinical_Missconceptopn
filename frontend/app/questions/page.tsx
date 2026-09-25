@@ -10,12 +10,9 @@ import {
   ClipboardList,
   Download,
   Eye,
-  FileSpreadsheet,
-  FileText,
   Filter,
   FileUp,
   GraduationCap,
-  Layers,
   MoreVertical,
   Pencil,
   Plus,
@@ -36,6 +33,8 @@ type QuestionSet = {
   code: string;
   title: string;
   subject_name: string;
+  topic_id?: string | null;
+  topic_name?: string | null;
   question_count: number;
   total_submissions_count?: number;
   distinct_students_count?: number;
@@ -61,6 +60,7 @@ export default function QuestionsPage() {
   const [search, setSearch] = useState("");
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [subjectFilterIds, setSubjectFilterIds] = useState<string[]>([]);
+  const [topicFilterNames, setTopicFilterNames] = useState<string[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sortOrder, setSortOrder] = useState("CODE_ASC");
   const filterRef = useRef<HTMLDivElement>(null);
@@ -97,11 +97,12 @@ export default function QuestionsPage() {
 
   const visibleSets = sets
     .filter((item) =>
-      `${item.code} ${item.title} ${item.subject_name} ${item.is_active ? "aktif" : "nonaktif"}`
+      `${item.code} ${item.title} ${item.subject_name} ${item.topic_name || ""} ${item.is_active ? "aktif" : "nonaktif"}`
         .toLowerCase()
         .includes(search.toLowerCase()) &&
       (!statusFilters.length || statusFilters.includes(item.is_active ? "ACTIVE" : "INACTIVE")) &&
-      (!subjectFilterIds.length || subjectFilterIds.includes(item.subject_name)),
+      (!subjectFilterIds.length || subjectFilterIds.includes(item.subject_name)) &&
+      (!topicFilterNames.length || (item.topic_name && topicFilterNames.includes(item.topic_name)))
     )
     .sort((a, b) => {
       if (sortOrder === "TITLE_ASC") return a.title.localeCompare(b.title);
@@ -110,7 +111,9 @@ export default function QuestionsPage() {
     });
 
   const subjects = [...new Set(sets.map((item) => item.subject_name).filter(Boolean))].sort();
-  const filterCount = statusFilters.length + subjectFilterIds.length;
+  const topics = [...new Set(sets.map((item) => item.topic_name).filter(Boolean) as string[])].sort();
+  const filterCount = statusFilters.length + subjectFilterIds.length + topicFilterNames.length;
+
   const toggleFilter = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
     setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
   };
@@ -231,7 +234,7 @@ export default function QuestionsPage() {
                     <p className="text-xs font-bold uppercase tracking-wide text-on-surface">Filter ({filterCount} dipilih)</p>
                     <button
                       type="button"
-                      onClick={() => { setStatusFilters([]); setSubjectFilterIds([]); }}
+                      onClick={() => { setStatusFilters([]); setSubjectFilterIds([]); setTopicFilterNames([]); }}
                       disabled={!filterCount}
                       className="text-xs font-semibold text-primary disabled:cursor-not-allowed disabled:text-on-surface-variant"
                     >
@@ -251,7 +254,7 @@ export default function QuestionsPage() {
                   </fieldset>
                   <fieldset className="mt-3 border-t border-outline-variant/40 pt-3">
                     <legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Mata Kuliah</legend>
-                    <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                    <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
                       {subjects.map((subj) => (
                         <label key={subj} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container">
                           <input type="checkbox" checked={subjectFilterIds.includes(subj)} onChange={() => toggleFilter(subj, subjectFilterIds, setSubjectFilterIds)} className="h-4 w-4 rounded accent-primary" />
@@ -260,6 +263,19 @@ export default function QuestionsPage() {
                       ))}
                     </div>
                   </fieldset>
+                  {topics.length > 0 && (
+                    <fieldset className="mt-3 border-t border-outline-variant/40 pt-3">
+                      <legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Topik</legend>
+                      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                        {topics.map((top) => (
+                          <label key={top} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container">
+                            <input type="checkbox" checked={topicFilterNames.includes(top)} onChange={() => toggleFilter(top, topicFilterNames, setTopicFilterNames)} className="h-4 w-4 rounded accent-primary" />
+                            {top}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  )}
                 </div>
               )}
             </div>
@@ -296,12 +312,16 @@ export default function QuestionsPage() {
 
                 return (
                   <tr key={item.id} className="hover:bg-primary-fixed/5 transition-colors">
-                    {/* 1. Code & Package Info */}
                     <td className="px-5 py-4 align-middle">
                       <div className="flex items-center gap-2">
                         <span className="font-mono-ui font-bold text-xs text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
                           {item.code}
                         </span>
+                        {item.topic_name && (
+                          <span className="text-xs text-tertiary-container bg-tertiary-container/10 px-2 py-0.5 rounded border border-tertiary-container/30 font-medium">
+                            {item.topic_name}
+                          </span>
+                        )}
                         <span className="text-xs text-on-surface-variant">
                           {item.question_count} soal
                         </span>
@@ -311,12 +331,10 @@ export default function QuestionsPage() {
                       </p>
                     </td>
 
-                    {/* 2. Subject */}
                     <td className="px-5 py-4 align-middle text-on-surface-variant font-medium whitespace-nowrap">
                       {item.subject_name}
                     </td>
 
-                    {/* 3. Unified Status */}
                     <td className="px-5 py-4 align-middle whitespace-nowrap">
                       <div className="flex flex-col gap-1">
                         <span className={`badge w-fit ${published ? "badge-active" : "badge-draft"}`}>
@@ -329,7 +347,6 @@ export default function QuestionsPage() {
                       </div>
                     </td>
 
-                    {/* 4. Submissions & Validation Need */}
                     <td className="px-5 py-4 align-middle whitespace-nowrap">
                       <div className="flex flex-col gap-1.5">
                         <span className="text-xs text-on-surface font-medium inline-flex items-center gap-1.5">
@@ -354,10 +371,8 @@ export default function QuestionsPage() {
                       </div>
                     </td>
 
-                    {/* 5. Primary CTA + 3-Dots Dropdown */}
                     <td className="px-5 py-4 align-middle text-right whitespace-nowrap">
                       <div className="relative inline-flex items-center gap-2 justify-end">
-                        {/* PRIMARY BUTTON */}
                         <button
                           type="button"
                           onClick={() => router.push(`/questions/${item.id}`)}
@@ -372,7 +387,6 @@ export default function QuestionsPage() {
                           )}
                         </button>
 
-                        {/* 3-DOTS SECONDARY ACTION TRIGGER */}
                         <div className="relative">
                           <button
                             type="button"
@@ -384,7 +398,6 @@ export default function QuestionsPage() {
                             <MoreVertical size={16} />
                           </button>
 
-                          {/* 3-DOTS OVERFLOW MENU */}
                           {isMenuOpen && (
                             <div
                               ref={menuRef}

@@ -41,10 +41,11 @@ export const metadata: Metadata = {
   description: "Portal evaluasi miskonsepsi klinis berbasis AI.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="id"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} ${plusJakartaSans.variable} ${jetBrainsMono.variable}`}
     >
       <body className="min-h-full">

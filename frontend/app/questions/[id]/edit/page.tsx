@@ -15,6 +15,8 @@ export default function EditQuestionPage() {
     title: string;
     description: string;
     subject_id: string;
+    topic_id?: string;
+    topic_name?: string;
     questions: ExamQuestion[];
     is_published?: boolean;
   } | null>(null);
@@ -67,6 +69,8 @@ export default function EditQuestionPage() {
           title: data.title ?? "",
           description: data.description ?? "",
           subject_id: data.subject_id ?? "",
+          topic_id: data.topic_id ?? "",
+          topic_name: data.topic_name ?? "",
           questions: questionsList,
           is_published: isPublished,
         });

@@ -642,7 +642,7 @@ def _read_xlsx_rows(upload, subject_name=None):
             ws = workbook[sname]
             for row in ws.iter_rows(values_only=True):
                 row_str = [str(c).strip().upper() if c is not None else '' for c in row]
-                if any('PERTANYAAN' in c or 'PROMPT' in c for c in row_str):
+                if any(c in ('NOMOR_SOAL', 'ORDER_INDEX', 'NO_SOAL', 'PERTANYAAN_KONSEPTUAL', 'PROMPT') for c in row_str):
                     target_sheet = ws
                     break
             if target_sheet:
@@ -655,7 +655,7 @@ def _read_xlsx_rows(upload, subject_name=None):
     headers = []
     for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
         row_str = [str(c).strip().upper() if c is not None else '' for c in row]
-        if any('PROMPT' in c or 'PERTANYAAN' in c for c in row_str):
+        if any(c in ('NOMOR_SOAL', 'ORDER_INDEX', 'NO_SOAL', 'PERTANYAAN_KONSEPTUAL', 'PROMPT') for c in row_str):
             header_row_idx = r_idx
             headers = [str(c).strip() if c is not None else '' for c in row]
             break
@@ -674,6 +674,9 @@ def _read_xlsx_rows(upload, subject_name=None):
         'JUDUL_UJIAN': 'title',
         'JUDUL': 'title',
         'TITLE': 'title',
+        'TOPIK': 'topic',
+        'NAMA_TOPIK': 'topic',
+        'TOPIC': 'topic',
         'DESKRIPSI_INSTRUKSI': 'description',
         'DESKRIPSI': 'description',
         'DESCRIPTION': 'description',
@@ -705,14 +708,14 @@ def _read_xlsx_rows(upload, subject_name=None):
             'answer_key': raw_dict.get('answer_key', f"Q-{len(rows)+1}"),
             'code': raw_dict.get('code', ''),
             'title': raw_dict.get('title', ''),
+            'topic': raw_dict.get('topic', ''),
             'description': raw_dict.get('description', ''),
         }))
 
     if not rows:
         raise ValueError(f'Sheet "{target_sheet.title}" tidak memiliki baris data soal.')
     return rows, target_sheet.title
-
-
+    
 def _read_question_import(upload, subject_name=None):
     if not upload:
         raise ValueError('File CSV atau Excel wajib diunggah.')
@@ -809,6 +812,36 @@ class QuestionImportCreateView(APIView):
         if not subject:
             return Response({'detail': 'Mata kuliah tidak ditemukan atau Anda belum memiliki akses ke mata kuliah terkait.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Validasi Topik dari Sheet
+        distinct_topics = {
+            r['raw_data'].get('topic', '').strip()
+            for r in parsed_rows
+            if r['raw_data'].get('topic', '').strip()
+        }
+
+        if len(distinct_topics) > 1:
+            return Response({
+                'detail': f"File impor hanya boleh berisi satu topik per paket ujian. Ditemukan beberapa topik: {', '.join(sorted(distinct_topics))}."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        detected_topic_name = next(iter(distinct_topics)) if distinct_topics else ""
+        if not detected_topic_name:
+            return Response({
+                'detail': "Kolom TOPIK wajib diisi untuk semua baris soal di dalam file Excel."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        matched_topic = Topic.objects.filter(subject=subject, name__iexact=detected_topic_name).first()
+        new_topic_detected = matched_topic is None
+
+        if new_topic_detected and request.data.get('create_topic') in [True, 'true', '1']:
+            matched_topic = Topic.objects.create(
+                id=uuid.uuid4(),
+                subject=subject,
+                name=detected_topic_name,
+                description=f"Dibuat otomatis dari impor bank soal.",
+            )
+            new_topic_detected = False
+
         first_data = parsed_rows[0]['raw_data'] if parsed_rows else {}
         code = (request.data.get('code') or first_data.get('code') or f"IMP-{uuid.uuid4().hex[:6].upper()}").strip().upper()
         title = (request.data.get('title') or first_data.get('title') or f"Paket Impor {subject.name}").strip()
@@ -832,8 +865,12 @@ class QuestionImportCreateView(APIView):
             return Response({'detail': 'Tidak ada butir soal yang valid di dalam file.'}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
+            'new_topic_detected': new_topic_detected,
+            'detected_topic_name': detected_topic_name,
             'package': {
                 'subject_id': str(subject.id),
+                'topic_id': str(matched_topic.id) if matched_topic else None,
+                'topic_name': matched_topic.name if matched_topic else detected_topic_name,
                 'code': code,
                 'title': title,
                 'description': description,
@@ -886,12 +923,13 @@ class QuestionImportTemplateView(APIView):
             "NOMOR_SOAL",
             "KODE_PAKET_UNIK",
             "JUDUL_UJIAN",
+            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
             "PERTANYAAN_KONSEPTUAL",
             "JAWABAN_REFERENSI",
         ]
 
-        ws.merge_cells("A1:F4")
+        ws.merge_cells("A1:G4")
         banner_cell = ws["A1"]
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
@@ -903,7 +941,7 @@ class QuestionImportTemplateView(APIView):
         banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for r in range(1, 5):
-            for c in range(1, 7):
+            for c in range(1, 8):
                 ws.cell(row=r, column=c).border = banner_border
             ws.row_dimensions[r].height = 18
 
@@ -920,6 +958,7 @@ class QuestionImportTemplateView(APIView):
                 1,
                 f"{sample_prefix}-NEWT-01",
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
+                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
                 "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
@@ -928,6 +967,7 @@ class QuestionImportTemplateView(APIView):
                 2,
                 f"{sample_prefix}-NEWT-01",
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
+                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
                 "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
@@ -967,7 +1007,6 @@ class QuestionImportTemplateView(APIView):
         )
         response["Content-Disposition"] = f'attachment; filename="template-{target_subject.slug}.xlsx"'
         return response
-
 class QuestionExportView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1102,6 +1141,7 @@ class QuestionListCreateView(APIView):
     def get(self, request):
         user = request.user
         subject_id = request.query_params.get('subject_id')
+        topic_id = request.query_params.get('topic_id')
 
         if user.is_superuser:
             qs = QuestionSet.objects.all()
@@ -1113,11 +1153,12 @@ class QuestionListCreateView(APIView):
 
         if subject_id:
             qs = qs.filter(subject_id=subject_id)
+        if topic_id:
+            qs = qs.filter(topic_id=topic_id)
 
-        qs = qs.select_related('subject', 'created_by').order_by('-created_at')
+        qs = qs.select_related('subject', 'topic', 'created_by').order_by('-created_at')
         set_ids = [item.id for item in qs]
 
-        # Aggregate submission metrics per question set
         submission_stats = {}
         if set_ids:
             with connection.cursor() as cursor:
@@ -1172,6 +1213,8 @@ class QuestionListCreateView(APIView):
                 'description': item.description or '',
                 'subject_id': str(item.subject_id),
                 'subject_name': item.subject.name,
+                'topic_id': str(item.topic_id) if item.topic_id else None,
+                'topic_name': item.topic.name if item.topic else None,
                 'is_active': item.is_active,
                 'created_by_name': item.created_by.full_name,
                 'created_at': item.created_at,
@@ -1283,7 +1326,7 @@ class QuestionDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            q_set = QuestionSet.objects.select_related('subject', 'created_by').get(pk=pk)
+            q_set = QuestionSet.objects.select_related('subject', 'topic', 'created_by').get(pk=pk)
         except QuestionSet.DoesNotExist:
             return Response({'detail': 'Soal tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1355,6 +1398,8 @@ class QuestionDetailView(APIView):
             'description': q_set.description or '',
             'subject_id': str(q_set.subject_id),
             'subject_name': q_set.subject.name,
+            'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
+            'topic_name': q_set.topic.name if q_set.topic else None,
             'is_active': q_set.is_active,
             'created_at': q_set.created_at,
             'questions': questions,
@@ -1378,6 +1423,8 @@ class QuestionDetailView(APIView):
                 q_set.title = data['title']
             if 'description' in data:
                 q_set.description = data['description']
+            if 'topic_id' in data:
+                q_set.topic_id = data['topic_id']
             q_set.save()
 
             q = Question.objects.filter(question_set=q_set).order_by('order_index').first()
@@ -1464,7 +1511,6 @@ class QuestionDetailView(APIView):
                 target_v.refresh_from_db()
 
         return Response({'detail': 'Soal berhasil diperbarui.'})
-
 
 
 

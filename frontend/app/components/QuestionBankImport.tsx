@@ -3,10 +3,21 @@
 import { useEffect, useState } from "react";
 import { Download, FileSpreadsheet, FileUp, TriangleAlert } from "lucide-react";
 import AppSelect from "./AppSelect";
+import ConfirmDialog from "./ConfirmDialog";
 
 type Subject = {
   id: string;
   name: string;
+};
+
+type PendingPackage = {
+  subject_id: string;
+  topic_id?: string | null;
+  topic_name?: string | null;
+  code: string;
+  title: string;
+  description: string;
+  questions: unknown[];
 };
 
 export default function QuestionBankImport({
@@ -20,6 +31,9 @@ export default function QuestionBankImport({
   const [isDragging, setIsDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showNewTopicConfirm, setShowNewTopicConfirm] = useState(false);
+  const [detectedTopicName, setDetectedTopicName] = useState("");
+  const [pendingPackageData, setPendingPackageData] = useState<PendingPackage | null>(null);
 
   useEffect(() => {
     fetch("/api/dashboard/summary", {
@@ -58,6 +72,41 @@ export default function QuestionBankImport({
     }
   }
 
+  async function handleConfirmNewTopic() {
+    if (!pendingPackageData || !detectedTopicName || !selectedSubjectId) return;
+    setBusy(true);
+    setError("");
+
+    try {
+      const topicRes = await fetch(`/api/admin/subjects/${selectedSubjectId}/topics`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: detectedTopicName }),
+      });
+      const topicData = await topicRes.json();
+      if (!topicRes.ok) {
+        throw new Error(topicData.name?.[0] || topicData.detail || "Gagal membuat topik baru.");
+      }
+
+      const updatedPackage: PendingPackage = {
+        ...pendingPackageData,
+        topic_id: topicData.id,
+        topic_name: topicData.name,
+      };
+
+      sessionStorage.setItem("imported_package", JSON.stringify(updatedPackage));
+      window.location.href = "/questions/create";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menambahkan topik baru.");
+    } finally {
+      setBusy(false);
+      setShowNewTopicConfirm(false);
+    }
+  }
+
   async function upload(event: React.FormEvent) {
     event.preventDefault();
     if (!file) {
@@ -83,6 +132,13 @@ export default function QuestionBankImport({
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.detail || "Terjadi error saat memproses file.");
+      }
+
+      if (data.new_topic_detected) {
+        setDetectedTopicName(data.detected_topic_name);
+        setPendingPackageData(data.package);
+        setShowNewTopicConfirm(true);
+        return;
       }
 
       if (data.package && data.package.questions?.length > 0) {
@@ -183,7 +239,7 @@ export default function QuestionBankImport({
           ) : (
             <div className="space-y-1">
               <p className="font-semibold text-sm text-on-surface">
-                Tarik & lepas file Excel (.xlsx) di sini
+                Tarik &amp; lepas file Excel (.xlsx) di sini
               </p>
               <p className="text-xs text-on-surface-variant">
                 atau klik untuk memilih file dari perangkat Anda
@@ -207,6 +263,19 @@ export default function QuestionBankImport({
           {busy ? "Memvalidasi file..." : "Validasi File"}
         </button>
       </form>
+
+      <ConfirmDialog
+        open={showNewTopicConfirm}
+        title="Peringatan: Topik Baru Terdeteksi"
+        description={`Peringatan: ada topik baru "${detectedTopicName}" pada file Excel. Apakah Anda ingin menambahkannya ke mata kuliah ini?`}
+        confirmLabel="Ya, Tambahkan Topik"
+        onCancel={() => {
+          setShowNewTopicConfirm(false);
+          setPendingPackageData(null);
+          setError("Impor dibatalkan karena topik baru tidak disetujui.");
+        }}
+        onConfirm={handleConfirmNewTopic}
+      />
     </div>
   );
 }
