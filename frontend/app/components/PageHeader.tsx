@@ -12,7 +12,6 @@ type Props = {
 
 export default function PageHeader({
   title,
-  description,
   icon: Icon,
   eyebrow,
   action,
@@ -29,7 +28,6 @@ export default function PageHeader({
         <div>
           {eyebrow && <div className="mb-2">{eyebrow}</div>}
           <h1 className="font-display text-2xl font-extrabold tracking-tight text-on-surface">{title}</h1>
-          {description && <p className="mt-0.5 text-sm text-on-surface-variant leading-relaxed">{description}</p>}
         </div>
       </div>
       {action && <div className="shrink-0 sm:self-center">{action}</div>}

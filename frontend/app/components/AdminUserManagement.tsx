@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
 import AppMultiSelect from "./AppMultiSelect";
+import AppSelect from "./AppSelect";
 import ListToolbar from "./ListToolbar";
 import PageContainer from "./PageContainer";
 import PageHeader from "./PageHeader";
@@ -41,6 +42,8 @@ export default function AdminUserManagement({
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [sortOrder, setSortOrder] = useState("NAME_ASC");
   const [editing, setEditing] = useState<ManagedUser | null>(null);
   const [viewing, setViewing] = useState<ManagedUser | null>(null);
   const [pendingDeactivate, setPendingDeactivate] =
@@ -57,18 +60,21 @@ export default function AdminUserManagement({
   const [busy, setBusy] = useState(false);
 
   async function load() {
-    const [userResponse, subjectResponse] = await Promise.all([
-      fetch(`/api/admin/users/${role}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch("/api/admin/subjects", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-    ]);
-    if (!userResponse.ok || !subjectResponse.ok)
+    const userResponse = await fetch(`/api/admin/users/${role}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!userResponse.ok)
       throw new Error("Gagal memuat data akun.");
     setUsers(await userResponse.json());
-    setSubjects(await subjectResponse.json());
+    if (role === "lecturers") {
+      const subjectResponse = await fetch("/api/admin/subjects", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!subjectResponse.ok) throw new Error("Gagal memuat mata kuliah.");
+      setSubjects(await subjectResponse.json());
+    } else {
+      setSubjects([]);
+    }
   }
 
   useEffect(() => {
@@ -111,7 +117,10 @@ export default function AdminUserManagement({
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            ...form,
+            full_name: form.full_name,
+            email: form.email,
+            password: form.password,
+            ...(role === "lecturers" ? { subject_ids: form.subject_ids } : {}),
             ...(editing ? {} : { is_active: true }),
           }),
         },
@@ -163,11 +172,16 @@ export default function AdminUserManagement({
     void performToggleActive(user);
   }
 
-  const visible = users.filter((user) =>
-    `${user.full_name} ${user.email}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
-  );
+  const visible = users
+    .filter((user) =>
+      `${user.full_name} ${user.email}`.toLowerCase().includes(search.toLowerCase()) &&
+      (statusFilter === "ALL" || (statusFilter === "ACTIVE" ? user.is_active : !user.is_active)),
+    )
+    .sort((a, b) => {
+      if (sortOrder === "NAME_DESC") return b.full_name.localeCompare(a.full_name);
+      if (sortOrder === "EMAIL_ASC") return a.email.localeCompare(b.email);
+      return a.full_name.localeCompare(b.full_name);
+    });
   const roleLabel = role === "lecturers" ? "Dosen" : "Mahasiswa";
 
   return (
@@ -196,6 +210,10 @@ export default function AdminUserManagement({
           searchValue={search}
           onSearchChange={setSearch}
           searchPlaceholder="Cari nama atau email..."
+          filters={<AppSelect value={statusFilter} onValueChange={setStatusFilter} ariaLabel="Filter status akun" className="min-w-36" options={[{ value: "ALL", label: "Semua status" }, { value: "ACTIVE", label: "Aktif" }, { value: "INACTIVE", label: "Nonaktif" }]} />}
+          sortOptions={[{ value: "NAME_ASC", label: "Nama A-Z", direction: "asc" }, { value: "NAME_DESC", label: "Nama Z-A", direction: "desc" }, { value: "EMAIL_ASC", label: "Email A-Z", direction: "asc" }]}
+          currentSort={sortOrder}
+          onSortChange={setSortOrder}
         />
       </div>
       <div className="mt-5 overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
@@ -204,7 +222,7 @@ export default function AdminUserManagement({
             <tr>
               <th className="px-5 py-4">Nama</th>
               <th className="px-5 py-4">Email</th>
-              <th className="px-5 py-4">Mata kuliah</th>
+              {role === "lecturers" && <th className="px-5 py-4">Mata kuliah</th>}
               <th className="px-5 py-4">Status</th>
               <th className="px-5 py-4 text-right">Aksi</th>
             </tr>
@@ -218,11 +236,13 @@ export default function AdminUserManagement({
                 <td className="px-5 py-4 text-on-surface-variant">
                   {user.email}
                 </td>
-                <td className="px-5 py-4 text-on-surface-variant">
-                  {user.subjects.length
-                    ? user.subjects.map((subject) => subject.name).join(", ")
-                    : "Belum ditentukan"}
-                </td>
+                {role === "lecturers" && (
+                  <td className="px-5 py-4 text-on-surface-variant">
+                    {user.subjects.length
+                      ? user.subjects.map((subject) => subject.name).join(", ")
+                      : "Belum ditentukan"}
+                  </td>
+                )}
                 <td className="px-5 py-4">
                   <span
                     className={`badge ${user.is_active ? "badge-active" : "badge-revoked"}`}
@@ -341,24 +361,18 @@ export default function AdminUserManagement({
                   </span>
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase text-on-surface-variant">
-                  Mata kuliah
-                </dt>
-                <dd className="mt-2 flex flex-wrap gap-2">
-                  {viewing.subjects.length ? (
-                    viewing.subjects.map((subject) => (
-                      <span key={subject.id} className="badge badge-role">
-                        {subject.name}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-on-surface-variant">
-                      Belum ditetapkan
-                    </span>
-                  )}
-                </dd>
-              </div>
+              {role === "lecturers" && (
+                <div>
+                  <dt className="text-xs font-semibold uppercase text-on-surface-variant">
+                    Mata kuliah
+                  </dt>
+                  <dd className="mt-2 flex flex-wrap gap-2">
+                    {viewing.subjects.length ? viewing.subjects.map((subject) => (
+                      <span key={subject.id} className="badge badge-role">{subject.name}</span>
+                    )) : <span className="text-on-surface-variant">Belum ditetapkan</span>}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
         </div>
@@ -461,7 +475,7 @@ export default function AdminUserManagement({
                       className="text-primary"
                       aria-hidden="true"
                     />
-                    Keamanan & Penugasan mata kuliah
+                    {role === "lecturers" ? "Keamanan & Penugasan mata kuliah" : "Keamanan"}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
@@ -487,25 +501,18 @@ export default function AdminUserManagement({
                       className="form-input"
                     />
                     </div>
-                    <div>
-                    <label className="mb-1.5 block text-sm font-medium text-on-surface-variant">
-                      Mata kuliah
-                    </label>
-                    <AppMultiSelect
-                      value={form.subject_ids}
-                      onValueChange={(subject_ids) =>
-                        setForm((current) => ({ ...current, subject_ids }))
-                      }
-                      options={subjects.map((subject) => ({
-                        value: subject.id,
-                        label: subject.name,
-                      }))}
-                      placeholder="Pilih mata kuliah"
-                      ariaLabel="Pilih mata kuliah"
-                      clearLabel="Hapus semua mata kuliah yang dipilih"
-                      selectedCountLabel="mata kuliah dipilih"
-                    />
-                    </div>
+                    {role === "lecturers" && <div>
+                      <label className="mb-1.5 block text-sm font-medium text-on-surface-variant">Mata kuliah</label>
+                      <AppMultiSelect
+                        value={form.subject_ids}
+                        onValueChange={(subject_ids) => setForm((current) => ({ ...current, subject_ids }))}
+                        options={subjects.map((subject) => ({ value: subject.id, label: subject.name }))}
+                        placeholder="Pilih mata kuliah"
+                        ariaLabel="Pilih mata kuliah"
+                        clearLabel="Hapus semua mata kuliah yang dipilih"
+                        selectedCountLabel="mata kuliah dipilih"
+                      />
+                    </div>}
                   </div>
                 </section>
               </div>

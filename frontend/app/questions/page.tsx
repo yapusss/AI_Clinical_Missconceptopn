@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CircleCheck,
   CircleStop,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Eye,
   FileText,
+  Filter,
   GraduationCap,
   Layers,
   Pencil,
@@ -68,6 +71,19 @@ export default function QuestionsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [subjectFilterIds, setSubjectFilterIds] = useState<string[]>([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sortOrder, setSortOrder] = useState("CODE_ASC");
+  const filterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const closeFilters = (event: MouseEvent) => {
+      if (!filterRef.current?.contains(event.target as Node)) setFiltersOpen(false);
+    };
+    if (filtersOpen) document.addEventListener("mousedown", closeFilters);
+    return () => document.removeEventListener("mousedown", closeFilters);
+  }, [filtersOpen]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -87,11 +103,25 @@ export default function QuestionsPage() {
     void load().catch(() => setError("Gagal memuat paket ujian."));
   }, [loading, user, token, router, load]);
 
-  const visibleSets = sets.filter((item) =>
-    `${item.code} ${item.title} ${item.subject_name} ${item.is_active ? "aktif" : "nonaktif"}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
+  const visibleSets = sets
+    .filter((item) =>
+      `${item.code} ${item.title} ${item.subject_name} ${item.is_active ? "aktif" : "nonaktif"}`
+        .toLowerCase()
+        .includes(search.toLowerCase()) &&
+      (!statusFilters.length || statusFilters.includes(item.is_active ? "ACTIVE" : "INACTIVE")) &&
+      (!subjectFilterIds.length || subjectFilterIds.includes(item.subject_name)),
+    )
+    .sort((a, b) => {
+      if (sortOrder === "TITLE_ASC") return a.title.localeCompare(b.title);
+      if (sortOrder === "TITLE_DESC") return b.title.localeCompare(a.title);
+      return a.code.localeCompare(b.code);
+    });
+
+  const subjects = [...new Set(sets.map((item) => item.subject_name).filter(Boolean))].sort();
+  const filterCount = statusFilters.length + subjectFilterIds.length;
+  const toggleFilter = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
+    setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+  };
 
   async function publishSet(id: string) {
     if (!token) return;
@@ -163,7 +193,6 @@ export default function QuestionsPage() {
         title="Manajemen Paket Ujian"
         description="Satu kode berisi pertanyaan konseptual yang dikerjakan sebagai satu evaluasi."
         icon={ClipboardList}
-        eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ClipboardList size={14} /> Paket Ujian</span>}
       />
 
       {error && (
@@ -193,6 +222,10 @@ export default function QuestionsPage() {
           searchValue={search}
           onSearchChange={setSearch}
           searchPlaceholder="Cari kode, judul, atau mata kuliah..."
+          filters={<div ref={filterRef} className="relative"><button type="button" onClick={() => setFiltersOpen((open) => !open)} className={`list-toolbar-icon gap-1 px-2.5 ${filtersOpen || filterCount ? "!border-primary !text-primary bg-primary/10" : ""}`} aria-label={`Filter paket ujian${filterCount ? `, ${filterCount} dipilih` : ""}`} aria-expanded={filtersOpen} title="Filter paket ujian"><Filter size={17} aria-hidden="true" />{filtersOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}</button>{filtersOpen && <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] overflow-hidden rounded-xl border border-outline-variant/60 bg-surface-container-lowest p-3 shadow-2xl"><div className="flex items-center justify-between border-b border-outline-variant/40 pb-2"><p className="text-xs font-bold uppercase tracking-wide text-on-surface">Filter terpadu ({filterCount} dipilih)</p><button type="button" onClick={() => { setStatusFilters([]); setSubjectFilterIds([]); }} disabled={!filterCount} className="text-xs font-semibold text-primary disabled:cursor-not-allowed disabled:text-on-surface-variant">Reset</button></div><fieldset className="mt-3"><legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Status paket</legend><div className="mt-2 space-y-1">{[{ value: "ACTIVE", label: "Aktif" }, { value: "INACTIVE", label: "Nonaktif" }].map((option) => <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container"><input type="checkbox" checked={statusFilters.includes(option.value)} onChange={() => toggleFilter(option.value, statusFilters, setStatusFilters)} className="h-4 w-4 rounded border-outline-variant accent-primary" />{option.label}</label>)}</div></fieldset><fieldset className="mt-3 border-t border-outline-variant/40 pt-3"><legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Mata kuliah</legend><div className="mt-2 max-h-52 space-y-1 overflow-y-auto">{subjects.length ? subjects.map((subject) => <label key={subject} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container"><input type="checkbox" checked={subjectFilterIds.includes(subject)} onChange={() => toggleFilter(subject, subjectFilterIds, setSubjectFilterIds)} className="h-4 w-4 rounded border-outline-variant accent-primary" />{subject}</label>) : <p className="px-2 py-2 text-sm text-on-surface-variant">Belum ada mata kuliah.</p>}</div></fieldset></div>}</div>}
+          sortOptions={[{ value: "CODE_ASC", label: "Kode A-Z", direction: "asc" }, { value: "TITLE_ASC", label: "Judul A-Z", direction: "asc" }, { value: "TITLE_DESC", label: "Judul Z-A", direction: "desc" }]}
+          currentSort={sortOrder}
+          onSortChange={setSortOrder}
         />
       </div>
 
@@ -204,7 +237,8 @@ export default function QuestionsPage() {
                 <th className="px-4 py-3.5 text-left whitespace-nowrap">Kode</th>
                 <th className="px-4 py-3.5 text-left">Paket</th>
                 <th className="px-4 py-3.5 text-left whitespace-nowrap">Mata Kuliah</th>
-                <th className="px-4 py-3.5 text-left whitespace-nowrap">Status</th>
+                <th className="px-4 py-3.5 text-left whitespace-nowrap">Publikasi</th>
+                <th className="px-4 py-3.5 text-left whitespace-nowrap">Ketersediaan</th>
                 <th className="px-4 py-3.5 text-left whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
@@ -234,20 +268,21 @@ export default function QuestionsPage() {
                     </td>
 
                     <td className="px-4 py-3.5 text-left align-middle whitespace-nowrap">
-                      <div className="flex flex-col items-start gap-1">
-                        <span className={`badge ${published ? "badge-active" : "badge-draft"}`}>
-                          {published ? "Terbit" : "Draft"}
-                        </span>
-                        <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${
-                            item.is_active
-                              ? "border border-tertiary/40 bg-tertiary/10 text-tertiary"
-                              : "border border-error/40 bg-error/10 text-error"
-                          }`}
-                        >
-                          {item.is_active ? "Aktif" : "Nonaktif"}
-                        </span>
-                      </div>
+                      <span className={`badge ${published ? "badge-active" : "badge-draft"}`}>
+                        {published ? "Terbit" : "Draft"}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3.5 text-left align-middle whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${
+                          item.is_active
+                            ? "border border-tertiary/40 bg-tertiary/10 text-tertiary"
+                            : "border border-error/40 bg-error/10 text-error"
+                        }`}
+                      >
+                        {item.is_active ? "Aktif" : "Nonaktif"}
+                      </span>
                     </td>
 
                     <td className="px-5 py-4 text-left">

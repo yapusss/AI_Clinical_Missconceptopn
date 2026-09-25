@@ -1,77 +1,68 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Building2 } from "lucide-react";
+import { Activity, ArrowRight, BarChart3, BookOpenCheck, BrainCircuit, Check, ChevronRight, ClipboardCheck, FileUp, KeyRound, Menu, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
 
 import { useAuth } from "./components/AuthProvider";
 import ThemeToggle from "./components/ThemeToggle";
 
+const features = [
+  { icon: KeyRound, title: "Ujian berbasis kode", body: "Mahasiswa masuk ke evaluasi melalui satu kode paket tanpa penugasan mata kuliah yang rumit." },
+  { icon: BrainCircuit, title: "Analisis miskonsepsi AI", body: "Jawaban uraian dianalisis untuk menemukan tingkat pemahaman dan potensi miskonsepsi konsep." },
+  { icon: ShieldCheck, title: "Validasi dosen", body: "Hasil AI tetap berada dalam kendali pengajar: tinjau, terima, atau koreksi sebelum final." },
+  { icon: ClipboardCheck, title: "Review per paket", body: "Pantau progres dan jawaban mahasiswa dalam konteks satu paket ujian yang utuh." },
+  { icon: BookOpenCheck, title: "Siklus paket terkontrol", body: "Buat, edit, terbitkan, aktifkan, atau nonaktifkan paket dengan status yang jelas." },
+  { icon: UsersRound, title: "Akses sesuai peran", body: "Admin, dosen, dan mahasiswa mendapatkan alur kerja serta hak akses yang relevan." },
+  { icon: FileUp, title: "Import bank soal", body: "Percepat persiapan evaluasi dengan import soal dan validasi data sebelum digunakan." },
+  { icon: BarChart3, title: "Operasional terpantau", body: "Dashboard menampilkan paket perlu tindakan, status validasi, kesehatan AI, dan notifikasi penting." },
+];
+
+const steps = [
+  { number: "01", title: "Buat paket", body: "Dosen menyusun pertanyaan konseptual atau mengimpor bank soal." },
+  { number: "02", title: "Bagikan kode", body: "Mahasiswa memasukkan kode paket untuk memulai evaluasi." },
+  { number: "03", title: "Analisis jawaban", body: "AI memetakan pemahaman dan indikasi miskonsepsi dari jawaban uraian." },
+  { number: "04", title: "Validasi hasil", body: "Dosen menyetujui atau menyempurnakan hasil sebelum digunakan sebagai evaluasi." },
+];
+
+function FeaturePreview({ index }: { index: number }) {
+  const frame = (content: React.ReactNode) => <div className="mb-5 overflow-hidden rounded-xl border border-outline-variant/50 bg-[var(--input-bg)] p-2.5 shadow-inner">{content}</div>;
+  const bar = (width: string, color = "bg-primary") => <div className="h-1.5 overflow-hidden rounded-full bg-surface-container"><div className={`h-full rounded-full ${color}`} style={{ width }} /></div>;
+  if (index === 0) return frame(<><div className="flex items-center justify-between text-[9px] font-bold text-on-surface-variant"><span>MASUKKAN KODE PAKET</span><KeyRound size={11} className="text-primary" /></div><div className="mt-2 flex items-center gap-2 rounded-md border border-primary/40 bg-surface-container-lowest px-2 py-1.5"><span className="font-mono-ui text-[10px] font-bold text-primary">BIO-CELL-001</span><span className="ml-auto rounded bg-primary px-1.5 py-0.5 text-[8px] font-bold text-white">BUKA</span></div></>);
+  if (index === 1) return frame(<><div className="flex items-center gap-1.5 text-[9px] font-bold text-on-surface"><BrainCircuit size={11} className="text-secondary" /> ANALISIS KONSEP</div><div className="mt-2 space-y-2 text-[8px] text-on-surface-variant"><div><div className="mb-1 flex justify-between"><span>Membran sel</span><span>82%</span></div>{bar("82%")}</div><div><div className="mb-1 flex justify-between"><span>Transport pasif</span><span>61%</span></div>{bar("61%", "bg-secondary")}</div></div></>);
+  if (index === 2) return frame(<><div className="flex items-center justify-between text-[9px] font-bold text-on-surface"><span>HASIL ANALISIS</span><span className="text-status-draft">PERLU REVIEW</span></div><p className="mt-2 rounded-md bg-primary/10 p-2 text-[8px] leading-3 text-on-surface-variant">Indikator miskonsepsi terdeteksi pada konsep difusi.</p><div className="mt-2 flex gap-1.5"><span className="rounded bg-tertiary-container/20 px-1.5 py-1 text-[8px] font-bold text-tertiary-container">TERIMA</span><span className="rounded bg-surface-container px-1.5 py-1 text-[8px] font-bold text-on-surface-variant">EDIT</span></div></>);
+  if (index === 3) return frame(<><div className="flex justify-between text-[9px] font-bold text-on-surface"><span>PROGRES PAKET</span><span className="text-primary">18 / 24</span></div><div className="mt-2 space-y-1.5">{["Alya Pratama", "Bima Saputra", "Citra Dewi"].map((name, row) => <div key={name} className="flex items-center gap-2 rounded-md bg-surface-container-lowest px-2 py-1"><i className={`size-1.5 rounded-full ${row === 2 ? "bg-status-draft" : "bg-tertiary-container"}`} /><span className="text-[8px] text-on-surface-variant">{name}</span><span className="ml-auto text-[8px] font-bold text-primary">Review</span></div>)}</div></>);
+  if (index === 4) return frame(<><div className="text-[9px] font-bold text-on-surface">STATUS PAKET SOAL</div><div className="mt-3 flex items-center justify-between"><span className="rounded-full bg-surface-container px-2 py-1 text-[8px] font-bold text-on-surface-variant">DRAFT</span><ArrowRight size={10} className="text-primary" /><span className="rounded-full bg-primary/15 px-2 py-1 text-[8px] font-bold text-primary">TERBIT</span><ArrowRight size={10} className="text-primary" /><span className="rounded-full bg-tertiary-container/15 px-2 py-1 text-[8px] font-bold text-tertiary-container">AKTIF</span></div></>);
+  if (index === 5) return frame(<><div className="text-[9px] font-bold text-on-surface">AKSES PENGGUNA</div><div className="mt-2 grid grid-cols-3 gap-1.5">{[["Admin", "bg-primary/15 text-primary"], ["Dosen", "bg-secondary/15 text-secondary"], ["Mhs", "bg-tertiary-container/15 text-tertiary-container"]].map(([role, styles]) => <div key={role} className={`rounded-md p-1.5 text-center text-[8px] font-bold ${styles}`}><UsersRound size={11} className="mx-auto mb-1" />{role}</div>)}</div></>);
+  if (index === 6) return frame(<><div className="flex items-center gap-2 rounded-md border border-dashed border-primary/50 bg-primary/5 p-2.5"><span className="grid size-7 place-items-center rounded bg-primary/15 text-primary"><FileUp size={13} /></span><div><p className="text-[9px] font-bold text-on-surface">bank-soal.csv</p><p className="text-[8px] text-tertiary-container">24 baris valid</p></div><Check size={13} className="ml-auto text-tertiary-container" /></div><div className="mt-2 flex gap-1"><span className="rounded bg-primary/15 px-1.5 py-1 text-[8px] font-bold text-primary">PRATINJAU</span><span className="rounded bg-surface-container px-1.5 py-1 text-[8px] text-on-surface-variant">IMPOR</span></div></>);
+  return frame(<><div className="flex items-center justify-between text-[9px] font-bold text-on-surface"><span>DASHBOARD OPERASIONAL</span><BarChart3 size={11} className="text-primary" /></div><div className="mt-2 grid grid-cols-3 gap-1.5">{[["Paket", "12"], ["Review", "7"], ["AI", "Sehat"]].map(([title, value]) => <div key={title} className="rounded-md bg-surface-container-lowest p-1.5"><p className="text-[7px] text-on-surface-variant">{title}</p><p className="mt-1 text-[10px] font-extrabold text-primary">{value}</p></div>)}</div><div className="mt-2">{bar("72%", "bg-secondary")}</div></>);
+}
+
 export default function Home() {
   const { user, loading } = useAuth();
+  const primaryHref = user ? "/select-role" : "/login";
+  const primaryLabel = user ? "Buka Dashboard" : "Masuk";
 
-  return (
-    <div
-      className="app-shell"
-      style={{
-        minHeight: "100vh",
-        background: "var(--bg-main)",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <div style={{ position: "absolute", top: "16px", right: "16px" }}>
-        <ThemeToggle />
-      </div>
+  return <main className="min-h-screen overflow-x-hidden bg-[var(--bg-main)] text-on-surface">
+    <div className="pointer-events-none absolute inset-x-0 top-0 h-[620px] overflow-hidden"><div className="absolute left-[12%] top-[-180px] h-[440px] w-[440px] rounded-full bg-primary/15 blur-3xl" /><div className="absolute right-[-100px] top-[120px] h-[360px] w-[360px] rounded-full bg-secondary/15 blur-3xl" /></div>
 
-      <div
-        className="glass-panel animate-fade-in"
-        style={{
-          width: "100%",
-          maxWidth: "560px",
-          padding: "2.5rem",
-          borderRadius: "var(--radius-lg)",
-          textAlign: "center",
-          boxSizing: "border-box",
-        }}
-      >
-        <div
-          style={{
-            width: "64px",
-            height: "64px",
-            borderRadius: "var(--radius-md)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "var(--gradient-primary)",
-            color: "#ffffff",
-            margin: "0 auto",
-          }}
-        >
-          <Building2 size={34} />
-        </div>
-        <h1 style={{ fontSize: "1.75rem", fontWeight: 800, letterSpacing: "-0.02em", margin: "1rem 0 0.4rem" }}>
-          AI Clinical Misconception
-        </h1>
-        <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", maxWidth: "440px", margin: "0 auto" }}>
-          Detect, diagnose and correct clinical misconceptions with intelligent assessments.
-        </p>
+    <header className="relative mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
+      <Link href="/" className="flex items-center gap-3 font-display text-lg font-extrabold tracking-tight text-on-surface"><span className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-primary to-secondary text-white shadow-lg shadow-primary/20"><BrainCircuit size={21} /></span><span>Eval<span className="text-primary">AI</span></span></Link>
+      <nav className="hidden items-center gap-7 text-sm font-semibold text-on-surface-variant md:flex"><a href="#fitur" className="transition-colors hover:text-primary">Fitur</a><a href="#alur" className="transition-colors hover:text-primary">Cara kerja</a><a href="#untuk-siapa" className="transition-colors hover:text-primary">Peran</a></nav>
+      <div className="flex items-center gap-2"><ThemeToggle />{!loading && <Link href={primaryHref} className="btn-primary px-4 py-2 text-sm sm:px-5"><span className="hidden sm:inline">{primaryLabel}</span><span className="sm:hidden"><Menu size={18} /></span><ArrowRight size={16} className="hidden sm:block" /></Link>}</div>
+    </header>
 
-        {loading ? (
-          <p style={{ color: "var(--text-dim)", fontSize: "0.85rem", marginTop: "1.5rem" }}>Memproses...</p>
-        ) : user ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
-            <Link href="/select-role" className="btn-primary" style={{ width: "100%", padding: "0.75rem 1.25rem" }}>
-              Buka Dashboard
-              <ArrowRight size={16} />
-            </Link>
-          </div>
-        ) : (
-          <Link href="/login" className="btn-primary" style={{ width: "100%", padding: "0.75rem 1.25rem", marginTop: "1.5rem" }}>
-            Login
-            <ArrowRight size={16} />
-          </Link>
-        )}
-      </div>
-    </div>
-  );
+    <section className="relative mx-auto grid max-w-7xl gap-14 px-5 pb-24 pt-16 sm:px-8 md:pt-24 lg:grid-cols-[1.05fr_.95fr] lg:items-center lg:px-10 lg:pb-32">
+      <div><div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary"><Sparkles size={14} /> Evaluasi konseptual berbantuan AI</div><h1 className="mt-6 max-w-3xl font-display text-4xl font-extrabold leading-[1.08] tracking-tight text-on-surface sm:text-5xl lg:text-6xl">Temukan miskonsepsi <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">sebelum</span> menjadi kebiasaan belajar.</h1><p className="mt-6 max-w-xl text-base leading-7 text-on-surface-variant sm:text-lg">EvalAI Academic membantu pengajar memahami jawaban mahasiswa lebih dalam, dari evaluasi berbasis kode hingga validasi hasil analisis AI.</p><div className="mt-8 flex flex-col gap-3 sm:flex-row"><Link href={primaryHref} className="btn-primary px-6 py-3">{loading ? "Memuat..." : primaryLabel}<ArrowRight size={18} /></Link><a href="#fitur" className="btn-secondary px-6 py-3">Jelajahi fitur <ChevronRight size={18} /></a></div><div className="mt-9 flex flex-wrap gap-x-5 gap-y-3 text-sm text-on-surface-variant"><span className="flex items-center gap-2"><Check size={16} className="text-tertiary-container" /> Berbasis jawaban uraian</span><span className="flex items-center gap-2"><Check size={16} className="text-tertiary-container" /> Validasi oleh dosen</span><span className="flex items-center gap-2"><Check size={16} className="text-tertiary-container" /> Hak akses terstruktur</span></div></div>
+
+      <div className="relative mx-auto w-full max-w-xl"><div className="absolute -inset-5 rounded-[2rem] bg-gradient-to-br from-primary/20 via-secondary/10 to-transparent blur-2xl" /><div className="relative overflow-hidden rounded-2xl border border-outline-variant/60 bg-surface-container-lowest p-4 shadow-2xl sm:p-5"><div className="flex items-center justify-between border-b border-outline-variant/40 pb-4"><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg bg-primary/15 text-primary"><Activity size={18} /></span><div><p className="text-sm font-bold text-on-surface">Ringkasan evaluasi</p><p className="text-xs text-on-surface-variant">BIO-CELL-001 · aktif</p></div></div><span className="badge badge-active">Siap ditinjau</span></div><div className="mt-5 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary/10 p-3"><p className="text-xs text-on-surface-variant">Jawaban masuk</p><p className="mt-1 text-2xl font-extrabold text-primary">24</p></div><div className="rounded-xl bg-secondary/10 p-3"><p className="text-xs text-on-surface-variant">Perlu validasi</p><p className="mt-1 text-2xl font-extrabold text-secondary">7</p></div><div className="rounded-xl bg-tertiary-container/10 p-3"><p className="text-xs text-on-surface-variant">Tervalidasi</p><p className="mt-1 text-2xl font-extrabold text-tertiary-container">17</p></div></div><div className="mt-4 rounded-xl border border-outline-variant/40 bg-[var(--input-bg)] p-4"><div className="flex items-center justify-between"><p className="text-sm font-bold text-on-surface">Indikator pemahaman</p><p className="text-xs font-bold text-primary">Analisis AI</p></div><div className="mt-4 space-y-3"><div><div className="mb-1.5 flex justify-between text-xs text-on-surface-variant"><span>Struktur membran sel</span><span>82%</span></div><div className="h-2 overflow-hidden rounded-full bg-surface-container"><div className="h-full w-[82%] rounded-full bg-primary" /></div></div><div><div className="mb-1.5 flex justify-between text-xs text-on-surface-variant"><span>Transport pasif</span><span>61%</span></div><div className="h-2 overflow-hidden rounded-full bg-surface-container"><div className="h-full w-[61%] rounded-full bg-secondary" /></div></div></div></div><div className="mt-4 flex items-start gap-3 rounded-xl border border-status-draft/30 bg-status-draft/10 p-3"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-status-draft" /><p className="text-xs leading-5 text-on-surface-variant"><strong className="text-on-surface">Validasi pengajar diperlukan.</strong> Sistem menandai indikator yang perlu ditinjau sebelum hasil final.</p></div></div></div>
+    </section>
+
+    <section id="fitur" className="border-y border-outline-variant/40 bg-surface-container-low/60"><div className="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-10"><div className="max-w-2xl"><p className="text-sm font-bold uppercase tracking-[.16em] text-primary">Dirancang untuk evaluasi bermakna</p><h2 className="mt-3 font-display text-3xl font-extrabold tracking-tight text-on-surface sm:text-4xl">Dari jawaban mentah menjadi keputusan pembelajaran.</h2><p className="mt-4 leading-7 text-on-surface-variant">Satu sistem untuk mempersiapkan evaluasi, memahami jawaban, dan menjaga keputusan akademik tetap berada di tangan pengajar.</p></div><div className="mt-11 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{features.map((feature, index) => { const Icon = feature.icon; return <article key={feature.title} className="group rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-5 transition-all duration-200 hover:-translate-y-1 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10"><FeaturePreview index={index} /><span className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-white"><Icon size={21} /></span><h3 className="mt-5 font-display text-lg font-bold text-on-surface">{feature.title}</h3><p className="mt-2 text-sm leading-6 text-on-surface-variant">{feature.body}</p></article>; })}</div></div></section>
+
+    <section id="alur" className="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-10"><div className="grid gap-10 lg:grid-cols-[.75fr_1.25fr] lg:items-end"><div><p className="text-sm font-bold uppercase tracking-[.16em] text-secondary">Alur yang jelas</p><h2 className="mt-3 font-display text-3xl font-extrabold tracking-tight text-on-surface sm:text-4xl">Evaluasi yang tetap manusiawi, meski dibantu AI.</h2><p className="mt-4 leading-7 text-on-surface-variant">AI mempercepat pembacaan pola. Dosen tetap menjadi pengambil keputusan atas hasil evaluasi.</p></div><div className="grid gap-4 sm:grid-cols-2">{steps.map((step) => <article key={step.number} className="relative border-l-2 border-primary/40 pl-5"><span className="font-mono-ui text-xs font-bold text-primary">{step.number}</span><h3 className="mt-2 font-display text-lg font-bold text-on-surface">{step.title}</h3><p className="mt-2 text-sm leading-6 text-on-surface-variant">{step.body}</p></article>)}</div></div></section>
+
+    <section id="untuk-siapa" className="mx-auto max-w-7xl px-5 pb-24 sm:px-8 lg:px-10"><div className="overflow-hidden rounded-3xl border border-primary/30 bg-gradient-to-br from-primary/20 via-surface-container-lowest to-secondary/15 p-7 sm:p-10 lg:p-14"><div className="grid gap-10 lg:grid-cols-[1fr_auto] lg:items-end"><div><p className="text-sm font-bold uppercase tracking-[.16em] text-primary">Satu sistem, tiga peran</p><h2 className="mt-3 max-w-2xl font-display text-3xl font-extrabold tracking-tight text-on-surface sm:text-4xl">Buat evaluasi konseptual lebih mudah ditelusuri dan lebih siap ditindaklanjuti.</h2><div className="mt-7 grid gap-3 sm:grid-cols-3">{[["Admin", "Memantau operasi dan menjaga sistem tetap siap."], ["Dosen", "Menyusun paket serta memvalidasi pemahaman."], ["Mahasiswa", "Mengerjakan evaluasi cukup dengan kode paket."]].map(([role, detail]) => <div key={role} className="rounded-xl border border-outline-variant/50 bg-surface-container-lowest/70 p-4"><p className="font-bold text-on-surface">{role}</p><p className="mt-1 text-xs leading-5 text-on-surface-variant">{detail}</p></div>)}</div></div><Link href={primaryHref} className="btn-primary whitespace-nowrap px-6 py-3">{loading ? "Memuat..." : primaryLabel}<ArrowRight size={18} /></Link></div></div></section>
+
+    <footer className="border-t border-outline-variant/40"><div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-7 text-sm text-on-surface-variant sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10"><span className="font-semibold text-on-surface">EvalAI Academic</span><span>Evaluasi konseptual yang dapat ditinjau.</span></div></footer>
+  </main>;
 }

@@ -81,6 +81,15 @@ CREATE TABLE user_subject_roles (
     CONSTRAINT uq_user_subject_role UNIQUE (user_id, subject_id, role)
 );
 
+-- Global identity roles are intentionally separate from lecturer subject scope.
+CREATE TABLE user_roles (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('ADMIN', 'LECTURER', 'STUDENT')),
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_user_role UNIQUE (user_id, role)
+);
+
 CREATE TABLE topics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,

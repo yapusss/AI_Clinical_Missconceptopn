@@ -11,8 +11,8 @@ import type { ReactNode } from "react";
 
 export type RoleInfo = {
   role: string;
-  subject_slug: string;
-  subject_name: string;
+  subject_slug: string | null;
+  subject_name: string | null;
 };
 
 export type User = {

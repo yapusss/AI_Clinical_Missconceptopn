@@ -15,6 +15,7 @@ from .models import (
     Subject,
     Submission,
     User,
+    UserRole,
     UserSubjectRole,
 )
 
@@ -63,6 +64,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         UserSubjectRole.objects.create(
             user=self.student, subject=self.subject, role=UserSubjectRole.Role.STUDENT
         )
+        UserRole.objects.create(user=self.student, role=UserRole.Role.STUDENT)
         self.q_set = QuestionSet.objects.create(
             id=uuid.uuid4(),
             subject=self.subject,
@@ -203,7 +205,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         resp = self.client.post(url, {'answer_text': 'Jawaban ke draft.'}, format='json')
         self.assertEqual(resp.status_code, 400)
 
-    def test_submit_not_enrolled_blocked(self):
+    def test_submit_without_global_student_role_blocked(self):
         self._auth(self.other)
         resp = self._submit()
         self.assertEqual(resp.status_code, 403)
@@ -254,9 +256,15 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(Submission.objects.filter(student=self.student).count(), 0)
 
-    def test_lookup_not_enrolled_blocked(self):
+    def test_lookup_without_global_student_role_blocked(self):
         self._auth(self.other)
         self.assertEqual(self._lookup().status_code, 403)
+
+    def test_global_student_can_access_active_package_without_subject_assignment(self):
+        UserRole.objects.create(user=self.other, role=UserRole.Role.STUDENT)
+        self._auth(self.other)
+        self.assertEqual(self._lookup().status_code, 200)
+        self.assertEqual(self._submit(user=self.other).status_code, 201)
 
     # ------------------------------------------------------------------ list
 
@@ -295,7 +303,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         resp = self.client.get(reverse('student-submission-list'))
         self.assertEqual(resp.json(), [])
 
-    def test_lecturer_review_includes_enrolled_student_without_submission(self):
+    def test_lecturer_review_includes_submitted_student_only(self):
         lecturer = User.objects.create(
             id=uuid.uuid4(),
             email=f'lecturer_{uuid.uuid4().hex[:8]}@acm.local',
@@ -307,6 +315,12 @@ class StudentSubmissionAPITests(TransactionTestCase):
         UserSubjectRole.objects.create(
             user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER
         )
+        UserRole.objects.create(user=lecturer, role=UserRole.Role.LECTURER)
+        Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            question_version_id=self.version.id, answer_text='Jawaban paket.', attempt_no=1,
+            status='SUBMITTED',
+        )
         self._auth(lecturer)
 
         resp = self.client.get(reverse('question-set-review', kwargs={'pk': self.q_set.id}))
@@ -316,9 +330,11 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(body['published_question_count'], 1)
         self.assertEqual(len(body['students']), 1)
         self.assertEqual(body['students'][0]['student_id'], str(self.student.id))
-        self.assertEqual(body['students'][0]['answered_count'], 0)
+        self.assertEqual(body['roster_scope'], 'submitted_students')
+        self.assertFalse(body['unsubmitted_roster_available'])
+        self.assertEqual(body['students'][0]['answered_count'], 1)
         self.assertEqual(body['students'][0]['published_question_count'], 1)
-        self.assertEqual(body['students'][0]['latest_submissions'], [])
+        self.assertEqual(len(body['students'][0]['latest_submissions']), 1)
 
     def test_lecturer_package_student_review_includes_answers_and_unanswered_questions(self):
         lecturer = User.objects.create(
@@ -328,6 +344,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         UserSubjectRole.objects.create(
             user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER
         )
+        UserRole.objects.create(user=lecturer, role=UserRole.Role.LECTURER)
         self._add_published_question()
         submission = Submission.objects.create(
             id=uuid.uuid4(), student=self.student, subject=self.subject,
@@ -369,6 +386,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         UserSubjectRole.objects.create(
             user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER
         )
+        UserRole.objects.create(user=lecturer, role=UserRole.Role.LECTURER)
         submission = Submission.objects.create(
             id=uuid.uuid4(), student=self.student, subject=self.subject,
             question_version_id=self.version.id, answer_text='Jawaban tanpa analisis.',

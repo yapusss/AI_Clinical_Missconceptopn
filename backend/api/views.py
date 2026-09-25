@@ -34,6 +34,7 @@ from .models import (
     Submission,
     Topic,                
     User,
+    UserRole,
     UserSubjectRole,
     Validation,
 )
@@ -92,12 +93,12 @@ class MeView(APIView):
 
     @staticmethod
     def _roles(user):
-        qs = UserSubjectRole.objects.filter(user=user).select_related('subject')
+        qs = UserRole.objects.filter(user=user)
         return [
             {
                 'role': r.role,
-                'subject_slug': r.subject.slug,
-                'subject_name': r.subject.name,
+                'subject_slug': None,
+                'subject_name': None,
             }
             for r in qs
         ]
@@ -109,11 +110,10 @@ class DashboardView(APIView):
 
     def get(self, request):
         user = request.user
-        role_rows = UserSubjectRole.objects.filter(user=user).select_related('subject')
-        roles = [
-            {'role': r.role, 'subject_slug': r.subject.slug, 'subject_name': r.subject.name}
-            for r in role_rows
-        ]
+        role_rows = UserSubjectRole.objects.filter(
+            user=user, role=UserSubjectRole.Role.LECTURER,
+        ).select_related('subject')
+        roles = MeView._roles(user)
         role_set = {r['role'] for r in roles}
 
         summary = {
@@ -130,6 +130,70 @@ class DashboardView(APIView):
         my_subjects_ids = [r.subject_id for r in role_rows]
 
         if user.is_superuser:
+            question_sets = list(QuestionSet.objects.select_related('subject').order_by('-updated_at'))
+            question_counts = {
+                row['question_set_id']: row['count']
+                for row in Question.objects.values('question_set_id').annotate(count=Count('id'))
+            }
+            published_counts = {
+                row['question__question_set_id']: row['count']
+                for row in QuestionVersion.objects.filter(is_published=True).values('question__question_set_id').annotate(count=Count('question_id', distinct=True))
+            }
+            package_status = {'DRAFT': 0, 'ACTIVE': 0, 'INACTIVE': 0}
+            attention_packages = []
+            for question_set in question_sets:
+                question_count = question_counts.get(question_set.id, 0)
+                is_published = question_count > 0 and published_counts.get(question_set.id, 0) >= question_count
+                if not is_published:
+                    package_status['DRAFT'] += 1
+                    attention_packages.append({
+                        'id': str(question_set.id),
+                        'code': question_set.code,
+                        'title': question_set.title,
+                        'subject_name': question_set.subject.name,
+                        'reason': 'Belum lengkap atau belum diterbitkan',
+                        'state': 'DRAFT',
+                    })
+                elif question_set.is_active:
+                    package_status['ACTIVE'] += 1
+                else:
+                    package_status['INACTIVE'] += 1
+
+            recent_submissions = list(Submission.objects.select_related('student').order_by('-submitted_at')[:5])
+            validation_status = {
+                'PENDING': Submission.objects.filter(status='PENDING_VALIDATION').count(),
+                'VALIDATED': Submission.objects.filter(status='VALIDATED').count(),
+                'FAILED': Submission.objects.filter(status='ANALYSIS_FAILED').count(),
+            }
+            analyzed_count = Submission.objects.filter(status__in=['PENDING_VALIDATION', 'VALIDATED']).count()
+            failed_count = Submission.objects.filter(status='ANALYSIS_FAILED').count()
+            average_execution = LlmAnalysis.objects.filter(is_current=True).aggregate(value=Avg('execution_time_ms'))['value']
+            activities = []
+            activities.extend({
+                'label': f'Akun {account.full_name} dibuat',
+                'timestamp': account.created_at.isoformat(),
+                'type': 'ACCOUNT',
+            } for account in User.objects.order_by('-created_at')[:4])
+            activities.extend({
+                'label': f'Paket {question_set.code} diperbarui',
+                'timestamp': question_set.updated_at.isoformat(),
+                'type': 'PACKAGE',
+            } for question_set in question_sets[:4])
+            activities.extend({
+                'label': f'Jawaban dikumpulkan oleh {submission.student.full_name}',
+                'timestamp': submission.submitted_at.isoformat(),
+                'type': 'SUBMISSION',
+            } for submission in recent_submissions[:4])
+            activities.sort(key=lambda activity: activity['timestamp'], reverse=True)
+
+            alerts = []
+            if package_status['DRAFT']:
+                alerts.append({'level': 'warning', 'message': f"{package_status['DRAFT']} paket belum siap diterbitkan."})
+            if validation_status['PENDING']:
+                alerts.append({'level': 'info', 'message': f"{validation_status['PENDING']} jawaban menunggu validasi dosen."})
+            if failed_count:
+                alerts.append({'level': 'error', 'message': f'{failed_count} analisis AI gagal dan perlu diproses ulang.'})
+
             summary.update({
                 'total_users': User.objects.count(),
                 'total_subjects': Subject.objects.count(),
@@ -138,6 +202,25 @@ class DashboardView(APIView):
                 'total_misconceptions': Misconception.objects.count(),
                 'total_analyses': LlmAnalysis.objects.count(),
                 'total_validations': Validation.objects.count(),
+                'admin_dashboard': {
+                    'system': {
+                        'active_students': UserRole.objects.filter(role=UserRole.Role.STUDENT, user__is_active=True).count(),
+                        'active_lecturers': UserRole.objects.filter(role=UserRole.Role.LECTURER, user__is_active=True).count(),
+                        'active_subjects': Subject.objects.filter(is_active=True).count(),
+                        'active_question_sets': package_status['ACTIVE'],
+                    },
+                    'package_status': package_status,
+                    'validation_status': validation_status,
+                    'attention_packages': attention_packages[:6],
+                    'recent_activity': activities[:5],
+                    'ai_health': {
+                        'queue': Submission.objects.filter(status='ANALYZING').count(),
+                        'success_rate': round((analyzed_count / (analyzed_count + failed_count) * 100), 1) if analyzed_count + failed_count else None,
+                        'failures': failed_count,
+                        'average_execution_ms': round(float(average_execution)) if average_execution is not None else None,
+                    },
+                    'alerts': alerts,
+                },
             })
 
         if 'STUDENT' in role_set or user.is_superuser:
@@ -189,7 +272,7 @@ class HelpArticleListView(APIView):
         if role not in HELP_ROLES:
             return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
         if not request.user.is_superuser:
-            user_roles = set(UserSubjectRole.objects.filter(user=request.user).values_list('role', flat=True))
+            user_roles = set(UserRole.objects.filter(user=request.user).values_list('role', flat=True))
             if role not in user_roles:
                 role = 'GENERAL'
         return Response([serialize_help_article(article) for article in HelpArticle.objects.filter(role=role, is_published=True)])
@@ -231,9 +314,9 @@ class AdminHelpArticleDetailView(APIView):
 
 def managed_role_from_path(role):
     if role == 'lecturers':
-        return UserSubjectRole.Role.LECTURER
+        return UserRole.Role.LECTURER
     if role == 'students':
-        return UserSubjectRole.Role.STUDENT
+        return UserRole.Role.STUDENT
     return None
 
 
@@ -246,7 +329,7 @@ class AdminManagedUserListView(APIView):
         managed_role = managed_role_from_path(role)
         if managed_role is None:
             return Response({'detail': 'Role tidak valid.'}, status=status.HTTP_400_BAD_REQUEST)
-        user_ids = UserSubjectRole.objects.filter(role=managed_role).values_list('user_id', flat=True)
+        user_ids = UserRole.objects.filter(role=managed_role).values_list('user_id', flat=True)
         users = User.objects.filter(is_superuser=False, id__in=user_ids).order_by('full_name')
         return Response([self.serialize_user(user, managed_role) for user in users])
 
@@ -261,7 +344,7 @@ class AdminManagedUserListView(APIView):
         data = serializer.validated_data
         if User.objects.filter(email__iexact=data['email']).exists():
             return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
-        subject_ids = data.get('subject_ids', [])
+        subject_ids = data.get('subject_ids', []) if managed_role == UserRole.Role.LECTURER else []
         valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
         if len(valid_subjects) != len(set(subject_ids)):
             return Response({'subject_ids': ['Ada mata kuliah yang tidak ditemukan.']}, status=status.HTTP_400_BAD_REQUEST)
@@ -272,6 +355,7 @@ class AdminManagedUserListView(APIView):
             id=uuid.uuid4(), email=data['email'].lower(), full_name=data['full_name'],
             password_hash=make_password(data['password']), is_active=data.get('is_active', True),
         )
+        UserRole.objects.create(user=user, role=managed_role)
         UserSubjectRole.objects.bulk_create([
             UserSubjectRole(user=user, subject_id=subject_id, role=managed_role)
             for subject_id in subject_ids
@@ -280,7 +364,9 @@ class AdminManagedUserListView(APIView):
 
     @staticmethod
     def serialize_user(user, role):
-        roles = UserSubjectRole.objects.filter(user=user, role=role).select_related('subject')
+        roles = UserSubjectRole.objects.filter(
+            user=user, role=UserSubjectRole.Role.LECTURER,
+        ).select_related('subject') if role == UserRole.Role.LECTURER else []
         return {
             'id': str(user.id), 'email': user.email, 'full_name': user.full_name,
             'is_active': user.is_active, 'created_at': user.created_at,
@@ -304,14 +390,14 @@ class AdminManagedUserDetailView(APIView):
             user = User.objects.get(pk=pk, is_superuser=False)
         except User.DoesNotExist:
             return Response({'detail': 'Akun tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
-        if not UserSubjectRole.objects.filter(user=user, role=managed_role).exists():
+        if not UserRole.objects.filter(user=user, role=managed_role).exists():
             return Response({'detail': 'Akun tidak termasuk role ini.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = AdminManagedUserSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         if 'email' in data and User.objects.exclude(pk=user.pk).filter(email__iexact=data['email']).exists():
             return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
-        if 'subject_ids' in data:
+        if managed_role == UserRole.Role.LECTURER and 'subject_ids' in data:
             subject_ids = data['subject_ids']
             valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
             if len(valid_subjects) != len(set(subject_ids)):
@@ -323,7 +409,7 @@ class AdminManagedUserDetailView(APIView):
             from django.contrib.auth.hashers import make_password
             user.password_hash = make_password(data['password'])
         user.save()
-        if 'subject_ids' in data:
+        if managed_role == UserRole.Role.LECTURER and 'subject_ids' in data:
             UserSubjectRole.objects.filter(user=user, role=managed_role).delete()
             UserSubjectRole.objects.bulk_create([
                 UserSubjectRole(user=user, subject_id=subject_id, role=managed_role)
@@ -368,7 +454,10 @@ def valid_lecturer_ids(raw_ids):
     lecturer_ids = list(dict.fromkeys(raw_ids or []))
     if not all(isinstance(item, str) for item in lecturer_ids):
         return [], 'Daftar dosen tidak valid.'
-    found_ids = set(User.objects.filter(id__in=lecturer_ids, is_superuser=False).values_list('id', flat=True))
+    found_ids = set(UserRole.objects.filter(
+        user_id__in=lecturer_ids, role=UserRole.Role.LECTURER,
+        user__is_superuser=False,
+    ).values_list('user_id', flat=True))
     if len(found_ids) != len(lecturer_ids):
         return [], 'Ada dosen yang tidak ditemukan.'
     return lecturer_ids, None
@@ -1249,7 +1338,11 @@ class QuestionDetailView(APIView):
 
 
 class QuestionSetReviewView(APIView):
-    """Lecturer progress overview for every enrolled student in one question set."""
+    """Lecturer progress for students who submitted this package.
+
+    Without student enrollment assignments, a roster of students who have not
+    submitted cannot be derived.
+    """
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1271,19 +1364,18 @@ class QuestionSetReviewView(APIView):
             version.question_id for version in versions if version.is_published
         }
 
-        students = list(
-            User.objects.filter(
-                usersubjectrole__subject_id=q_set.subject_id,
-                usersubjectrole__role=UserSubjectRole.Role.STUDENT,
-            ).order_by('full_name', 'email').distinct()
-        )
-        student_ids = {student.id for student in students}
         submissions = list(
             Submission.objects.filter(
-                student_id__in=student_ids,
                 question_version_id__in=versions_by_id,
             ).order_by('-submitted_at', '-attempt_no')
         )
+        student_ids = {submission.student_id for submission in submissions}
+        students = list(User.objects.filter(
+            id__in=student_ids, is_active=True,
+            userrole__role=UserRole.Role.STUDENT,
+        ).order_by('full_name', 'email').distinct())
+        student_ids = {student.id for student in students}
+        submissions = [submission for submission in submissions if submission.student_id in student_ids]
 
         # Keep the newest attempt for each student/question, including attempts
         # made against an earlier published version of that package question.
@@ -1349,6 +1441,8 @@ class QuestionSetReviewView(APIView):
             'subject_name': q_set.subject.name,
             'is_active': q_set.is_active,
             'published_question_count': len(published_question_ids),
+            'roster_scope': 'submitted_students',
+            'unsubmitted_roster_available': False,
             'students': student_rows,
         })
 
@@ -1369,13 +1463,14 @@ class QuestionSetStudentReviewView(APIView):
             return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
-            student = User.objects.get(
-                pk=student_id,
-                usersubjectrole__subject_id=q_set.subject_id,
-                usersubjectrole__role=UserSubjectRole.Role.STUDENT,
-            )
+            student = User.objects.filter(
+                pk=student_id, is_active=True, userrole__role=UserRole.Role.STUDENT,
+                submissions__question_version_id__in=QuestionVersion.objects.filter(
+                    question__question_set=q_set,
+                ).values('id'),
+            ).distinct().get()
         except User.DoesNotExist:
-            return Response({'detail': 'Mahasiswa tidak terdaftar pada mata kuliah ini.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'Mahasiswa belum mengumpulkan paket ini.'}, status=status.HTTP_404_NOT_FOUND)
 
         questions = list(Question.objects.filter(question_set=q_set).order_by('order_index'))
         question_ids = [question.id for question in questions]
@@ -1568,11 +1663,11 @@ class QuestionPublishView(APIView):
 # SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
 # ============================================================================
 
-def is_student_for_subject(user, subject_id):
+def is_active_student(user):
     if user.is_superuser:
         return True
-    return UserSubjectRole.objects.filter(
-        user=user, subject_id=subject_id, role=UserSubjectRole.Role.STUDENT
+    return user.is_active and UserRole.objects.filter(
+        user=user, role=UserRole.Role.STUDENT,
     ).exists()
 
 
@@ -1600,9 +1695,9 @@ class StudentSetLookupView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not is_student_for_subject(request.user, q_set.subject_id):
+        if not is_active_student(request.user):
             return Response(
-                {'detail': 'Anda tidak terdaftar pada mata kuliah ini.'},
+                {'detail': 'Akun mahasiswa aktif diperlukan.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -1676,9 +1771,9 @@ class StudentSubmissionCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not is_student_for_subject(request.user, q_set.subject_id):
+        if not is_active_student(request.user):
             return Response(
-                {'detail': 'Anda tidak terdaftar pada mata kuliah ini.'},
+                {'detail': 'Akun mahasiswa aktif diperlukan.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -1750,9 +1845,9 @@ class StudentPackageSubmissionCreateView(APIView):
                         status=status.HTTP_404_NOT_FOUND,
                     )
 
-                if not is_student_for_subject(request.user, q_set.subject_id):
+                if not is_active_student(request.user):
                     return Response(
-                        {'detail': 'Anda tidak terdaftar pada mata kuliah ini.'},
+                        {'detail': 'Akun mahasiswa aktif diperlukan.'},
                         status=status.HTTP_403_FORBIDDEN,
                     )
 

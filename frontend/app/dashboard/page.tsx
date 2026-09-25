@@ -23,6 +23,7 @@ import { useAuth } from "../components/AuthProvider";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
+import AdminDashboard from "../components/AdminDashboard";
 
 type Role = { role: string; subject_slug: string; subject_name: string };
 type SubjectSummary = { slug: string; name: string };
@@ -30,7 +31,7 @@ type Summary = Record<string, string | number | null | SubjectSummary[]>;
 type DashboardData = { roles: Role[]; is_superuser: boolean; summary: Summary };
 
 const ROLE_META: Record<string, { label: string; icon: typeof ShieldCheck; desc: string }> = {
-  ADMIN: { label: "Administrator", icon: ShieldCheck, desc: "Ikhtisar seluruh sistem." },
+  ADMIN: { label: "Dashboard", icon: ShieldCheck, desc: "" },
   LECTURER: { label: "Dosen", icon: BookOpen, desc: "Kelola soal dan validasi jawaban mahasiswa." },
   STUDENT: { label: "Mahasiswa", icon: GraduationCap, desc: "Lembar evaluasi dan pemantauan penguasaan." },
   GENERAL: { label: "Akun Umum", icon: LayoutDashboard, desc: "Ringkasan umum akun Anda." },
@@ -114,6 +115,7 @@ export default function DashboardPage() {
   const primaryRole = selectedRole ?? fallbackRole;
   const meta = ROLE_META[primaryRole] ?? ROLE_META.GENERAL;
   const summary = data?.summary ?? {};
+  const adminDashboard = summary.admin_dashboard as unknown as React.ComponentProps<typeof AdminDashboard>["dashboard"] | undefined;
   const mySubjects = (summary.my_subjects as SubjectSummary[]) ?? [];
 
   const cards: Card[] = (() => {
@@ -190,7 +192,7 @@ export default function DashboardPage() {
         <p style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>Memproses...</p>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+          {primaryRole === "ADMIN" && adminDashboard ? <AdminDashboard dashboard={adminDashboard} /> : <><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
             {cards.map((card) => (
               <StatCard
                 key={card.label}
@@ -273,7 +275,7 @@ export default function DashboardPage() {
                 </p>
               )}
             </section>
-          </div>
+          </div></>}
         </>
       )}
     </PageContainer>

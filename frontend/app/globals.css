@@ -214,6 +214,11 @@ select option {
   background: var(--bg-card-hover);
 }
 
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
 /* Fixed-size table controls need to override .btn-secondary padding. */
 .table-action-button {
   width: 40px;
@@ -258,11 +263,30 @@ select option {
   background: var(--bg-sidebar);
 }
 
+@media (max-width: 640px) {
+  .list-toolbar { align-items: stretch; flex-direction: column; }
+  .list-toolbar > div { width: 100%; justify-content: space-between; }
+  .list-toolbar-search { flex: 1; }
+}
+
 .list-toolbar-add { padding: 0.65rem 1rem; white-space: nowrap; }
 .list-toolbar-search { display: flex; flex: 1; min-width: 220px; align-items: center; gap: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); padding: 0 12px; color: var(--text-dim); }
 .list-toolbar-search input { width: 100%; min-height: 42px; border: 0; outline: 0; background: transparent; color: var(--text-main); font-size: .875rem; }
 .list-toolbar-icon { display: inline-flex; height: 42px; min-width: 42px; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--text-muted); cursor: pointer; }
 .list-toolbar-icon:hover { border-color: var(--primary); color: var(--primary); }
+.list-toolbar .absolute > div:first-child > button {
+  border-radius: 6px;
+  background: #dc2626 !important;
+  padding: 5px 9px;
+  color: #ffffff !important;
+  cursor: pointer;
+}
+.list-toolbar .absolute > div:first-child > button:not(:disabled):hover {
+  background: #b91c1c !important;
+}
+.list-toolbar .absolute > div:first-child > button:disabled { opacity: .55; }
+
+
 @media (max-width: 640px) { .list-toolbar { align-items: stretch; flex-direction: column; } .list-toolbar > div:last-child { justify-content: flex-end; } .list-toolbar-search { min-width: 0; } }
 
 .btn-danger {

@@ -66,6 +66,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentSearch, setCurrentSearch] = useState("");
   const [selectedRole, setSelectedRole] = useState<AppRole | null>(null);
+  const isPublic = pathname === "/" || pathname === "/login" || pathname === "/select-role";
 
   useEffect(() => {
     const timer = setTimeout(() => setMounted(true), 0);
@@ -73,16 +74,14 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   }, []);
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [user, loading, router]);
+    if (!isPublic && !loading && !user) router.replace("/login");
+  }, [isPublic, user, loading, router]);
 
   useEffect(() => {
     setCurrentSearch(window.location.search);
     const storedRole = window.localStorage.getItem("selected_role");
     if (storedRole) setSelectedRole(toAppRole(storedRole));
   }, [pathname]);
-
-  const isPublic = pathname === "/" || pathname === "/login" || pathname === "/select-role";
 
   if (isPublic) {
     return <>{children}</>;

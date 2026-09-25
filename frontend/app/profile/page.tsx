@@ -151,7 +151,7 @@ export default function ProfilePage() {
               >
                 <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-main)" }}>
                   <KeyRound size={14} color="var(--primary)" style={{ marginRight: "8px" }} />
-                  {r.subject_name}
+                  {r.subject_name ?? "Peran global"}
                 </span>
                 <span className="badge badge-role">{r.role}</span>
               </li>

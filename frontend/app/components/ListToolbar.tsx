@@ -6,7 +6,6 @@ import {
   ArrowUpNarrowWide,
   Check,
   ChevronDown,
-  Grid2X2,
   ListFilter,
   Plus,
   Search,
@@ -17,6 +16,8 @@ export type SortMenuOption = {
   label: string;
   direction?: "desc" | "asc";
 };
+
+type ListViewMode = "table" | "cards";
 
 type Props = {
   addLabel?: string;
@@ -32,8 +33,8 @@ type Props = {
   // Legacy fallback toggle
   onSort?: () => void;
   sortTitle?: string;
-  onView?: () => void;
-  viewTitle?: string;
+  viewMode?: ListViewMode;
+  onViewModeChange?: (mode: ListViewMode) => void;
 };
 
 export default function ListToolbar({
@@ -48,8 +49,6 @@ export default function ListToolbar({
   onSortChange,
   onSort,
   sortTitle = "Urutkan data",
-  onView,
-  viewTitle = "Ubah tampilan",
 }: Props) {
   const [sortOpen, setSortOpen] = useState(false);
   const sortContainerRef = useRef<HTMLDivElement>(null);
@@ -177,17 +176,6 @@ export default function ListToolbar({
           </button>
         ) : null}
 
-        {onView && (
-          <button
-            type="button"
-            onClick={onView}
-            className="list-toolbar-icon"
-            aria-label={viewTitle}
-            title={viewTitle}
-          >
-            <Grid2X2 size={17} />
-          </button>
-        )}
       </div>
     </div>
   );

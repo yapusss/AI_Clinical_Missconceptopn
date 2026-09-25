@@ -79,6 +79,23 @@ class UserSubjectRole(models.Model):
         return f'{self.user.email}:{self.role}@{self.subject.slug}'
 
 
+class UserRole(models.Model):
+    class Role(models.TextChoices):
+        ADMIN = 'ADMIN'
+        LECTURER = 'LECTURER'
+        STUDENT = 'STUDENT'
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, db_column='user_id')
+    role = models.CharField(max_length=20, choices=Role.choices)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'user_roles'
+        managed = False
+        unique_together = (('user', 'role'),)
+
+
 class Topic(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')

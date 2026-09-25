@@ -29,7 +29,7 @@ export default function SelectRolePage() {
     if (user.is_superuser) seen.set("ADMIN", []);
     (user.roles ?? []).forEach((r) => {
       const list = seen.get(r.role) ?? [];
-      seen.set(r.role, [...list, r.subject_name]);
+      seen.set(r.role, r.subject_name ? [...list, r.subject_name] : list);
     });
     if (seen.size === 0) seen.set("GENERAL", []);
     return [...seen.entries()].map(([key, subjects]) => ({ key, subjects }));
