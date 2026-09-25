@@ -57,11 +57,6 @@ type QuestionSet = {
   latest_versions: { is_published: boolean }[];
 };
 
-type Subject = {
-  id: string;
-  name: string;
-};
-
 type QuestionSetDetail = QuestionSet & {
   description?: string;
   questions?: QuestionItem[];
@@ -72,7 +67,6 @@ export default function QuestionsPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
 
-  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [sets, setSets] = useState<QuestionSet[]>([]);
   const [viewingSet, setViewingSet] = useState<QuestionSetDetail | null>(null);
   const [viewModalMode, setViewModalMode] = useState<"per_question" | "all_questions">("per_question");
@@ -101,14 +95,8 @@ export default function QuestionsPage() {
 
   const load = useCallback(async () => {
     if (!token) return;
-    const [summaryRes, setsRes] = await Promise.all([
-      fetch("/api/dashboard/summary", { headers: { Authorization: `Bearer ${token}` } }),
-      fetch("/api/questions", { headers: { Authorization: `Bearer ${token}` } }),
-    ]);
-
-    const summary = await summaryRes.json();
-    setSubjects(summary?.summary?.my_subjects ?? []);
-    setSets(await setsRes.json());
+    const response = await fetch("/api/questions", { headers: { Authorization: `Bearer ${token}` } });
+    setSets(await response.json());
   }, [token]);
 
   useEffect(() => {
