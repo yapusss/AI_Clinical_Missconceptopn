@@ -10,7 +10,7 @@ import PageHeader from "../../components/PageHeader";
 import PageContainer from "../../components/PageContainer";
 import { apiFetch } from "../../lib/api";
 
-type LatestSubmission = {
+type StudentSubmissionItem = {
   question_id: string;
   order_index: number;
   question_prompt_preview: string;
@@ -28,7 +28,8 @@ type StudentProgress = {
   student_email: string;
   answered_count: number;
   published_question_count: number;
-  latest_submissions: LatestSubmission[];
+  total_attempts_count: number;
+  all_submissions: StudentSubmissionItem[];
 };
 
 type QuestionSetReview = {
@@ -105,19 +106,49 @@ export default function QuestionSetReviewPage() {
       {fetching ? <p className="mt-8 text-sm text-on-surface-variant">Memuat progres mahasiswa...</p> : data && (
         <div className="mt-8 space-y-4">
           {data.students.length === 0 ? (
-            <div className="glass-panel rounded-xl border border-outline-variant/40 p-8 text-center text-sm text-on-surface-variant">Belum ada mahasiswa yang terdaftar pada mata kuliah ini.</div>
-          ) : data.students.map((student) => (
-            <article key={student.student_id} className="glass-card rounded-xl p-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div><h2 className="font-display text-lg font-bold text-on-surface">{student.student_name}</h2><p className="mt-1 text-sm text-on-surface-variant">{student.student_email}</p></div>
-                <span className={`badge ${student.answered_count === student.published_question_count && student.published_question_count > 0 ? "badge-active" : "badge-draft"}`}>Terjawab {student.answered_count} / {student.published_question_count}</span>
-              </div>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                {student.latest_submissions.length === 0 ? <p className="text-sm text-on-surface-variant">Belum ada jawaban dikumpulkan.</p> : <div className="flex flex-wrap gap-2">{Object.entries(student.latest_submissions.reduce<Record<string, number>>((counts, submission) => ({ ...counts, [submission.status]: (counts[submission.status] ?? 0) + 1 }), {})).map(([status, count]) => { const meta = STATUS_META[status] ?? { label: status, badge: "badge-role" }; return <span key={status} className={`badge ${meta.badge}`}>{count} {meta.label}</span>; })}</div>}
-                {student.answered_count > 0 && <Link href={`/questions/${setId}/students/${student.student_id}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white no-underline">Review paket <ArrowRight size={15} /></Link>}
-              </div>
-            </article>
-          ))}
+            <div className="glass-panel rounded-xl border border-outline-variant/40 p-8 text-center text-sm text-on-surface-variant">Belum ada mahasiswa yang mengumpulkan respons untuk paket ujian ini.</div>
+          ) : data.students.map((student) => {
+            const counts = student.all_submissions.reduce<Record<string, number>>((acc, sub) => {
+              acc[sub.status] = (acc[sub.status] ?? 0) + 1;
+              return acc;
+            }, {});
+
+            return (
+              <article key={student.student_id} className="glass-card rounded-xl p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="font-display text-lg font-bold text-on-surface">{student.student_name}</h2>
+                    <p className="mt-1 text-sm text-on-surface-variant">{student.student_email}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="badge badge-active">
+                      Terjawab {student.answered_count} / {student.published_question_count} Soal
+                    </span>
+                    <span className="badge badge-role font-mono-ui">
+                      {student.total_attempts_count} Percobaan Total
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-outline-variant/20 pt-4">
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(counts).map(([status, count]) => {
+                      const meta = STATUS_META[status] ?? { label: status, badge: "badge-role" };
+                      return (
+                        <span key={status} className={`badge ${meta.badge}`}>
+                          {count} {meta.label}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  <Link href={`/questions/${setId}/students/${student.student_id}`} className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm">
+                    Tinjau &amp; Validasi Jawaban <ArrowRight size={15} />
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </PageContainer>
