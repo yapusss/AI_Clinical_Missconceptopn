@@ -96,7 +96,7 @@ class QuestionItemCreateSerializer(serializers.Serializer):
 
 class QuestionSetCreateSerializer(serializers.Serializer):
     subject_id = serializers.UUIDField()
-    topic_id = serializers.UUIDField(required=False, allow_null=True)
+    topic_id = serializers.UUIDField(required=True, allow_null=False)
     code = serializers.CharField(max_length=64)
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, default="")
@@ -146,6 +146,7 @@ class QuestionSetCreateSerializer(serializers.Serializer):
 
 
 class QuestionSetUpdateSerializer(serializers.Serializer):
+    topic_id = serializers.UUIDField(required=False, allow_null=False)
     title = serializers.CharField(max_length=255, required=False)
     description = serializers.CharField(required=False, allow_blank=True)
     prompt = serializers.CharField(required=False)

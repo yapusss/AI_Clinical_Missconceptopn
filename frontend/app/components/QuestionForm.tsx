@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -16,7 +15,6 @@ import {
 import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
 import PageContainer from "./PageContainer";
-import PageHeader from "./PageHeader";
 import indicatorPresets from "../lib/indicatorPresets.json";
 
 export type Indicator = {
@@ -37,6 +35,11 @@ export type Subject = {
   name: string;
 };
 
+export type Topic = {
+  id: string;
+  name: string;
+};
+
 type Props = {
   isEditing?: boolean;
   isReadOnly?: boolean;
@@ -46,6 +49,8 @@ type Props = {
     title: string;
     description: string;
     subject_id: string;
+    topic_id?: string;
+    topic_name?: string;
     questions: ExamQuestion[];
     is_published?: boolean;
   };
@@ -68,6 +73,8 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [subjectId, setSubjectId] = useState(initialData?.subject_id ?? "");
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [topicId, setTopicId] = useState(initialData?.topic_id ?? "");
   const [code, setCode] = useState(initialData?.code ?? "");
   const [title, setTitle] = useState(initialData?.title ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
@@ -85,6 +92,10 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [pendingQuestionRemoval, setPendingQuestionRemoval] = useState<number | null>(null);
   const [validationModalError, setValidationModalError] = useState<string | null>(null);
+
+  const [showNewTopicModal, setShowNewTopicModal] = useState(false);
+  const [newTopicName, setNewTopicName] = useState("");
+  const [savingTopic, setSavingTopic] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -120,8 +131,41 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   }, [initialData, isEditing]);
 
   useEffect(() => {
+    if (!subjectId) {
+      setTopics([]);
+      setTopicId("");
+      return;
+    }
+    const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
+    if (!token) return;
+
+    fetch(`/api/admin/subjects/${subjectId}/topics`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: Topic[]) => {
+        setTopics(data);
+        if (initialData?.topic_id && data.some((t) => t.id === initialData.topic_id)) {
+          setTopicId(initialData.topic_id);
+        } else if (!topicId && data.length > 0) {
+          const stored = !isEditing ? sessionStorage.getItem("imported_package") : null;
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (parsed.topic_id && data.some((t) => t.id === parsed.topic_id)) {
+                setTopicId(parsed.topic_id);
+              }
+            } catch {}
+          }
+        }
+      })
+      .catch(() => setTopics([]));
+  }, [subjectId, initialData?.topic_id, isEditing]);
+
+  useEffect(() => {
     if (initialData) {
       if (initialData.subject_id) setSubjectId(initialData.subject_id);
+      if (initialData.topic_id) setTopicId(initialData.topic_id);
       if (initialData.code) setCode(initialData.code);
       if (initialData.title) setTitle(initialData.title);
       if (initialData.description) setDescription(initialData.description);
@@ -135,6 +179,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         try {
           const parsed = JSON.parse(stored);
           if (parsed.subject_id) setSubjectId(parsed.subject_id);
+          if (parsed.topic_id) setTopicId(parsed.topic_id);
           if (parsed.code) setCode(parsed.code);
           if (parsed.title) setTitle(parsed.title);
           if (parsed.description) setDescription(parsed.description);
@@ -326,9 +371,44 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     );
   };
 
+  const handleCreateTopic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTopicName.trim() || !subjectId) return;
+    const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
+    if (!token) return;
+
+    setSavingTopic(true);
+    try {
+      const res = await fetch(`/api/admin/subjects/${subjectId}/topics`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: newTopicName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.name?.[0] || data.detail || "Gagal membuat topik.");
+
+      const created: Topic = { id: data.id, name: data.name };
+      setTopics((prev) => [...prev, created]);
+      setTopicId(created.id);
+      setIsDirty(true);
+      setShowNewTopicModal(false);
+      setNewTopicName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal membuat topik.");
+    } finally {
+      setSavingTopic(false);
+    }
+  };
+
   const validateForm = (): string | null => {
     if (!subjectId || subjectId.trim() === "") {
       return "Mata kuliah belum dipilih";
+    }
+    if (!topicId || topicId.trim() === "") {
+      return "Topik belum dipilih";
     }
     if (!code || code.trim() === "") {
       return "Kode paket belum diisi";
@@ -410,6 +490,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     try {
       if (isEditing && setId) {
         const payload = {
+          topic_id: topicId,
           title,
           description,
           prompt: payloadQuestions[0]?.prompt ?? "",
@@ -439,6 +520,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       } else {
         const payload = {
           subject_id: subjectId,
+          topic_id: topicId,
           code,
           title,
           description,
@@ -459,6 +541,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         if (!res.ok) {
           const errMsgFromBackend =
             data.subject_id?.[0] ||
+            data.topic_id?.[0] ||
             data.code?.[0] ||
             data.indicators ||
             data.detail ||
@@ -754,6 +837,42 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                 </div>
 
                 <div>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold uppercase text-on-surface-variant">
+                      Topik (Sub-Bab)
+                    </label>
+                    {!isReadOnly && subjectId && (
+                      <button
+                        type="button"
+                        onClick={() => setShowNewTopicModal(true)}
+                        className="text-xs text-primary font-semibold hover:underline"
+                      >
+                        + Buat Topik Baru
+                      </button>
+                    )}
+                  </div>
+                  <AppSelect
+                    value={topicId}
+                    onValueChange={(val) => {
+                      if (isReadOnly) return;
+                      setIsDirty(true);
+                      setTopicId(val);
+                    }}
+                    disabled={!subjectId || isReadOnly}
+                    className="mt-1 w-full"
+                    ariaLabel="Topik"
+                    placeholder={
+                      subjectId
+                        ? topics.length
+                          ? "Pilih topik"
+                          : "Belum ada topik (klik buat topik)"
+                        : "Pilih mata kuliah terlebih dahulu"
+                    }
+                    options={topics.map((t) => ({ value: t.id, label: t.name }))}
+                  />
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                     Kode Paket
                   </label>
@@ -770,7 +889,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                   />
                 </div>
 
-                <div className="sm:col-span-2">
+                <div>
                   <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                     Judul Ujian
                   </label>
@@ -1016,6 +1135,41 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {showNewTopicModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog">
+          <form onSubmit={handleCreateTopic} className="w-full max-w-md rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-base font-bold text-on-surface">Buat Topik Baru</h3>
+              <button type="button" onClick={() => setShowNewTopicModal(false)} className="text-on-surface-variant hover:text-on-surface">
+                <X size={18} />
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase text-on-surface-variant mb-1">
+                Nama Topik
+              </label>
+              <input
+                type="text"
+                required
+                autoFocus
+                value={newTopicName}
+                onChange={(e) => setNewTopicName(e.target.value)}
+                placeholder="Contoh: Hukum Newton, Kinematika, dsb."
+                className="form-input w-full text-xs"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setShowNewTopicModal(false)} className="btn-secondary text-xs">
+                Batal
+              </button>
+              <button type="submit" disabled={savingTopic || !newTopicName.trim()} className="btn-primary text-xs">
+                {savingTopic ? "Menyimpan..." : "Simpan Topik"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

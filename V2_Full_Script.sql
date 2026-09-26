@@ -148,7 +148,6 @@ CREATE TABLE questions (
     external_key VARCHAR(100),   
     order_index INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    external_key VARCHAR(100),
     CONSTRAINT uq_set_question_order UNIQUE (question_set_id, order_index)
 
 );

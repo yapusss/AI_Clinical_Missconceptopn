@@ -709,7 +709,7 @@ def _read_xlsx_rows(upload, subject_name=None):
             ws = workbook[sname]
             for row in ws.iter_rows(values_only=True):
                 row_str = [str(c).strip().upper() if c is not None else '' for c in row]
-                if any('PERTANYAAN' in c or 'PROMPT' in c for c in row_str):
+                if any(c in ('NOMOR_SOAL', 'ORDER_INDEX', 'NO_SOAL', 'PERTANYAAN_KONSEPTUAL', 'PROMPT') for c in row_str):
                     target_sheet = ws
                     break
             if target_sheet:
@@ -722,7 +722,7 @@ def _read_xlsx_rows(upload, subject_name=None):
     headers = []
     for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
         row_str = [str(c).strip().upper() if c is not None else '' for c in row]
-        if any('PROMPT' in c or 'PERTANYAAN' in c for c in row_str):
+        if any(c in ('NOMOR_SOAL', 'ORDER_INDEX', 'NO_SOAL', 'PERTANYAAN_KONSEPTUAL', 'PROMPT') for c in row_str):
             header_row_idx = r_idx
             headers = [str(c).strip() if c is not None else '' for c in row]
             break
@@ -741,6 +741,9 @@ def _read_xlsx_rows(upload, subject_name=None):
         'JUDUL_UJIAN': 'title',
         'JUDUL': 'title',
         'TITLE': 'title',
+        'TOPIK': 'topic',
+        'NAMA_TOPIK': 'topic',
+        'TOPIC': 'topic',
         'DESKRIPSI_INSTRUKSI': 'description',
         'DESKRIPSI': 'description',
         'DESCRIPTION': 'description',
@@ -772,14 +775,14 @@ def _read_xlsx_rows(upload, subject_name=None):
             'answer_key': raw_dict.get('answer_key', f"Q-{len(rows)+1}"),
             'code': raw_dict.get('code', ''),
             'title': raw_dict.get('title', ''),
+            'topic': raw_dict.get('topic', ''),
             'description': raw_dict.get('description', ''),
         }))
 
     if not rows:
         raise ValueError(f'Sheet "{target_sheet.title}" tidak memiliki baris data soal.')
     return rows, target_sheet.title
-
-
+    
 def _read_question_import(upload, subject_name=None):
     if not upload:
         raise ValueError('File CSV atau Excel wajib diunggah.')
@@ -876,6 +879,36 @@ class QuestionImportCreateView(APIView):
         if not subject:
             return Response({'detail': 'Mata kuliah tidak ditemukan atau Anda belum memiliki akses ke mata kuliah terkait.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Validasi Topik dari Sheet
+        distinct_topics = {
+            r['raw_data'].get('topic', '').strip()
+            for r in parsed_rows
+            if r['raw_data'].get('topic', '').strip()
+        }
+
+        if len(distinct_topics) > 1:
+            return Response({
+                'detail': f"File impor hanya boleh berisi satu topik per paket ujian. Ditemukan beberapa topik: {', '.join(sorted(distinct_topics))}."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        detected_topic_name = next(iter(distinct_topics)) if distinct_topics else ""
+        if not detected_topic_name:
+            return Response({
+                'detail': "Kolom TOPIK wajib diisi untuk semua baris soal di dalam file Excel."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        matched_topic = Topic.objects.filter(subject=subject, name__iexact=detected_topic_name).first()
+        new_topic_detected = matched_topic is None
+
+        if new_topic_detected and request.data.get('create_topic') in [True, 'true', '1']:
+            matched_topic = Topic.objects.create(
+                id=uuid.uuid4(),
+                subject=subject,
+                name=detected_topic_name,
+                description=f"Dibuat otomatis dari impor bank soal.",
+            )
+            new_topic_detected = False
+
         first_data = parsed_rows[0]['raw_data'] if parsed_rows else {}
         code = (request.data.get('code') or first_data.get('code') or f"IMP-{uuid.uuid4().hex[:6].upper()}").strip().upper()
         title = (request.data.get('title') or first_data.get('title') or f"Paket Impor {subject.name}").strip()
@@ -899,8 +932,12 @@ class QuestionImportCreateView(APIView):
             return Response({'detail': 'Tidak ada butir soal yang valid di dalam file.'}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
+            'new_topic_detected': new_topic_detected,
+            'detected_topic_name': detected_topic_name,
             'package': {
                 'subject_id': str(subject.id),
+                'topic_id': str(matched_topic.id) if matched_topic else None,
+                'topic_name': matched_topic.name if matched_topic else detected_topic_name,
                 'code': code,
                 'title': title,
                 'description': description,
@@ -953,12 +990,13 @@ class QuestionImportTemplateView(APIView):
             "NOMOR_SOAL",
             "KODE_PAKET_UNIK",
             "JUDUL_UJIAN",
+            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
             "PERTANYAAN_KONSEPTUAL",
             "JAWABAN_REFERENSI",
         ]
 
-        ws.merge_cells("A1:F4")
+        ws.merge_cells("A1:G4")
         banner_cell = ws["A1"]
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
@@ -970,7 +1008,7 @@ class QuestionImportTemplateView(APIView):
         banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for r in range(1, 5):
-            for c in range(1, 7):
+            for c in range(1, 8):
                 ws.cell(row=r, column=c).border = banner_border
             ws.row_dimensions[r].height = 18
 
@@ -987,6 +1025,7 @@ class QuestionImportTemplateView(APIView):
                 1,
                 f"{sample_prefix}-NEWT-01",
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
+                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
                 "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
@@ -995,6 +1034,7 @@ class QuestionImportTemplateView(APIView):
                 2,
                 f"{sample_prefix}-NEWT-01",
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
+                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
                 "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
@@ -1034,7 +1074,6 @@ class QuestionImportTemplateView(APIView):
         )
         response["Content-Disposition"] = f'attachment; filename="template-{target_subject.slug}.xlsx"'
         return response
-
 class QuestionExportView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1169,6 +1208,7 @@ class QuestionListCreateView(APIView):
     def get(self, request):
         user = request.user
         subject_id = request.query_params.get('subject_id')
+        topic_id = request.query_params.get('topic_id')
 
         if user.is_superuser:
             qs = QuestionSet.objects.all()
@@ -1180,8 +1220,36 @@ class QuestionListCreateView(APIView):
 
         if subject_id:
             qs = qs.filter(subject_id=subject_id)
+        if topic_id:
+            qs = qs.filter(topic_id=topic_id)
 
-        qs = qs.select_related('subject', 'created_by').order_by('-created_at')
+        qs = qs.select_related('subject', 'topic', 'created_by').order_by('-created_at')
+        set_ids = [item.id for item in qs]
+
+        submission_stats = {}
+        if set_ids:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 
+                        q.question_set_id,
+                        COUNT(s.id) AS total_submissions,
+                        COUNT(DISTINCT s.student_id) AS distinct_students,
+                        COUNT(s.id) FILTER (WHERE s.status = 'PENDING_VALIDATION') AS pending_validations
+                    FROM questions q
+                    JOIN question_versions qv ON qv.question_id = q.id
+                    JOIN submissions s ON s.question_version_id = qv.id
+                    WHERE q.question_set_id = ANY(%s)
+                    GROUP BY q.question_set_id
+                    """,
+                    [set_ids],
+                )
+                for row in cursor.fetchall():
+                    submission_stats[row[0]] = {
+                        'total_submissions': row[1],
+                        'distinct_students': row[2],
+                        'pending_validations': row[3],
+                    }
 
         results = []
         for item in qs:
@@ -1199,6 +1267,12 @@ class QuestionListCreateView(APIView):
                         'is_published': v.is_published,
                     })
 
+            stats = submission_stats.get(item.id, {
+                'total_submissions': 0,
+                'distinct_students': 0,
+                'pending_validations': 0,
+            })
+
             results.append({
                 'id': str(item.id),
                 'code': item.code,
@@ -1206,10 +1280,15 @@ class QuestionListCreateView(APIView):
                 'description': item.description or '',
                 'subject_id': str(item.subject_id),
                 'subject_name': item.subject.name,
+                'topic_id': str(item.topic_id) if item.topic_id else None,
+                'topic_name': item.topic.name if item.topic else None,
                 'is_active': item.is_active,
                 'created_by_name': item.created_by.full_name,
                 'created_at': item.created_at,
                 'question_count': len(set_questions),
+                'total_submissions_count': stats['total_submissions'],
+                'distinct_students_count': stats['distinct_students'],
+                'pending_validations_count': stats['pending_validations'],
                 'latest_versions': version_data,
                 'latest_version': version_data[0] if version_data else None,
             })
@@ -1314,7 +1393,7 @@ class QuestionDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            q_set = QuestionSet.objects.select_related('subject', 'created_by').get(pk=pk)
+            q_set = QuestionSet.objects.select_related('subject', 'topic', 'created_by').get(pk=pk)
         except QuestionSet.DoesNotExist:
             return Response({'detail': 'Soal tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1386,6 +1465,8 @@ class QuestionDetailView(APIView):
             'description': q_set.description or '',
             'subject_id': str(q_set.subject_id),
             'subject_name': q_set.subject.name,
+            'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
+            'topic_name': q_set.topic.name if q_set.topic else None,
             'is_active': q_set.is_active,
             'created_at': q_set.created_at,
             'questions': questions,
@@ -1409,6 +1490,8 @@ class QuestionDetailView(APIView):
                 q_set.title = data['title']
             if 'description' in data:
                 q_set.description = data['description']
+            if 'topic_id' in data:
+                q_set.topic_id = data['topic_id']
             q_set.save()
 
             q = Question.objects.filter(question_set=q_set).order_by('order_index').first()
@@ -1499,13 +1582,8 @@ class QuestionDetailView(APIView):
 
 
 
-
 class QuestionSetReviewView(APIView):
-    """Lecturer progress for students who submitted this package.
-
-    Without student enrollment assignments, a roster of students who have not
-    submitted cannot be derived.
-    """
+    """Lecturer progress for students who submitted this package."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1540,21 +1618,10 @@ class QuestionSetReviewView(APIView):
         student_ids = {student.id for student in students}
         submissions = [submission for submission in submissions if submission.student_id in student_ids]
 
-        # Keep the newest attempt for each student/question, including attempts
-        # made against an earlier published version of that package question.
-        latest_by_student_question = {}
-        for submission in submissions:
-            version = versions_by_id.get(submission.question_version_id)
-            if version:
-                latest_by_student_question.setdefault(
-                    (submission.student_id, version.question_id), submission
-                )
-
-        latest_submissions = list(latest_by_student_question.values())
         analyses = {
             analysis.submission_id: analysis
             for analysis in LlmAnalysis.objects.filter(
-                submission_id__in=[submission.id for submission in latest_submissions],
+                submission_id__in=[submission.id for submission in submissions],
                 is_current=True,
             )
         }
@@ -1567,32 +1634,41 @@ class QuestionSetReviewView(APIView):
 
         student_rows = []
         for student in students:
-            student_submissions = []
-            for question in questions:
-                submission = latest_by_student_question.get((student.id, question.id))
-                if not submission:
+            student_subs = [s for s in submissions if s.student_id == student.id]
+            answered_questions = {
+                versions_by_id[s.question_version_id].question_id
+                for s in student_subs if s.question_version_id in versions_by_id
+            }
+
+            all_submissions_payload = []
+            for s in student_subs:
+                version = versions_by_id.get(s.question_version_id)
+                if not version:
                     continue
-                version = versions_by_id[submission.question_version_id]
-                analysis = analyses.get(submission.id)
+                q = next((item for item in questions if item.id == version.question_id), None)
+                analysis = analyses.get(s.id)
                 validation = validations.get(analysis.id) if analysis else None
-                student_submissions.append({
-                    'question_id': str(question.id),
-                    'order_index': question.order_index,
-                    'question_prompt_preview': version.prompt[:160] + ('...' if len(version.prompt) > 160 else ''),
-                    'submission_id': str(submission.id),
-                    'attempt_no': submission.attempt_no,
-                    'status': submission.status,
-                    'submitted_at': submission.submitted_at,
+
+                all_submissions_payload.append({
+                    'question_id': str(version.question_id),
+                    'order_index': q.order_index if q else 1,
+                    'question_prompt_preview': (version.prompt[:160] + ('...' if len(version.prompt) > 160 else '')),
+                    'submission_id': str(s.id),
+                    'attempt_no': s.attempt_no,
+                    'status': s.status,
+                    'submitted_at': s.submitted_at,
                     'analysis_id': str(analysis.id) if analysis else None,
                     'validation_status': validation.status if validation else None,
                 })
+
             student_rows.append({
                 'student_id': str(student.id),
                 'student_name': student.full_name,
                 'student_email': student.email,
-                'answered_count': len(student_submissions),
+                'answered_count': len(answered_questions),
                 'published_question_count': len(published_question_ids),
-                'latest_submissions': student_submissions,
+                'total_attempts_count': len(student_subs),
+                'all_submissions': all_submissions_payload,
             })
 
         return Response({
@@ -1611,7 +1687,7 @@ class QuestionSetReviewView(APIView):
 
 
 class QuestionSetStudentReviewView(APIView):
-    """Full package review for one student; AI results never gate access."""
+    """Full package review for one student, supporting all submission attempts."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1641,13 +1717,14 @@ class QuestionSetStudentReviewView(APIView):
             QuestionVersion.objects.filter(question_id__in=question_ids, is_published=True)
             .order_by('question_id', '-version_number')
         )
-        # A question can retain older published versions; review its current one.
         version_by_question = {}
         for version in published_versions:
             version_by_question.setdefault(version.question_id, version)
 
         package_versions = list(QuestionVersion.objects.filter(question_id__in=question_ids))
         package_version_ids = [version.id for version in package_versions]
+        
+        # Fetch ALL submissions from this student for this package
         submissions = list(
             Submission.objects.filter(
                 student=student,
@@ -1655,36 +1732,29 @@ class QuestionSetStudentReviewView(APIView):
             ).order_by('-submitted_at', '-attempt_no')
         )
         version_question_ids = {version.id: version.question_id for version in package_versions}
-        latest_submissions = {}
-        for submission in submissions:
-            question_id = version_question_ids.get(submission.question_version_id)
-            if question_id:
-                latest_submissions.setdefault(question_id, submission)
 
         analyses = {
             analysis.submission_id: analysis
             for analysis in LlmAnalysis.objects.filter(
-                submission_id__in=[submission.id for submission in latest_submissions.values()],
+                submission_id__in=[submission.id for submission in submissions],
                 is_current=True,
             )
         }
         validations = {
             validation.analysis_id: validation
-            for validation in Validation.objects.filter(analysis_id__in=[analysis.id for analysis in analyses.values()])
+            for validation in Validation.objects.filter(
+                analysis_id__in=[analysis.id for analysis in analyses.values()]
+            ).select_related('lecturer')
         }
+
         indicators_by_version = {}
-        for indicator in ConceptIndicator.objects.filter(question_version_id__in=[version.id for version in version_by_question.values()]).order_by('order_index'):
+        for indicator in ConceptIndicator.objects.filter(
+            question_version_id__in=[v.id for v in version_by_question.values()]
+        ).order_by('order_index'):
             indicators_by_version.setdefault(indicator.question_version_id, []).append({
                 'id': str(indicator.id), 'label': indicator.label,
                 'description': indicator.description or '', 'weight': str(indicator.weight),
                 'order_index': indicator.order_index,
-            })
-        references_by_version = {}
-        for reference in ReferenceAnswer.objects.filter(question_version_id__in=[version.id for version in version_by_question.values()]).order_by('-is_primary', 'created_at'):
-            references_by_version.setdefault(reference.question_version_id, []).append({
-                'id': str(reference.id), 'answer_key': reference.answer_key,
-                'answer_text': reference.answer_text, 'answer_type': reference.answer_type,
-                'is_primary': reference.is_primary,
             })
 
         rows = []
@@ -1692,31 +1762,56 @@ class QuestionSetStudentReviewView(APIView):
             version = version_by_question.get(question.id)
             if not version:
                 continue
-            submission = latest_submissions.get(question.id)
-            analysis = analyses.get(submission.id) if submission else None
-            validation = validations.get(analysis.id) if analysis else None
+
+            # Group all attempts for this question
+            question_subs = [
+                s for s in submissions if version_question_ids.get(s.question_version_id) == question.id
+            ]
+
+            attempts_payload = []
+            for s in question_subs:
+                analysis = analyses.get(s.id)
+                validation = validations.get(analysis.id) if analysis else None
+
+                attempts_payload.append({
+                    'submission_id': str(s.id),
+                    'attempt_no': s.attempt_no,
+                    'status': s.status,
+                    'answer_text': s.answer_text,
+                    'submitted_at': s.submitted_at,
+                    'analysis': {
+                        'id': str(analysis.id),
+                        'run_number': analysis.run_number,
+                        'percentage_correct': str(analysis.percentage_correct),
+                        'tier_level': analysis.tier_level_snapshot,
+                        'tier_label': analysis.tier_label_snapshot,
+                        'confidence': str(analysis.confidence),
+                        'explanation': analysis.explanation,
+                        'execution_time_ms': analysis.execution_time_ms,
+                        'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        'validation': {
+                            'status': validation.status,
+                            'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
+                            'final_tier_level': validation.final_tier_level_snapshot,
+                            'final_feedback': validation.final_feedback,
+                            'lecturer_name': validation.lecturer.full_name,
+                            'validated_at': validation.validated_at,
+                        } if validation else None,
+                    } if analysis else None,
+                })
+
+            attempts_payload.sort(key=lambda a: a['attempt_no'], reverse=True)
+
             rows.append({
-                'question_id': str(question.id), 'order_index': question.order_index,
-                'version_id': str(version.id), 'version_number': version.version_number,
-                'prompt': version.prompt, 'model_answer': version.model_answer,
-                'reference_answers': references_by_version.get(version.id, []),
+                'question_id': str(question.id),
+                'order_index': question.order_index,
+                'version_id': str(version.id),
+                'version_number': version.version_number,
+                'prompt': version.prompt,
+                'model_answer': version.model_answer,
                 'indicators': indicators_by_version.get(version.id, []),
-                'status': submission.status if submission else 'UNANSWERED',
-                'submission': {
-                    'id': str(submission.id), 'answer_text': submission.answer_text,
-                    'attempt_no': submission.attempt_no, 'submitted_at': submission.submitted_at,
-                    'status': submission.status,
-                } if submission else None,
-                'analysis': {
-                    'id': str(analysis.id), 'percentage_correct': str(analysis.percentage_correct),
-                    'tier_level': analysis.tier_level_snapshot, 'tier_label': analysis.tier_label_snapshot,
-                    'confidence': str(analysis.confidence), 'explanation': analysis.explanation,
-                    'validation': {
-                        'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
-                        'final_feedback': validation.final_feedback, 'lecturer_name': validation.lecturer.full_name,
-                        'validated_at': validation.validated_at,
-                    } if validation else None,
-                } if analysis else None,
+                'status': attempts_payload[0]['status'] if attempts_payload else 'UNANSWERED',
+                'attempts': attempts_payload,
             })
 
         return Response({
@@ -1727,7 +1822,8 @@ class QuestionSetStudentReviewView(APIView):
             },
             'student': {'id': str(student.id), 'name': student.full_name, 'email': student.email},
             'published_question_count': len(rows),
-            'answered_count': sum(row['submission'] is not None for row in rows),
+            'answered_count': sum(len(row['attempts']) > 0 for row in rows),
+            'total_attempts_count': sum(len(row['attempts']) for row in rows),
             'questions': rows,
         })
 
