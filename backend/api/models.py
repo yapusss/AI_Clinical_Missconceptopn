@@ -132,6 +132,27 @@ class HelpArticle(models.Model):
         ordering = ('order_index', 'title')
 
 
+class WebsiteSection(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.SlugField(max_length=80, unique=True)
+    title = models.CharField(max_length=255)
+    eyebrow = models.CharField(max_length=120, blank=True)
+    body = models.TextField(blank=True)
+    image_url = models.URLField(max_length=1000, blank=True)
+    button_label = models.CharField(max_length=80, blank=True)
+    button_url = models.CharField(max_length=500, blank=True)
+    content_json = models.JSONField(default=list)
+    order_index = models.PositiveIntegerField(default=0)
+    is_visible = models.BooleanField(default=True)
+    is_system = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'website_sections'
+        ordering = ('order_index', 'title')
+
+
 class QuestionSet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')

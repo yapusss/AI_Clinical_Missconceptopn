@@ -12,6 +12,8 @@ from .views import (
     AdminManagedUserDetailView,
     AdminHelpArticleDetailView,
     AdminHelpArticleListView,
+    AdminWebsiteSectionDetailView,
+    AdminWebsiteSectionListView,
     AdminManagedUserListView,
     AdminSubjectDetailView,
     AdminSubjectListView,
@@ -41,6 +43,7 @@ from .views import (
     StudentSubmissionListView,
     StudentSubmissionSetDetailView,
     StudentSubmissionSetListView,
+    WebsiteSectionListView,
 )
 
 urlpatterns = [
@@ -53,7 +56,10 @@ urlpatterns = [
     path('admin/subjects', AdminSubjectListView.as_view(), name='admin-subject-list'),
     path('admin/help/<str:role>', AdminHelpArticleListView.as_view(), name='admin-help-list'),
     path('admin/help/articles/<uuid:pk>', AdminHelpArticleDetailView.as_view(), name='admin-help-detail'),
+    path('admin/website/sections', AdminWebsiteSectionListView.as_view(), name='admin-website-section-list'),
+    path('admin/website/sections/<uuid:pk>', AdminWebsiteSectionDetailView.as_view(), name='admin-website-section-detail'),
     path('help', HelpArticleListView.as_view(), name='help-list'),
+    path('website/sections', WebsiteSectionListView.as_view(), name='website-section-list'),
     path('admin/subjects/<uuid:pk>', AdminSubjectDetailView.as_view(), name='admin-subject-detail'),
     path('admin/subjects/<uuid:subject_id>/topics', AdminTopicListView.as_view(), name='admin-topic-list'),
     path('admin/topics/<uuid:pk>', AdminTopicDetailView.as_view(), name='admin-topic-detail'),

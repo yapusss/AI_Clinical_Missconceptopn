@@ -219,6 +219,16 @@ html { scroll-behavior: smooth; }
   html { scroll-behavior: auto; }
 }
 
+main > header {
+  transition: background-color 220ms ease, border-color 220ms ease, backdrop-filter 220ms ease;
+}
+
+main:not([data-scrolled]) > header {
+  background: transparent !important;
+  border-color: transparent !important;
+  backdrop-filter: none;
+}
+
 /* Fixed-size table controls need to override .btn-secondary padding. */
 .table-action-button {
   width: 40px;

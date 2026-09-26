@@ -37,6 +37,7 @@ from .models import (
     UserRole,
     UserSubjectRole,
     Validation,
+    WebsiteSection,
 )
 from .serializers import (
     AdminManagedUserSerializer,
@@ -310,6 +311,72 @@ class AdminHelpArticleDetailView(APIView):
         if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
         deleted, _ = HelpArticle.objects.filter(pk=pk).delete()
         return Response(status=status.HTTP_204_NO_CONTENT if deleted else status.HTTP_404_NOT_FOUND)
+
+
+def serialize_website_section(section):
+    return {
+        'id': str(section.id), 'key': section.key, 'title': section.title,
+        'eyebrow': section.eyebrow, 'body': section.body, 'image_url': section.image_url,
+        'button_label': section.button_label, 'button_url': section.button_url,
+        'content_json': section.content_json,
+        'order_index': section.order_index, 'is_visible': section.is_visible,
+        'is_system': section.is_system,
+    }
+
+
+class WebsiteSectionListView(APIView):
+    authentication_classes = []
+
+    def get(self, request):
+        return Response([
+            serialize_website_section(section) if section.is_visible else {'key': section.key, 'is_visible': False}
+            for section in WebsiteSection.objects.all()
+        ])
+
+
+class AdminWebsiteSectionListView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        return Response([serialize_website_section(section) for section in WebsiteSection.objects.all()])
+
+    def post(self, request):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        title = str(request.data.get('title', '')).strip()
+        key = slugify(str(request.data.get('key', '')).strip() or title)
+        if not title or not key: return Response({'detail': 'Judul section wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        if WebsiteSection.objects.filter(key=key).exists(): return Response({'detail': 'Kunci section sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
+        section = WebsiteSection.objects.create(
+            key=key, title=title, eyebrow=str(request.data.get('eyebrow', '')).strip(),
+            body=str(request.data.get('body', '')).strip(), image_url=str(request.data.get('image_url', '')).strip(),
+            button_label=str(request.data.get('button_label', '')).strip(), button_url=str(request.data.get('button_url', '')).strip(),
+            content_json=request.data.get('content_json', []),
+            order_index=int(request.data.get('order_index', 0)), is_visible=bool(request.data.get('is_visible', True)),
+        )
+        return Response(serialize_website_section(section), status=status.HTTP_201_CREATED)
+
+
+class AdminWebsiteSectionDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def patch(self, request, pk):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        try: section = WebsiteSection.objects.get(pk=pk)
+        except WebsiteSection.DoesNotExist: return Response({'detail': 'Section tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        for field in ('title', 'eyebrow', 'body', 'image_url', 'button_label', 'button_url', 'content_json', 'order_index', 'is_visible'):
+            if field in request.data: setattr(section, field, request.data[field])
+        if not str(section.title).strip(): return Response({'detail': 'Judul section wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
+        section.save()
+        return Response(serialize_website_section(section))
+
+    def delete(self, request, pk):
+        if not require_admin(request): return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        try: section = WebsiteSection.objects.get(pk=pk)
+        except WebsiteSection.DoesNotExist: return Response(status=status.HTTP_404_NOT_FOUND)
+        if section.is_system: return Response({'detail': 'Section bawaan dapat disembunyikan, tetapi tidak dapat dihapus.'}, status=status.HTTP_400_BAD_REQUEST)
+        section.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def managed_role_from_path(role):
