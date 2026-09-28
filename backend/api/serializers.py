@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth.hashers import check_password, make_password
 from rest_framework import serializers
 
-from .models import User
+from .models import User, UserRole
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -25,11 +25,13 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def create(self, validated_data):
-        return User.objects.create(
+        user = User.objects.create(
             email=validated_data['email'].lower(),
             full_name=validated_data['full_name'],
             password_hash=make_password(validated_data['password']),
         )
+        UserRole.objects.create(user=user, role=UserRole.Role.STUDENT)
+        return user
 
 
 class LoginSerializer(serializers.Serializer):
