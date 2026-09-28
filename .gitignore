@@ -13,3 +13,4 @@ backend/db.sqlite3
 scripts/env_local.sh
 scripts/test_p5_e2e.py
 scripts/*.env
+

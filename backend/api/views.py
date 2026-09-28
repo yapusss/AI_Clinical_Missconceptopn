@@ -2082,34 +2082,22 @@ class StudentSubmissionCreateView(APIView):
 
 
 class StudentPackageSubmissionCreateView(APIView):
-    """Submit every published question in a set as one atomic package."""
+    """Submit every published question in a set as one atomic 4-tier package."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        serializer = PackageSubmissionCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        answers_by_question = {
-            answer['question_id']: answer['answer_text']
-            for answer in serializer.validated_data['answers']
-        }
+        answers_payload = request.data.get('answers', [])
+        if not answers_payload:
+            return Response({'detail': 'Jawaban tidak boleh kosong.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             with transaction.atomic():
-                try:
-                    q_set = QuestionSet.objects.select_for_update().get(pk=pk, is_active=True)
-                except QuestionSet.DoesNotExist:
-                    return Response(
-                        {'detail': 'Soal tidak ditemukan.'},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+                q_set = QuestionSet.objects.select_for_update().get(pk=pk, is_active=True)
 
                 if not is_active_student(request.user):
-                    return Response(
-                        {'detail': 'Akun mahasiswa aktif diperlukan.'},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
+                    return Response({'detail': 'Akun mahasiswa aktif diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
 
                 questions = list(
                     Question.objects.select_for_update().filter(question_set=q_set).order_by('order_index')
@@ -2125,13 +2113,10 @@ class StudentPackageSubmissionCreateView(APIView):
                     if version:
                         published.append((question, version))
 
-                published_question_ids = {question.id for question, _ in published}
-                if not published:
-                    return Response(
-                        {'detail': 'Belum ada pertanyaan yang dipublikasikan pada bank soal ini.'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                if set(answers_by_question) != published_question_ids:
+                published_question_ids = {str(question.id) for question, _ in published}
+                payload_q_ids = {str(a.get('question_id')) for a in answers_payload}
+
+                if published_question_ids != payload_q_ids:
                     return Response(
                         {'detail': 'Semua pertanyaan yang dipublikasikan harus dijawab tepat satu kali.'},
                         status=status.HTTP_400_BAD_REQUEST,
@@ -2139,40 +2124,49 @@ class StudentPackageSubmissionCreateView(APIView):
 
                 submission_ids = []
                 for question, version in published:
+                    answer_item = next(a for a in answers_payload if str(a.get('question_id')) == str(question.id))
+                    answer_text = answer_item.get('answer_text', '')
+                    t1 = answer_item.get('tier1_answer', '')[:120]
+                    t2 = answer_item.get('tier2_confidence')
+                    t3 = answer_item.get('tier3_reason', '')
+                    t4 = answer_item.get('tier4_confidence')
+
+                    # 1. Simpan via stored procedure inti
                     with connection.cursor() as cursor:
                         cursor.execute(
                             "CALL sp_submit_conceptual_answer(%s, %s, %s, NULL);",
-                            [str(request.user.id), str(version.id), answers_by_question[question.id]],
+                            [str(request.user.id), str(version.id), answer_text],
                         )
                         row = cursor.fetchone()
-                        submission_id = str(row[0]) if row and row[0] else None
-                        if not submission_id:
-                            raise RuntimeError('Gagal menyimpan salah satu jawaban.')
-                    submission_ids.append((question, version, submission_id))
+                        sub_id = str(row[0]) if row and row[0] else None
+
+                    if not sub_id:
+                        raise RuntimeError('Gagal menyimpan tanggapan submisi.')
+
+                    # 2. Update kolom 4-tier yang baru ditambahkan
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            UPDATE submissions
+                            SET tier1_answer = %s,
+                                tier2_confidence = %s,
+                                tier3_reason = %s,
+                                tier4_confidence = %s
+                            WHERE id = %s;
+                            """,
+                            [t1, t2, t3, t4, sub_id]
+                        )
+
+                    submission_ids.append((question, version, sub_id))
+
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        submissions = {
-            str(submission.id): submission
-            for submission in Submission.objects.filter(
-                id__in=[submission_id for _, _, submission_id in submission_ids]
-            )
-        }
         return Response({
             'set_id': str(q_set.id),
-            'submissions': [
-                {
-                    'submission_id': submission_id,
-                    'question_id': str(question.id),
-                    'question_version_id': str(version.id),
-                    'attempt_no': submissions[submission_id].attempt_no,
-                    'status': submissions[submission_id].status,
-                    'submitted_at': submissions[submission_id].submitted_at,
-                }
-                for question, version, submission_id in submission_ids
-            ],
+            'message': 'Seluruh butir 4-tier berhasil disimpan.',
+            'count': len(submission_ids)
         }, status=status.HTTP_201_CREATED)
-
 
 class StudentSubmissionListView(APIView):
     """Daftar pengumpulan mahasiswa (status state machine P3)."""

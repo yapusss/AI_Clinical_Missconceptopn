@@ -222,11 +222,43 @@ export default function StudentPackageReviewPage() {
     if (!currentAttempt || !currentAttempt.analysis) return;
     setError("");
     setNotice("");
+
+    // 1. Peringatan jika dosen belum memilih Tier atau memasukkan Skor
+    if (forcedStatus !== "REJECTED") {
+      if (finalTier === "" || finalTier === null || finalTier === undefined) {
+        setError("Peringatan: Anda belum memilih Tier Akhir. Silakan pilih Tier sebelum menyimpan validasi.");
+        return;
+      }
+
+      if (finalPct === "" || finalPct === null || isNaN(Number(finalPct))) {
+        setError("Peringatan: Silakan masukkan Skor Akhir (%) berupa angka valid.");
+        return;
+      }
+
+      const numPct = Number(finalPct);
+      if (numPct < 0 || numPct > 100) {
+        setError("Peringatan: Skor Akhir harus berada di rentang 0 sampai 100.");
+        return;
+      }
+
+      if (!feedback.trim()) {
+        setError("Peringatan: Feedback untuk mahasiswa tidak boleh kosong.");
+        return;
+      }
+    } else {
+      // Jika mode tolak, pastikan ada catatan alasan penolakan
+      if (!notes.trim()) {
+        setError("Peringatan: Harap isi catatan alasan penolakan agar analisis ulang AI dapat diperbaiki.");
+        return;
+      }
+    }
+
     setSubmittingValidation(true);
 
     try {
       const a = currentAttempt.analysis;
-      // Auto-determine ACCEPTED vs EDITED if not rejecting
+      
+      // 2. Tentukan otomatis apakah statusnya ACCEPTED, EDITED, atau REJECTED
       let decisionStatus: "ACCEPTED" | "EDITED" | "REJECTED" = "ACCEPTED";
       if (forcedStatus === "REJECTED") {
         decisionStatus = "REJECTED";
@@ -239,29 +271,38 @@ export default function StudentPackageReviewPage() {
         }
       }
 
+      // 3. Susun body request
       const body: Record<string, unknown> = { status: decisionStatus };
       if (decisionStatus !== "REJECTED") {
-        body.final_percentage = finalPct;
-        body.final_tier_level = finalTier;
-        body.final_feedback = feedback;
+        body.final_percentage = Number(finalPct);
+        body.final_tier_level = Number(finalTier);
+        body.final_feedback = feedback.trim();
       }
-      if (notes) body.notes = notes;
+      if (notes.trim()) {
+        body.notes = notes.trim();
+      }
 
       const confList = Object.entries(confirms).map(([misconception_id, confirmed]) => ({
         misconception_id,
         confirmed,
       }));
-      if (confList.length) body.misconception_confirmations = confList;
+      if (confList.length) {
+        body.misconception_confirmations = confList;
+      }
 
+      // 4. Kirim ke API Validasi
       const res = await apiFetch<{ message: string; submission_status: string }>(
         `/validations/${currentAttempt.analysis.id}/submit`,
-        { method: "POST", body: JSON.stringify(body) }
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        }
       );
 
       setNotice(res.message);
       await load();
 
-      // Auto-advance to next question needing validation if any
+      // 5. Pindah otomatis ke soal berikutnya yang masih butuh validasi (jika ada)
       if (data) {
         const nextPending = data.questions.findIndex(
           (q, i) => i > activeQuestionIdx && q.attempts.some((att) => att.status === "PENDING_VALIDATION")

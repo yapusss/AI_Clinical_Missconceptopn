@@ -299,7 +299,7 @@ export default function QuestionsPage() {
                 <th className="px-5 py-3.5 whitespace-nowrap">Mata Kuliah</th>
                 <th className="px-5 py-3.5 whitespace-nowrap">Status</th>
                 <th className="px-5 py-3.5 whitespace-nowrap">Pengumpulan &amp; Validasi</th>
-                <th className="px-5 py-3.5 text-right whitespace-nowrap">Aksi</th>
+                <th className="px-5 py-3.5 text-right whitespace-nowrap min-w-[200px]">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/30">
@@ -370,13 +370,13 @@ export default function QuestionsPage() {
                         )}
                       </div>
                     </td>
-
-                    <td className="px-5 py-4 align-middle text-right whitespace-nowrap">
-                      <div className="relative inline-flex items-center gap-2 justify-end">
+                    <td className="px-5 py-4 align-middle text-right min-w-[200px]">
+                      <div className="flex flex-col items-end gap-2">
+                        {/* 1. Tombol Utama di Atas: [Tinjau Pengumpulan] */}
                         <button
                           type="button"
                           onClick={() => router.push(`/questions/${item.id}`)}
-                          className="btn-primary !py-1.5 !px-3 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm"
+                          className="btn-primary !py-1.5 !px-3.5 text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm w-full sm:w-auto cursor-pointer"
                         >
                           <GraduationCap size={15} />
                           <span>Tinjau Pengumpulan</span>
@@ -387,88 +387,74 @@ export default function QuestionsPage() {
                           )}
                         </button>
 
-                        <div className="relative">
+                        {/* 2. Baris Ikon Kecil di Bawahnya: [Pratinjau] [Edit] [Ekspor] [Publish] [Aktif/Nonaktif] */}
+                        <div className="flex items-center gap-1.5 justify-end">
+                          {/* Pratinjau Soal */}
                           <button
                             type="button"
-                            onClick={() => setActiveMenuId(isMenuOpen ? null : item.id)}
-                            className="btn-secondary !p-1.5 text-on-surface-variant hover:text-on-surface cursor-pointer"
-                            aria-label={`Menu tindakan paket ${item.code}`}
-                            aria-expanded={isMenuOpen}
+                            onClick={() => router.push(`/questions/${item.id}/view`)}
+                            className="btn-secondary table-action-button !size-8 cursor-pointer"
+                            title="Pratinjau Soal"
+                            aria-label="Pratinjau Soal"
                           >
-                            <MoreVertical size={16} />
+                            <Eye size={15} className="text-primary" />
                           </button>
 
-                          {isMenuOpen && (
-                            <div
-                              ref={menuRef}
-                              className="absolute right-0 top-[calc(100%+4px)] z-50 w-48 rounded-xl border border-outline-variant/60 bg-surface-container-lowest p-1.5 shadow-2xl animate-fade-in text-left"
+                          {/* Edit Paket */}
+                          <button
+                            type="button"
+                            onClick={() => router.push(`/questions/${item.id}/edit`)}
+                            className="btn-secondary table-action-button !size-8 cursor-pointer"
+                            title="Edit Paket"
+                            aria-label="Edit Paket"
+                          >
+                            <Pencil size={15} className="text-primary" />
+                          </button>
+
+                          {/* Ekspor ke Excel */}
+                          <button
+                            type="button"
+                            onClick={() => void exportPackage(item)}
+                            className="btn-secondary table-action-button !size-8 cursor-pointer"
+                            title="Ekspor ke Excel"
+                            aria-label="Ekspor ke Excel"
+                          >
+                            <Download size={15} className="text-primary" />
+                          </button>
+
+                          {/* Tombol Terbitkan (Hanya muncul jika draft) */}
+                          {!published && (
+                            <button
+                              type="button"
+                              onClick={() => void publishSet(item.id)}
+                              className="btn-secondary table-action-button !size-8 !border-primary/50 text-primary cursor-pointer"
+                              title="Terbitkan Paket"
+                              aria-label="Terbitkan Paket"
                             >
-                              <button
-                                type="button"
-                                onClick={() => { setActiveMenuId(null); router.push(`/questions/${item.id}/view`); }}
-                                className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-on-surface hover:bg-surface-container transition-colors"
-                              >
-                                <Eye size={14} className="text-primary" />
-                                Pratinjau Soal
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => { setActiveMenuId(null); router.push(`/questions/${item.id}/edit`); }}
-                                className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-on-surface hover:bg-surface-container transition-colors"
-                              >
-                                <Pencil size={14} className="text-primary" />
-                                Edit Paket
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => { setActiveMenuId(null); void exportPackage(item); }}
-                                className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-on-surface hover:bg-surface-container transition-colors"
-                              >
-                                <Download size={14} className="text-primary" />
-                                Ekspor ke Excel
-                              </button>
-
-                              {!published && (
-                                <button
-                                  type="button"
-                                  onClick={() => { setActiveMenuId(null); void publishSet(item.id); }}
-                                  className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-primary hover:bg-surface-container transition-colors"
-                                >
-                                  <Send size={14} />
-                                  Terbitkan Paket
-                                </button>
-                              )}
-
-                              <div className="my-1 border-t border-outline-variant/30" />
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActiveMenuId(null);
-                                  if (item.is_active) {
-                                    setPendingDeactivate(item);
-                                  } else {
-                                    void toggleActiveSet(item.id);
-                                  }
-                                }}
-                                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium transition-colors ${
-                                  item.is_active ? "text-rose-400 hover:bg-rose-500/10" : "text-emerald-400 hover:bg-emerald-500/10"
-                                }`}
-                              >
-                                {item.is_active ? (
-                                  <>
-                                    <CircleStop size={14} /> Nonaktifkan Paket
-                                  </>
-                                ) : (
-                                  <>
-                                    <CircleCheck size={14} /> Aktifkan Paket
-                                  </>
-                                )}
-                              </button>
-                            </div>
+                              <Send size={13} />
+                            </button>
                           )}
+
+                          {/* Toggle Aktif / Nonaktif */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (item.is_active) {
+                                setPendingDeactivate(item);
+                              } else {
+                                void toggleActiveSet(item.id);
+                              }
+                            }}
+                            className={`btn-secondary table-action-button !size-8 cursor-pointer ${
+                              item.is_active
+                                ? "text-rose-400 hover:!border-rose-500"
+                                : "text-emerald-400 hover:!border-emerald-500"
+                            }`}
+                            title={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
+                            aria-label={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
+                          >
+                            {item.is_active ? <CircleStop size={15} /> : <CircleCheck size={15} />}
+                          </button>
                         </div>
                       </div>
                     </td>

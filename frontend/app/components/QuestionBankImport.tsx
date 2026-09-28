@@ -73,12 +73,13 @@ export default function QuestionBankImport({
   }
 
   async function handleConfirmNewTopic() {
-    if (!pendingPackageData || !detectedTopicName || !selectedSubjectId) return;
+    const targetSubject = selectedSubjectId || pendingPackageData?.subject_id;
+    if (!pendingPackageData || !detectedTopicName || !targetSubject) return;
     setBusy(true);
     setError("");
 
     try {
-      const topicRes = await fetch(`/api/admin/subjects/${selectedSubjectId}/topics`, {
+      const topicRes = await fetch(`/api/admin/subjects/${targetSubject}/topics`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -93,6 +94,7 @@ export default function QuestionBankImport({
 
       const updatedPackage: PendingPackage = {
         ...pendingPackageData,
+        subject_id: targetSubject,
         topic_id: topicData.id,
         topic_name: topicData.name,
       };
