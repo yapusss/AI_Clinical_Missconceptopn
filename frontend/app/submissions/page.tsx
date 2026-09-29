@@ -31,6 +31,7 @@ type SubmissionRow = {
   status: string;
   submitted_at: string | null;
   score: number | null;
+  category?: string | null; // <-- Tambahkan
   tier_label: string | null;
   validation_status: string | null;
 };
@@ -110,14 +111,32 @@ export default function SubmissionsPage() {
     });
   }
 
-  const visible = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
+  const visible = statusFilter
+    ? rows.filter((r) => r.status === statusFilter)
+    : rows;
 
   return (
     <PageContainer>
-      <PageHeader className="mb-6" title="Jawaban Mahasiswa" description="Daftar jawaban yang dikumpulkan mahasiswa untuk ditinjau." icon={ClipboardList} />
+      <PageHeader
+        className="mb-6"
+        title="Jawaban Mahasiswa"
+        description="Daftar jawaban yang dikumpulkan mahasiswa untuk ditinjau."
+        icon={ClipboardList}
+      />
 
       {error && (
-        <div role="alert" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(239, 68, 68, 0.3)", background: "rgba(239, 68, 68, 0.12)", color: "#f87171", fontSize: "0.85rem", padding: "0.7rem 1rem", marginBottom: "1.25rem" }}>
+        <div
+          role="alert"
+          style={{
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid rgba(239, 68, 68, 0.3)",
+            background: "rgba(239, 68, 68, 0.12)",
+            color: "#f87171",
+            fontSize: "0.85rem",
+            padding: "0.7rem 1rem",
+            marginBottom: "1.25rem",
+          }}
+        >
           {error}
         </div>
       )}
@@ -132,9 +151,23 @@ export default function SubmissionsPage() {
           marginBottom: "1.25rem",
         }}
       >
-        <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+        <div
+          style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}
+        >
           <Search size={16} color="var(--text-dim)" />
-          <AppSelect value={statusFilter} onValueChange={setStatusFilter} ariaLabel="Status jawaban" className="min-w-[220px]" options={[{ value: "", label: "Semua status" }, ...Object.entries(STATUS_META).map(([value, meta]) => ({ value, label: meta.label }))]} />
+          <AppSelect
+            value={statusFilter}
+            onValueChange={setStatusFilter}
+            ariaLabel="Status jawaban"
+            className="min-w-[220px]"
+            options={[
+              { value: "", label: "Semua status" },
+              ...Object.entries(STATUS_META).map(([value, meta]) => ({
+                value,
+                label: meta.label,
+              })),
+            ]}
+          />
         </div>
         <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
           {fetching ? "Memproses..." : `${visible.length} pengumpulan`}
@@ -144,23 +177,63 @@ export default function SubmissionsPage() {
       {!fetching && visible.length === 0 && (
         <div
           className="glass-card"
-          style={{ padding: "2.5rem", borderRadius: "var(--radius-lg)", textAlign: "center" }}
+          style={{
+            padding: "2.5rem",
+            borderRadius: "var(--radius-lg)",
+            textAlign: "center",
+          }}
         >
-          <TriangleAlert size={28} color="var(--text-dim)" style={{ margin: "0 auto" }} />
-          <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-            Belum ada jawaban mahasiswa{statusFilter ? " dengan filter ini" : ""}.
+          <TriangleAlert
+            size={28}
+            color="var(--text-dim)"
+            style={{ margin: "0 auto" }}
+          />
+          <p
+            style={{
+              fontSize: "0.9rem",
+              color: "var(--text-muted)",
+              marginTop: "0.6rem",
+            }}
+          >
+            Belum ada jawaban mahasiswa
+            {statusFilter ? " dengan filter ini" : ""}.
           </p>
         </div>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
         {visible.map((row) => {
-          const statusMeta = STATUS_META[row.status] ?? { label: row.status, badge: "badge-draft" };
+          const statusMeta = STATUS_META[row.status] ?? {
+            label: row.status,
+            badge: "badge-draft",
+          };
           const isOpen = expanded.has(row.id);
           return (
-            <article key={row.id} className="glass-card" style={{ padding: "1.1rem 1.25rem", borderRadius: "var(--radius-lg)" }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+            <article
+              key={row.id}
+              className="glass-card"
+              style={{
+                padding: "1.1rem 1.25rem",
+                borderRadius: "var(--radius-lg)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    minWidth: 0,
+                  }}
+                >
                   <div
                     style={{
                       width: "40px",
@@ -179,51 +252,134 @@ export default function SubmissionsPage() {
                     {initials(row.student_name)}
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <p style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>{row.student_name}</p>
-                    <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.15rem 0 0" }}>{row.student_email}</p>
+                    <p
+                      style={{
+                        fontSize: "0.9rem",
+                        fontWeight: 700,
+                        color: "var(--text-main)",
+                        margin: 0,
+                      }}
+                    >
+                      {row.student_name}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "0.78rem",
+                        color: "var(--text-muted)",
+                        margin: "0.15rem 0 0",
+                      }}
+                    >
+                      {row.student_email}
+                    </p>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  <span className={`badge ${statusMeta.badge}`}>{statusMeta.label}</span>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span className={`badge ${statusMeta.badge}`}>
+                    {statusMeta.label}
+                  </span>
                   {row.validation_status && (
                     <span className="badge badge-draft">
-                      ({(VALIDATION_LABEL[row.validation_status] ?? row.validation_status)})
+                      (
+                      {VALIDATION_LABEL[row.validation_status] ??
+                        row.validation_status}
+                      )
                     </span>
                   )}
                 </div>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginTop: "0.8rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  marginTop: "0.8rem",
+                }}
+              >
                 <span className="badge badge-role">{row.subject_name}</span>
                 {row.question_code && (
-                  <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>{row.question_code}</span>
+                  <span
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--text-dim)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {row.question_code}
+                  </span>
                 )}
                 {row.question_title && (
-                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{row.question_title}</span>
+                  <span
+                    style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}
+                  >
+                    {row.question_title}
+                  </span>
                 )}
                 {row.score != null && (
-                  <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--primary)" }}>
+                  <span
+                    style={{
+                      fontSize: "0.78rem",
+                      fontWeight: 700,
+                      color: "var(--primary)",
+                    }}
+                  >
                     Skor {row.score.toFixed(2)}%
                   </span>
                 )}
-                {row.tier_label && (
-                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>· {row.tier_label}</span>
-                )}
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.72rem", color: "var(--text-dim)", marginLeft: "auto" }}>
+                {row.category ? (
+                  <span className="font-mono-ui font-bold text-xs text-primary">
+                    · [{row.category}]
+                  </span>
+                ) : row.tier_label ? (
+                  <span
+                    style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}
+                  >
+                    · {row.tier_label}
+                  </span>
+                ) : null}
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    fontSize: "0.72rem",
+                    color: "var(--text-dim)",
+                    marginLeft: "auto",
+                  }}
+                >
                   <Calendar size={13} />
                   {fmtDate(row.submitted_at)}
                 </span>
               </div>
 
               {row.prompt_preview && (
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0.6rem 0 0" }}>
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--text-muted)",
+                    margin: "0.6rem 0 0",
+                  }}
+                >
                   <strong style={{ color: "var(--text-main)" }}>Soal: </strong>
                   {row.prompt_preview}
                 </p>
               )}
 
               <div style={{ marginTop: "0.7rem" }}>
-                <button type="button" onClick={() => toggle(row.id)} className="btn-secondary" style={{ padding: "0.4rem 0.8rem", fontSize: "0.78rem" }}>
+                <button
+                  type="button"
+                  onClick={() => toggle(row.id)}
+                  className="btn-secondary"
+                  style={{ padding: "0.4rem 0.8rem", fontSize: "0.78rem" }}
+                >
                   {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                   {isOpen ? "Sembunyikan jawaban" : "Lihat jawaban"}
                 </button>

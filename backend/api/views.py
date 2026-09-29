@@ -2584,6 +2584,10 @@ class LecturerSubmissionsView(APIView):
             qset = question.question_set if question else None
             analysis = analyses.get(s.id)
             validation = validations.get(analysis.id) if analysis else None
+            
+            category = getattr(analysis, 'four_tier_category', None)
+            display_label = f"[{category}]" if category else (analysis.tier_label_snapshot if analysis else None)
+
             rows.append({
                 'id': str(s.id),
                 'student_name': s.student.full_name,
@@ -2598,7 +2602,8 @@ class LecturerSubmissionsView(APIView):
                 'status': s.status,
                 'submitted_at': s.submitted_at.isoformat() if s.submitted_at else None,
                 'score': float(analysis.percentage_correct) if analysis and analysis.percentage_correct is not None else None,
-                'tier_label': analysis.tier_label_snapshot if analysis else None,
+                'category': category,
+                'tier_label': display_label,
                 'validation_status': validation.status if validation else None,
             })
 
@@ -2631,6 +2636,7 @@ class LecturerSubmissionDetailView(APIView):
         validation = Validation.objects.select_related('lecturer').filter(analysis=analysis).first() if analysis else None
         q_set = version.question.question_set
 
+        category = getattr(analysis, 'four_tier_category', None) if analysis else None
         return Response({
             'id': str(submission.id),
             'status': submission.status,
@@ -2664,12 +2670,18 @@ class LecturerSubmissionDetailView(APIView):
                 ],
             },
             'answer_text': submission.answer_text,
+            'tier1_answer': getattr(submission, 'tier1_answer', None) or '',
+            'tier2_confidence': getattr(submission, 'tier2_confidence', None) or 1,
+            'tier3_reason': getattr(submission, 'tier3_reason', None) or submission.answer_text,
+            'tier4_confidence': getattr(submission, 'tier4_confidence', None) or 1,
+            'heuristic_flags': getattr(submission, 'heuristic_flags', None) or [],
             'current_analysis': {
                 'id': str(analysis.id),
                 'run_number': analysis.run_number,
                 'percentage_correct': str(analysis.percentage_correct),
-                'tier_level': analysis.tier_level_snapshot,
-                'tier_label': analysis.tier_label_snapshot,
+                'four_tier_category': category,
+                'tier_label': f"[{category}]" if category else analysis.tier_label_snapshot,
+                'risk_level': getattr(analysis, 'risk_level', None),
                 'confidence': str(analysis.confidence),
                 'created_at': analysis.created_at,
                 'validation': {

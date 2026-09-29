@@ -27,11 +27,25 @@ export type StudentEvaluation = {
   validated_at?: string;
 };
 
+export type FourTierDiagnosis = {
+  module_a_score?: string | null;
+  module_b_score?: string | null;
+  module_c_code?: string | null;
+  category?: string | null;
+  risk_level?: string | null;
+};
+
 export type StudentAttempt = {
   submission_id: string;
   attempt_no: number;
   status: string;
   answer_text: string;
+  tier1_answer?: string | null;
+  tier2_confidence?: number | null;
+  tier3_reason?: string | null;
+  tier4_confidence?: number | null;
+  heuristic_flags?: string[];
+  four_tier_diagnosis?: FourTierDiagnosis | null;
   submitted_at: string;
   evaluation: StudentEvaluation | null;
 };
@@ -67,9 +81,6 @@ export type StudentSetGroup = {
 
 export type StatusMeta = { label: string; cls: string; hint: string };
 
-/**
- * Goal 3: Consistent, compact status badges for individual submissions
- */
 export const STATUS_META: Record<string, StatusMeta> = {
   SUBMITTED: {
     label: "Tersimpan",
@@ -192,9 +203,6 @@ export const fmtDate = (value: string | null) => {
   }
 };
 
-/**
- * Goal 3: Consistent table status badge without multi-line wrapping
- */
 export function summarizeSetStatus(
   statusSummary: string,
   counts: Record<string, number>,
@@ -225,7 +233,6 @@ export function summarizeSetStatus(
     return { label: meta.label, cls: meta.cls, detail };
   }
 
-  // Mixed states: Keep badge title short (< 20 chars) to prevent line wrapping
   const hasValidated = (counts["VALIDATED"] ?? 0) > 0;
   const hasPending = (counts["PENDING_VALIDATION"] ?? 0) > 0;
 

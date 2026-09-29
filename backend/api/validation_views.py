@@ -138,6 +138,7 @@ class ValidationQueueView(APIView):
             v = versions.get(a.submission.question_version_id)
             q = questions.get(v.question_id) if v else None
             q_set = sets_map.get(q.question_set_id) if q else None
+            category = getattr(a, 'four_tier_category', None)
             results.append({
                 'analysis_id': str(a.id),
                 'submission_id': str(a.submission_id),
@@ -148,8 +149,9 @@ class ValidationQueueView(APIView):
                 'question_prompt_preview': (v.prompt[:140] + ('...' if len(v.prompt) > 140 else '')) if v else '',
                 'subject_name': a.subject.name,
                 'percentage_correct': str(a.percentage_correct),
+                'four_tier_category': category,
                 'tier_level': a.tier_level_snapshot,
-                'tier_label': a.tier_label_snapshot,
+                'tier_label': f"[{category}]" if category else a.tier_label_snapshot,
                 'confidence': str(a.confidence),
                 'model_identifier': a.model_identifier,
                 'submitted_at': a.submission.submitted_at,
@@ -222,6 +224,11 @@ class ValidationDetailView(APIView):
             },
             'answer': {
                 'text': sub.answer_text,
+                'tier1_answer': getattr(sub, 'tier1_answer', None) or '',
+                'tier2_confidence': getattr(sub, 'tier2_confidence', None) or 1,
+                'tier3_reason': getattr(sub, 'tier3_reason', None) or sub.answer_text,
+                'tier4_confidence': getattr(sub, 'tier4_confidence', None) or 1,
+                'heuristic_flags': getattr(sub, 'heuristic_flags', None) or [],
                 'attempt_no': sub.attempt_no,
                 'submitted_at': sub.submitted_at,
             },
@@ -229,8 +236,13 @@ class ValidationDetailView(APIView):
                 'model_identifier': a.model_identifier,
                 'prompt_version': a.prompt_version,
                 'percentage_correct': str(a.percentage_correct),
+                'four_tier_category': getattr(a, 'four_tier_category', None),
+                'risk_level': getattr(a, 'risk_level', None),
+                'module_a_score': getattr(a, 'module_a_score', None),
+                'module_b_score': getattr(a, 'module_b_score', None),
+                'module_c_code': getattr(a, 'module_c_code', None),
                 'tier_level': a.tier_level_snapshot,
-                'tier_label': a.tier_label_snapshot,
+                'tier_label': f"[{getattr(a, 'four_tier_category', None)}]" if getattr(a, 'four_tier_category', None) else a.tier_label_snapshot,
                 'confidence': str(a.confidence),
                 'explanation': a.explanation,
                 'indicator_scores': breakdown.get('indicators') or [],

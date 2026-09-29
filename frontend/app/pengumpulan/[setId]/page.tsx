@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -185,7 +185,7 @@ function ActionableFeedbackSection({
   );
 }
 
-export default function SubmissionSetDetailPage() {
+function SubmissionSetDetailPageContent() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams<{ setId: string }>();
@@ -306,7 +306,7 @@ export default function SubmissionSetDetailPage() {
             icon={GraduationCap}
             eyebrow={
               <span className="text-xs font-bold uppercase tracking-wider text-primary">
-                Hasil Evaluasi Diagnostik Four-Tier
+                Hasil Evaluasi Diagnostik Konseptual
               </span>
             }
           />
@@ -419,12 +419,10 @@ export default function SubmissionSetDetailPage() {
                 <div className="mt-6 flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold text-on-surface">
-                      Anda belum mengumpulkan jawaban untuk butir pertanyaan
-                      ini.
+                      Anda belum mengumpulkan jawaban untuk butir pertanyaan ini.
                     </p>
                     <p className="text-xs text-on-surface-variant mt-0.5">
-                      Silakan masuk ke lembar soal untuk melengkapi empat tier
-                      diagnostik.
+                      Silakan masuk ke lembar soal untuk melengkapi jawaban evaluasi.
                     </p>
                   </div>
                   <Link
@@ -510,7 +508,7 @@ export default function SubmissionSetDetailPage() {
                       <ScoreExplanationCard
                         evaluation={currentAttempt.evaluation}
                         diagnosisCategory={
-                          currentAttempt.four_tier_diagnosis?.category
+                          currentAttempt.four_tier_diagnosis?.category ?? undefined
                         }
                       />
                       <ActionableFeedbackSection
@@ -570,5 +568,13 @@ export default function SubmissionSetDetailPage() {
         </div>
       ) : null}
     </PageContainer>
+  );
+}
+
+export default function SubmissionSetDetailPage() {
+  return (
+    <Suspense fallback={null}>
+      <SubmissionSetDetailPageContent />
+    </Suspense>
   );
 }

@@ -37,6 +37,14 @@ PROMPT_VERSION = 'four-tier-v2.6'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
+CATEGORY_TO_LEVEL = {
+    'SC': 4,
+    'FN': 3,
+    'FP': 2,
+    'MSC': 2,
+    'LK': 1,
+}
+
 # 16-Row Deterministic Decision Matrix (T1, T2_is_yakin, T3, T4_is_yakin)
 MATRIX_RULES = {
     ('B', True,  'B', True):  ('SC',  'Paham konsep utuh',                   'RENDAH'),
@@ -625,11 +633,13 @@ def analyze_submission(submission_id: str) -> str:
         }
 
         # 6. Simpan Hasil Analisis via Stored Procedure
+        tier_level = CATEGORY_TO_LEVEL.get(category, 1)
+
         with connection.cursor() as cur:
             cur.execute(
                 """
                 CALL sp_record_llm_analysis(
-                    %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, NULL
                 );
                 """,
@@ -638,6 +648,7 @@ def analyze_submission(submission_id: str) -> str:
                     settings.LLM_MODEL[:100],
                     PROMPT_VERSION,
                     percentage_correct,
+                    tier_level,  # <-- Menggunakan tier_level yang selaras (bukan 1)
                     json.dumps(concept_breakdown, ensure_ascii=False),
                     json.dumps([]),
                     explanation,
