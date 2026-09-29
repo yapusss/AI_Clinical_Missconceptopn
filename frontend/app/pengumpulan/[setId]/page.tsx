@@ -28,14 +28,53 @@ import {
   type StudentSetGroup,
 } from "../../lib/studentSubmissions";
 
-const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const errMsg = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
 
-/**
- * Clean Final Score Card (Rubric details removed)
- */
-function ScoreExplanationCard({ evaluation }: { evaluation: NonNullable<StudentAttempt["evaluation"]> }) {
+const STUDENT_FRIENDLY_CATEGORIES: Record<
+  string,
+  { label: string; desc: string; cardCls: string }
+> = {
+  SC: {
+    label: "Paham Konsep Utuh",
+    desc: "Anda memahami konsep dan alasan ilmiah dengan konsisten dan tepat.",
+    cardCls: "diag-card-sc",
+  },
+  LK: {
+    label: "Perlu Penguatan Konsep",
+    desc: "Pengetahuan konsep masih perlu diperdalam atau diperkuat agar Anda lebih yakin.",
+    cardCls: "diag-card-lk",
+  },
+  FN: {
+    label: "Penalaran Tepat, Perlu Perbaikan Kesimpulan",
+    desc: "Alasan atau penalaran ilmiah Anda sudah baik, namun perhatikan kembali kesimpulan akhirnya.",
+    cardCls: "diag-card-fn",
+  },
+  FP: {
+    label: "Perlu Penyelarasan Konsep & Alasan",
+    desc: "Kesimpulan jawaban benar, tetapi alasan yang digunakan masih memiliki celah pemahaman konsep.",
+    cardCls: "diag-card-fp",
+  },
+  MSC: {
+    label: "Perlu Rekonstruksi Konsep",
+    desc: "Terdapat miskonsepsi konsep yang perlu diperbaiki melalui pendalaman materi yang tepat.",
+    cardCls: "diag-card-msc",
+  },
+};
+
+function ScoreExplanationCard({
+  evaluation,
+  diagnosisCategory,
+}: {
+  evaluation: NonNullable<StudentAttempt["evaluation"]>;
+  diagnosisCategory?: string;
+}) {
+  const friendly = diagnosisCategory
+    ? STUDENT_FRIENDLY_CATEGORIES[diagnosisCategory]
+    : null;
+
   return (
-    <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4">
+    <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4 space-y-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -52,25 +91,33 @@ function ScoreExplanationCard({ evaluation }: { evaluation: NonNullable<StudentA
             <span className="font-mono-ui text-3xl font-extrabold text-primary">
               {evaluation.percentage_correct.toFixed(1)}%
             </span>
-            <span className="text-xs text-on-surface-variant font-medium">
-              ({evaluation.tier_label})
-            </span>
           </div>
         </div>
+
+        {friendly && (
+          <div
+            className={`diag-card ${friendly.cardCls} px-3.5 py-2 text-right`}
+          >
+            <span className="block text-xs font-bold font-mono-ui diag-title">
+              {friendly.label}
+            </span>
+            <span className="block text-[11px] diag-desc mt-0.5 max-w-xs">
+              {friendly.desc}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/**
- * Unified Feedback Section: Identifikasi Miskonsepsi & Saran Perbaikan (Neutral theme)
- */
 function ActionableFeedbackSection({
   evaluation,
 }: {
   evaluation: NonNullable<StudentAttempt["evaluation"]>;
 }) {
-  const hasConfirmedMisconceptions = evaluation.confirmed_misconceptions.length > 0;
+  const hasConfirmedMisconceptions =
+    evaluation.confirmed_misconceptions.length > 0;
 
   return (
     <section className="mt-4 rounded-xl border border-outline-variant/30 bg-surface-container-low p-4 sm:p-5">
@@ -78,27 +125,28 @@ function ActionableFeedbackSection({
         <div className="flex items-center gap-2">
           <Compass size={17} className="text-primary" />
           <h3 className="font-display text-sm font-bold tracking-tight text-on-surface">
-            Evaluasi Diagnostik &amp; Umpan Balik
+            Evaluasi Diagnostik &amp; Umpan Balik Dosen
           </h3>
         </div>
         {evaluation.validator_name && (
           <span className="text-[11px] text-on-surface-variant">
-            Divalidasi oleh: <strong className="text-on-surface">{evaluation.validator_name}</strong>
+            Divalidasi oleh:{" "}
+            <strong className="text-on-surface">
+              {evaluation.validator_name}
+            </strong>
           </span>
         )}
       </div>
 
       <div className="mt-3.5 space-y-3">
-        {/* Identifikasi Miskonsepsi & Saran Perbaikan Card */}
         <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-4">
           <div className="flex items-center gap-2 text-on-surface mb-2">
             <Lightbulb size={16} className="text-primary" />
             <h4 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-              Identifikasi Miskonsepsi &amp; Saran Perbaikan
+              Saran &amp; Catatan Perbaikan Pemahaman
             </h4>
           </div>
 
-          {/* Confirmed Misconceptions */}
           {hasConfirmedMisconceptions && (
             <div className="mb-3 space-y-2">
               {evaluation.confirmed_misconceptions.map((m, idx) => (
@@ -106,28 +154,31 @@ function ActionableFeedbackSection({
                   key={idx}
                   className="rounded-lg border border-outline-variant/30 bg-surface-container-low p-3 text-xs leading-relaxed text-on-surface"
                 >
-                  <span className="font-bold text-primary">• {m.label}:</span> {m.reasoning}
+                  <span className="font-bold text-primary">• {m.label}:</span>{" "}
+                  {m.reasoning}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Clinical Feedback / Recommendations */}
           <p className="whitespace-pre-line text-xs leading-relaxed text-on-surface">
-            {evaluation.clinical_feedback || "Tidak ada catatan tambahan."}
+            {evaluation.clinical_feedback ||
+              "Tidak ada catatan tambahan dari dosen."}
           </p>
 
-          {/* Suggested Materials (kept as text reference) */}
-          {evaluation.suggested_materials && evaluation.suggested_materials.length > 0 && (
-            <div className="mt-3.5 border-t border-outline-variant/20 pt-2.5 text-xs">
-              <span className="font-bold text-on-surface-variant">Materi Disarankan:</span>
-              <ul className="mt-1 list-disc pl-4 space-y-0.5 text-on-surface-variant">
-                {evaluation.suggested_materials.map((mat, i) => (
-                  <li key={i}>{mat}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {evaluation.suggested_materials &&
+            evaluation.suggested_materials.length > 0 && (
+              <div className="mt-3.5 border-t border-outline-variant/20 pt-2.5 text-xs">
+                <span className="font-bold text-on-surface-variant">
+                  Materi Penguatan yang Disarankan:
+                </span>
+                <ul className="mt-1 list-disc pl-4 space-y-0.5 text-on-surface-variant">
+                  {evaluation.suggested_materials.map((mat, i) => (
+                    <li key={i}>{mat}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
         </div>
       </div>
     </section>
@@ -146,7 +197,9 @@ export default function SubmissionSetDetailPage() {
   const [error, setError] = useState("");
 
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
-  const [selectedAttemptByQuestion, setSelectedAttemptByQuestion] = useState<Record<string, number>>({});
+  const [selectedAttemptByQuestion, setSelectedAttemptByQuestion] = useState<
+    Record<string, number>
+  >({});
 
   const load = useCallback(async () => {
     if (!setId) {
@@ -155,13 +208,15 @@ export default function SubmissionSetDetailPage() {
       return;
     }
     try {
-      const data = await apiFetch<StudentSetGroup>(`/student/submission-sets/${setId}`);
+      const data = await apiFetch<StudentSetGroup>(
+        `/student/submission-sets/${setId}`,
+      );
       setGroup(data);
 
       const qParam = searchParams.get("q");
       if (qParam) {
-        const qNum = parseInt(qParam, 10);
-        if (!isNaN(qNum) && qNum >= 1 && qNum <= data.questions.length) {
+        const qNum = Number.parseInt(qParam, 10);
+        if (!Number.isNaN(qNum) && qNum >= 1 && qNum <= data.questions.length) {
           setActiveQuestionIdx(qNum - 1);
         }
       }
@@ -188,12 +243,15 @@ export default function SubmissionSetDetailPage() {
 
   const attemptsDesc: StudentAttempt[] = useMemo(() => {
     if (!activeQuestion) return [];
-    return [...activeQuestion.attempts].sort((a, b) => b.attempt_no - a.attempt_no);
+    return [...activeQuestion.attempts].sort(
+      (a, b) => b.attempt_no - a.attempt_no,
+    );
   }, [activeQuestion]);
 
   const currentAttempt: StudentAttempt | undefined = useMemo(() => {
     if (!activeQuestion || !attemptsDesc.length) return undefined;
-    const chosenAttemptNo = selectedAttemptByQuestion[activeQuestion.question_id];
+    const chosenAttemptNo =
+      selectedAttemptByQuestion[activeQuestion.question_id];
     if (chosenAttemptNo !== undefined) {
       const found = attemptsDesc.find((a) => a.attempt_no === chosenAttemptNo);
       if (found) return found;
@@ -206,18 +264,20 @@ export default function SubmissionSetDetailPage() {
   };
 
   const handleSelectAttempt = (questionId: string, attemptNo: number) => {
-    setSelectedAttemptByQuestion((prev) => ({ ...prev, [questionId]: attemptNo }));
+    setSelectedAttemptByQuestion((prev) => ({
+      ...prev,
+      [questionId]: attemptNo,
+    }));
   };
 
   if (loading || !user) return null;
 
   return (
     <PageContainer>
-      {/* Back Link */}
       <div className="mb-3">
         <Link
           href="/code#pengumpulan"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary transition-colors no-underline"
         >
           <ArrowLeft size={14} />
           Kembali ke Daftar Pengumpulan Soal
@@ -235,18 +295,26 @@ export default function SubmissionSetDetailPage() {
       )}
 
       {fetching ? (
-        <p className="mt-8 text-sm text-on-surface-variant">Memuat rincian evaluasi diagnostik...</p>
+        <p className="mt-8 text-sm text-on-surface-variant">
+          Memuat rincian evaluasi diagnostik...
+        </p>
       ) : group && activeQuestion ? (
         <div className="space-y-4">
-          {/* Header */}
-          <PageHeader title={group.title} description={`Mata Kuliah: ${group.subject_name}${group.topic_name ? ` • Topik: ${group.topic_name}` : ""} • Kode: ${group.code}`} icon={GraduationCap} eyebrow={<span className="text-xs font-bold uppercase tracking-wider text-primary">Diagnosis &amp; Evaluasi Mahasiswa</span>} />
+          <PageHeader
+            title={group.title}
+            description={`Mata Kuliah: ${group.subject_name}${group.topic_name ? ` • Topik: ${group.topic_name}` : ""} • Kode: ${group.code}`}
+            icon={GraduationCap}
+            eyebrow={
+              <span className="text-xs font-bold uppercase tracking-wider text-primary">
+                Hasil Evaluasi Diagnostik Four-Tier
+              </span>
+            }
+          />
 
-          {/* Unified Container */}
           <main className="glass-panel overflow-hidden rounded-2xl border border-outline-variant/40 shadow-sm">
-            {/* Unified Toolbar */}
+            {/* Navigation Toolbar */}
             <div className="border-b border-outline-variant/30 bg-surface-container-low/70 px-4 py-3 sm:px-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                {/* Left: Question Navigation Pills */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mr-1">
                     Navigasi soal:
@@ -256,10 +324,6 @@ export default function SubmissionSetDetailPage() {
                       const isCurrent = idx === activeQuestionIdx;
                       const isAnswered = q.attempts.length > 0;
 
-                      // Visual States:
-                      // 1. Current: Soft tinted purple with black text
-                      // 2. Answered: Green
-                      // 3. Unanswered: White with black text
                       let pillClass = "";
                       if (isCurrent) {
                         pillClass =
@@ -277,7 +341,7 @@ export default function SubmissionSetDetailPage() {
                           key={q.question_id}
                           type="button"
                           onClick={() => handleSelectQuestion(idx)}
-                          className={`rounded-lg border px-3 py-1.5 text-xs font-mono-ui transition-all ${pillClass}`}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-mono-ui transition-all cursor-pointer ${pillClass}`}
                           aria-current={isCurrent ? "page" : undefined}
                         >
                           Soal {q.order_index}
@@ -287,16 +351,20 @@ export default function SubmissionSetDetailPage() {
                   </div>
                 </div>
 
-                {/* Right: Attempt Dropdown (Percobaan 1, Percobaan 2) */}
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
                     Pilih percobaan:
                   </span>
                   <AppSelect
-                    value={currentAttempt ? String(currentAttempt.attempt_no) : ""}
+                    value={
+                      currentAttempt ? String(currentAttempt.attempt_no) : ""
+                    }
                     onValueChange={(val) => {
                       if (activeQuestion && val) {
-                        handleSelectAttempt(activeQuestion.question_id, parseInt(val, 10));
+                        handleSelectAttempt(
+                          activeQuestion.question_id,
+                          Number.parseInt(val, 10),
+                        );
                       }
                     }}
                     ariaLabel="Pilih Percobaan"
@@ -316,7 +384,7 @@ export default function SubmissionSetDetailPage() {
               </div>
             </div>
 
-            {/* Sub-Header: Question Scope & Semantic Validation Badge */}
+            {/* Sub-Header */}
             <div className="flex flex-col gap-2 border-b border-outline-variant/30 bg-surface-container-low/30 px-4 py-2.5 sm:px-6 sm:flex-row sm:items-center sm:justify-between">
               <span className="font-mono-ui text-xs font-bold text-primary">
                 Soal {activeQuestion.order_index} dari {group.questions.length}
@@ -337,32 +405,31 @@ export default function SubmissionSetDetailPage() {
               )}
             </div>
 
-            {/* Question Content & Answer Interface */}
             <div className="px-4 py-5 sm:px-6">
-              {/* Question Text */}
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                  Teks Pertanyaan
+                  Pertanyaan Konseptual
                 </h3>
                 <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-on-surface font-medium">
                   {activeQuestion.prompt}
                 </p>
               </div>
 
-              {/* Unanswered State */}
               {!currentAttempt ? (
                 <div className="mt-6 flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold text-on-surface">
-                      Anda belum mengumpulkan jawaban untuk butir pertanyaan ini.
+                      Anda belum mengumpulkan jawaban untuk butir pertanyaan
+                      ini.
                     </p>
                     <p className="text-xs text-on-surface-variant mt-0.5">
-                      Evaluasi dan diagnosis miskonsepsi memerlukan respons tertulis Anda.
+                      Silakan masuk ke lembar soal untuk melengkapi empat tier
+                      diagnostik.
                     </p>
                   </div>
                   <Link
                     href={`/sets/${group.set_id}?code=${encodeURIComponent(group.code)}`}
-                    className="btn-primary shrink-0"
+                    className="btn-primary shrink-0 no-underline"
                   >
                     <PenLine size={16} />
                     Kerjakan Sekarang
@@ -375,28 +442,80 @@ export default function SubmissionSetDetailPage() {
                       Percobaan {currentAttempt.attempt_no}
                     </span>
                     <span className="text-[11px] text-on-surface-variant">
-                      Dikirim pada: {fmtDate(currentAttempt.submitted_at)}
+                      Dikirim: {fmtDate(currentAttempt.submitted_at)}
                     </span>
                   </div>
 
-                  {/* Submitted Student Text */}
-                  <div className="mt-3">
+                  {/* Rincian Tanggapan Jawaban Mahasiswa */}
+                  <div className="mt-3.5 space-y-3">
                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                      Teks Tanggapan Mahasiswa:
+                      Rincian Tanggapan Anda:
                     </h4>
-                    <p className="mt-1 whitespace-pre-line rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-sm leading-relaxed text-on-surface">
-                      {currentAttempt.answer_text}
-                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          1. Kesimpulan Jawaban
+                        </span>
+                        <p className="mt-1 text-sm font-semibold text-on-surface font-mono-ui">
+                          {currentAttempt.tier1_answer ||
+                            currentAttempt.answer_text ||
+                            "-"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          2. Tingkat Keyakinan Jawaban
+                        </span>
+                        <p className="mt-1 text-sm font-bold text-primary font-mono-ui">
+                          Skala {currentAttempt.tier2_confidence ?? 1} / 6 (
+                          {(currentAttempt.tier2_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Tidak Yakin"}
+                          )
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          3. Alasan / Penalaran Ilmiah
+                        </span>
+                        <p className="mt-1 text-sm text-on-surface whitespace-pre-wrap font-mono-ui leading-relaxed">
+                          {currentAttempt.tier3_reason ||
+                            currentAttempt.answer_text ||
+                            "-"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          4. Tingkat Keyakinan Alasan
+                        </span>
+                        <p className="mt-1 text-sm font-bold text-primary font-mono-ui">
+                          Skala {currentAttempt.tier4_confidence ?? 1} / 6 (
+                          {(currentAttempt.tier4_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Tidak Yakin"}
+                          )
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Diagnostic Evaluation or Progress State */}
-                  {currentAttempt.status === "VALIDATED" && currentAttempt.evaluation ? (
+                  {/* Validated Diagnostic Results */}
+                  {currentAttempt.status === "VALIDATED" &&
+                  currentAttempt.evaluation ? (
                     <div className="mt-4 space-y-3 border-t border-outline-variant/20 pt-4">
-                      {/* Simplified Score Card */}
-                      <ScoreExplanationCard evaluation={currentAttempt.evaluation} />
-
-                      {/* Single Unified Feedback Section */}
-                      <ActionableFeedbackSection evaluation={currentAttempt.evaluation} />
+                      <ScoreExplanationCard
+                        evaluation={currentAttempt.evaluation}
+                        diagnosisCategory={
+                          currentAttempt.four_tier_diagnosis?.category
+                        }
+                      />
+                      <ActionableFeedbackSection
+                        evaluation={currentAttempt.evaluation}
+                      />
                     </div>
                   ) : (
                     <div className="mt-4 rounded-lg border border-outline-variant/20 bg-surface-container-lowest p-3.5 text-xs text-on-surface-variant">
@@ -404,20 +523,22 @@ export default function SubmissionSetDetailPage() {
                         {getSemanticStatus(currentAttempt.status).description}
                       </p>
                       <p className="mt-1 text-[11px] text-on-surface-variant">
-                        Skor terinci dan umpan balik diagnostik diterbitkan setelah dosen menyelesaikan validasi akademik.
+                        Umpan balik diagnostik dan skor terinci akan tampil
+                        setelah dosen memvalidasi tanggapan ini.
                       </p>
                     </div>
                   )}
                 </article>
               )}
 
-              {/* Navigation Footer */}
               <footer className="mt-6 flex items-center justify-between border-t border-outline-variant/20 pt-4">
                 <button
                   type="button"
-                  onClick={() => handleSelectQuestion(Math.max(0, activeQuestionIdx - 1))}
+                  onClick={() =>
+                    handleSelectQuestion(Math.max(0, activeQuestionIdx - 1))
+                  }
                   disabled={activeQuestionIdx === 0}
-                  className="btn-secondary text-xs !py-1.5 !px-3 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="btn-secondary text-xs !py-1.5 !px-3 disabled:opacity-40 cursor-pointer"
                 >
                   <ChevronLeft size={14} />
                   Soal Sebelumnya
@@ -429,9 +550,16 @@ export default function SubmissionSetDetailPage() {
 
                 <button
                   type="button"
-                  onClick={() => handleSelectQuestion(Math.min(group.questions.length - 1, activeQuestionIdx + 1))}
+                  onClick={() =>
+                    handleSelectQuestion(
+                      Math.min(
+                        group.questions.length - 1,
+                        activeQuestionIdx + 1,
+                      ),
+                    )
+                  }
                   disabled={activeQuestionIdx === group.questions.length - 1}
-                  className="btn-secondary text-xs !py-1.5 !px-3 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="btn-secondary text-xs !py-1.5 !px-3 disabled:opacity-40 cursor-pointer"
                 >
                   Soal Selanjutnya
                   <ChevronRight size={14} />

@@ -161,7 +161,7 @@ export default function DashboardPage() {
       : primaryRole === "LECTURER"
         ? [
             { icon: FilePlus, label: "Buat bank soal baru", href: "/questions" },
-            { icon: ShieldCheck, label: "Tinjau validasi", href: "/validation" },
+            { icon: ShieldCheck, label: "Tinjau validasi", href: "/questions" },
           ]
         : primaryRole === "ADMIN"
           ? [

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   BrainCircuit,
   CheckCircle2,
@@ -45,6 +46,11 @@ type AttemptItem = {
   attempt_no: number;
   status: string;
   answer_text: string;
+  tier1_answer?: string;
+  tier2_confidence?: number;
+  tier3_reason?: string;
+  tier4_confidence?: number;
+  heuristic_flags?: string[];
   submitted_at: string;
   analysis: {
     id: string;
@@ -55,6 +61,11 @@ type AttemptItem = {
     confidence: string;
     explanation: string;
     execution_time_ms: number | null;
+    module_a_score?: string;
+    module_b_score?: string;
+    module_c_code?: string;
+    four_tier_category?: string;
+    risk_level?: string;
     concept_breakdown_json: {
       indicators?: IndicatorScore[];
       misconception_matches?: MisconceptionMatch[];
@@ -77,12 +88,25 @@ type QuestionReviewItem = {
   prompt: string;
   model_answer: string;
   status: string;
-  indicators: { id: string; label: string; description: string; weight: string; order_index: number }[];
+  indicators: {
+    id: string;
+    label: string;
+    description: string;
+    weight: string;
+    order_index: number;
+  }[];
   attempts: AttemptItem[];
 };
 
 type PackageReview = {
-  package: { id: string; code: string; title: string; description: string; subject_id: string; subject_name: string };
+  package: {
+    id: string;
+    code: string;
+    title: string;
+    description: string;
+    subject_id: string;
+    subject_name: string;
+  };
   student: { id: string; name: string; email: string };
   published_question_count: number;
   answered_count: number;
@@ -106,9 +130,51 @@ const SCORE_BADGE: Record<string, { label: string; cls: string }> = {
   MISSING: { label: "Tidak terpenuhi", cls: "badge-revoked" },
 };
 
+const CATEGORY_TO_LEVEL: Record<string, number> = {
+  SC: 4,
+  FN: 3,
+  FP: 2,
+  MSC: 2,
+  LK: 1,
+};
+
+const CATEGORY_META: Record<
+  string,
+  { label: string; desc: string; cardCls: string }
+> = {
+  FP: {
+    label: "False Positive",
+    desc: "Jawaban benar menutupi miskonsepsi.",
+    cardCls: "diag-card-fp",
+  },
+  MSC: {
+    label: "Miskonsepsi",
+    desc: "Miskonsepsi penuh dan diyakini secara konsisten.",
+    cardCls: "diag-card-msc",
+  },
+  FN: {
+    label: "False Negative",
+    desc: "Penalaran benar tetapi kesimpulan keliru.",
+    cardCls: "diag-card-fn",
+  },
+  LK: {
+    label: "Lack of Knowledge",
+    desc: "Kurang pengetahuan, ragu-ragu, atau menebak.",
+    cardCls: "diag-card-lk",
+  },
+  SC: {
+    label: "Sound Understanding",
+    desc: "Paham konsep secara utuh dan konsisten.",
+    cardCls: "diag-card-sc",
+  },
+};
+
 const fmtDate = (val: string) => {
   try {
-    return new Date(val).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+    return new Date(val).toLocaleString("id-ID", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
   } catch {
     return val;
   }
@@ -127,12 +193,13 @@ export default function StudentPackageReviewPage() {
   const [notice, setNotice] = useState("");
 
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
-  const [selectedAttemptByQuestion, setSelectedAttemptByQuestion] = useState<Record<string, number>>({});
-  const [tiers, setTiers] = useState<{ level: number; label: string }[]>([]);
+  const [selectedAttemptByQuestion, setSelectedAttemptByQuestion] = useState<
+    Record<string, number>
+  >({});
 
-  // Validation Form State for current attempt
+  // Validation Form State
   const [finalPct, setFinalPct] = useState("");
-  const [finalTier, setFinalTier] = useState<number | "">("");
+  const [finalCategory, setFinalCategory] = useState<string>("LK");
   const [feedback, setFeedback] = useState("");
   const [notes, setNotes] = useState("");
   const [confirms, setConfirms] = useState<Record<string, boolean>>({});
@@ -144,21 +211,14 @@ export default function StudentPackageReviewPage() {
     setFetching(true);
     setError("");
     try {
-      const res = await apiFetch<PackageReview>(`/questions/${setId}/students/${studentId}/review`);
+      const res = await apiFetch<PackageReview>(
+        `/questions/${setId}/students/${studentId}/review`,
+      );
       setData(res);
-
-      if (res.package.subject_id) {
-        try {
-          const t = await apiFetch<{ level: number; label: string }[]>(
-            `/validations/tiers?subject_id=${res.package.subject_id}`
-          );
-          setTiers(t);
-        } catch {
-          setTiers([1, 2, 3, 4].map((level) => ({ level, label: `Tier ${level}` })));
-        }
-      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Gagal memuat review paket.");
+      setError(
+        caught instanceof Error ? caught.message : "Gagal memuat review paket.",
+      );
     } finally {
       setFetching(false);
     }
@@ -180,12 +240,15 @@ export default function StudentPackageReviewPage() {
 
   const attemptsDesc: AttemptItem[] = useMemo(() => {
     if (!activeQuestion) return [];
-    return [...activeQuestion.attempts].sort((a, b) => b.attempt_no - a.attempt_no);
+    return [...activeQuestion.attempts].sort(
+      (a, b) => b.attempt_no - a.attempt_no,
+    );
   }, [activeQuestion]);
 
   const currentAttempt: AttemptItem | undefined = useMemo(() => {
     if (!activeQuestion || !attemptsDesc.length) return undefined;
-    const chosenAttemptNo = selectedAttemptByQuestion[activeQuestion.question_id];
+    const chosenAttemptNo =
+      selectedAttemptByQuestion[activeQuestion.question_id];
     if (chosenAttemptNo !== undefined) {
       const found = attemptsDesc.find((a) => a.attempt_no === chosenAttemptNo);
       if (found) return found;
@@ -200,7 +263,7 @@ export default function StudentPackageReviewPage() {
     const v = a.validation;
 
     setFinalPct(v?.final_percentage ?? a.percentage_correct);
-    setFinalTier(v?.final_tier_level ?? a.tier_level);
+    setFinalCategory(a.four_tier_category ?? "LK");
     setFeedback(v?.final_feedback ?? a.explanation);
     setNotes("");
     setShowRejectBox(false);
@@ -215,7 +278,10 @@ export default function StudentPackageReviewPage() {
   }, [currentAttempt]);
 
   const handleSelectAttempt = (questionId: string, attemptNo: number) => {
-    setSelectedAttemptByQuestion((prev) => ({ ...prev, [questionId]: attemptNo }));
+    setSelectedAttemptByQuestion((prev) => ({
+      ...prev,
+      [questionId]: attemptNo,
+    }));
   };
 
   const handleValidationSubmit = async (forcedStatus?: "REJECTED") => {
@@ -223,32 +289,33 @@ export default function StudentPackageReviewPage() {
     setError("");
     setNotice("");
 
-    // 1. Peringatan jika dosen belum memilih Tier atau memasukkan Skor
     if (forcedStatus !== "REJECTED") {
-      if (finalTier === "" || finalTier === null || finalTier === undefined) {
-        setError("Peringatan: Anda belum memilih Tier Akhir. Silakan pilih Tier sebelum menyimpan validasi.");
+      if (!finalCategory) {
+        setError(
+          "Peringatan: Anda belum memilih Diagnosis Akhir. Silakan pilih Diagnosis sebelum menyimpan validasi.",
+        );
         return;
       }
-
-      if (finalPct === "" || finalPct === null || isNaN(Number(finalPct))) {
-        setError("Peringatan: Silakan masukkan Skor Akhir (%) berupa angka valid.");
+      if (finalPct === "" || isNaN(Number(finalPct))) {
+        setError("Peringatan: Masukkan Skor Akhir (%) berupa angka valid.");
         return;
       }
-
       const numPct = Number(finalPct);
       if (numPct < 0 || numPct > 100) {
-        setError("Peringatan: Skor Akhir harus berada di rentang 0 sampai 100.");
+        setError(
+          "Peringatan: Skor Akhir harus berada di rentang 0 sampai 100.",
+        );
         return;
       }
-
       if (!feedback.trim()) {
         setError("Peringatan: Feedback untuk mahasiswa tidak boleh kosong.");
         return;
       }
     } else {
-      // Jika mode tolak, pastikan ada catatan alasan penolakan
       if (!notes.trim()) {
-        setError("Peringatan: Harap isi catatan alasan penolakan agar analisis ulang AI dapat diperbaiki.");
+        setError(
+          "Peringatan: Harap isi catatan alasan penolakan agar analisis ulang AI dapat diperbaiki.",
+        );
         return;
       }
     }
@@ -257,62 +324,66 @@ export default function StudentPackageReviewPage() {
 
     try {
       const a = currentAttempt.analysis;
-      
-      // 2. Tentukan otomatis apakah statusnya ACCEPTED, EDITED, atau REJECTED
       let decisionStatus: "ACCEPTED" | "EDITED" | "REJECTED" = "ACCEPTED";
       if (forcedStatus === "REJECTED") {
         decisionStatus = "REJECTED";
       } else {
-        const isScoreChanged = Number(finalPct) !== Number(a.percentage_correct);
-        const isTierChanged = Number(finalTier) !== Number(a.tier_level);
+        const isScoreChanged =
+          Math.abs(Number(finalPct) - Number(a.percentage_correct)) > 0.01;
+        const isCategoryChanged =
+          finalCategory !== (a.four_tier_category ?? "LK");
         const isFeedbackChanged = feedback.trim() !== a.explanation.trim();
-        if (isScoreChanged || isTierChanged || isFeedbackChanged) {
+        if (isScoreChanged || isCategoryChanged || isFeedbackChanged) {
           decisionStatus = "EDITED";
         }
       }
 
-      // 3. Susun body request
       const body: Record<string, unknown> = { status: decisionStatus };
       if (decisionStatus !== "REJECTED") {
         body.final_percentage = Number(finalPct);
-        body.final_tier_level = Number(finalTier);
+        body.final_tier_level =
+          CATEGORY_TO_LEVEL[finalCategory] ?? a.tier_level ?? 1;
         body.final_feedback = feedback.trim();
       }
       if (notes.trim()) {
         body.notes = notes.trim();
       }
 
-      const confList = Object.entries(confirms).map(([misconception_id, confirmed]) => ({
-        misconception_id,
-        confirmed,
-      }));
+      const confList = Object.entries(confirms).map(
+        ([misconception_id, confirmed]) => ({
+          misconception_id,
+          confirmed,
+        }),
+      );
       if (confList.length) {
         body.misconception_confirmations = confList;
       }
 
-      // 4. Kirim ke API Validasi
-      const res = await apiFetch<{ message: string; submission_status: string }>(
-        `/validations/${currentAttempt.analysis.id}/submit`,
-        {
-          method: "POST",
-          body: JSON.stringify(body),
-        }
-      );
+      const res = await apiFetch<{
+        message: string;
+        submission_status: string;
+      }>(`/validations/${currentAttempt.analysis.id}/submit`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
 
       setNotice(res.message);
       await load();
 
-      // 5. Pindah otomatis ke soal berikutnya yang masih butuh validasi (jika ada)
       if (data) {
         const nextPending = data.questions.findIndex(
-          (q, i) => i > activeQuestionIdx && q.attempts.some((att) => att.status === "PENDING_VALIDATION")
+          (q, i) =>
+            i > activeQuestionIdx &&
+            q.attempts.some((att) => att.status === "PENDING_VALIDATION"),
         );
         if (nextPending !== -1) {
           setActiveQuestionIdx(nextPending);
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal menyimpan validasi.");
+      setError(
+        err instanceof Error ? err.message : "Gagal menyimpan validasi.",
+      );
     } finally {
       setSubmittingValidation(false);
     }
@@ -321,16 +392,13 @@ export default function StudentPackageReviewPage() {
   const resetToAiValues = () => {
     if (!currentAttempt?.analysis) return;
     setFinalPct(currentAttempt.analysis.percentage_correct);
-    setFinalTier(currentAttempt.analysis.tier_level);
+    setFinalCategory(currentAttempt.analysis.four_tier_category ?? "LK");
     setFeedback(currentAttempt.analysis.explanation);
   };
 
-  const analysisUnavailableMessage =
-    currentAttempt?.status === "ANALYZING"
-      ? "Model AI sedang menganalisis percobaan ini."
-      : currentAttempt?.status === "ANALYSIS_FAILED"
-      ? "Analisis AI mengalami kendala dan dijadwalkan ulang oleh sistem."
-      : "Belum ada analisis AI yang tersedia untuk divalidasi.";
+  const categoryMeta = currentAttempt?.analysis?.four_tier_category
+    ? CATEGORY_META[currentAttempt.analysis.four_tier_category]
+    : null;
 
   if (loading || !user) return null;
 
@@ -351,13 +419,14 @@ export default function StudentPackageReviewPage() {
           icon={ClipboardCheck}
           eyebrow={
             <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
-              {data.package.code} • Evaluasi Paket
+              {data.package.code} • Evaluasi Paket Four-Tier
             </span>
           }
           action={
             <div className="flex items-center gap-2">
               <span className="badge badge-active">
-                Terjawab {data.answered_count} / {data.published_question_count} Soal
+                Terjawab {data.answered_count} / {data.published_question_count}{" "}
+                Soal
               </span>
               <span className="badge badge-role font-mono-ui">
                 {data.total_attempts_count} Percobaan Total
@@ -388,13 +457,14 @@ export default function StudentPackageReviewPage() {
       )}
 
       {fetching ? (
-        <p className="mt-8 text-sm text-on-surface-variant">Memuat data pengerjaan mahasiswa...</p>
+        <p className="mt-8 text-sm text-on-surface-variant">
+          Memuat data pengerjaan mahasiswa...
+        </p>
       ) : data && activeQuestion ? (
         <div className="mt-6 space-y-5">
-          {/* Unified Question & Attempt Navigator Bar (Exact Student Design Match) */}
+          {/* Navigator Bar */}
           <div className="border-b border-outline-variant/30 bg-surface-container-low/70 px-4 py-3 sm:px-6 rounded-2xl border border-outline-variant/40 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              {/* Left: Question Navigation Pills */}
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mr-1">
                   Navigasi soal:
@@ -403,20 +473,13 @@ export default function StudentPackageReviewPage() {
                   {data.questions.map((q, idx) => {
                     const isCurrent = idx === activeQuestionIdx;
                     const isAnswered = q.attempts.length > 0;
-                    // Check if there is any attempt waiting for lecturer review
                     const hasPendingValidation = q.attempts.some(
-                      (a) => a.status === "PENDING_VALIDATION"
+                      (a) => a.status === "PENDING_VALIDATION",
                     );
-                    // Check if question is fully validated (latest attempt is validated)
                     const isValidated =
                       q.attempts.length > 0 &&
                       q.attempts[0].status === "VALIDATED";
 
-                    // 4 visual states:
-                    // 1. Current Soal: Soft purple with dark text & ring
-                    // 2. Unvalidated (Needs Review): Amber / Yellow
-                    // 3. Validated: Emerald / Green
-                    // 4. Unanswered: Neutral / White
                     let pillClass = "";
                     if (isCurrent) {
                       pillClass =
@@ -428,7 +491,6 @@ export default function StudentPackageReviewPage() {
                       pillClass =
                         "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 font-medium";
                     } else if (isAnswered) {
-                      // Answered fallback (e.g. Analyzing or other state)
                       pillClass =
                         "bg-blue-500/20 text-blue-300 border-blue-500/40 hover:bg-blue-500/30 font-medium";
                     } else {
@@ -451,15 +513,21 @@ export default function StudentPackageReviewPage() {
                 </div>
               </div>
 
-              {/* Right: Attempt Dropdown (Percobaan 1, Percobaan 2) */}
+              {/* Attempt Selector Dropdown */}
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
                   Pilih percobaan:
                 </span>
                 <AppSelect
-                  value={currentAttempt ? String(currentAttempt.attempt_no) : ""}
+                  value={
+                    currentAttempt ? String(currentAttempt.attempt_no) : ""
+                  }
                   onValueChange={(val) => {
-                    if (val) handleSelectAttempt(activeQuestion.question_id, Number.parseInt(val, 10));
+                    if (val)
+                      handleSelectAttempt(
+                        activeQuestion.question_id,
+                        Number.parseInt(val, 10),
+                      );
                   }}
                   ariaLabel="Pilih Percobaan"
                   disabled={attemptsDesc.length === 0}
@@ -480,10 +548,8 @@ export default function StudentPackageReviewPage() {
 
           {/* DUAL COLUMN: Reading Flow (Left) vs. Sticky Action Desk (Right) */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-            
             {/* LEFT COLUMN: Question, Answer, and AI Analysis Reading Flow (lg:col-span-7) */}
             <div className="lg:col-span-7 space-y-4">
-              
               {/* 1. Question & Student Response */}
               <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
                 <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3 flex items-center justify-between">
@@ -491,7 +557,9 @@ export default function StudentPackageReviewPage() {
                     Soal Nomor {activeQuestion.order_index}
                   </span>
                   {currentAttempt ? (
-                    <span className={`badge ${STATUS_BADGE[currentAttempt.status]?.cls}`}>
+                    <span
+                      className={`badge ${STATUS_BADGE[currentAttempt.status]?.cls}`}
+                    >
                       {STATUS_BADGE[currentAttempt.status]?.label}
                     </span>
                   ) : (
@@ -518,19 +586,93 @@ export default function StudentPackageReviewPage() {
                     </p>
                   </div>
 
-                  <div className="border-t border-outline-variant/20 pt-3">
+                  {/* HEURISTIC FLAGS WARNING BANNER */}
+                  {currentAttempt?.heuristic_flags &&
+                    currentAttempt.heuristic_flags.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300 space-y-1">
+                        <div className="flex items-center gap-1.5 font-bold">
+                          <AlertTriangle size={14} /> Terdeteksi Penanda
+                          Otomatis Antar-Tier:
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {currentAttempt.heuristic_flags.map((flag) => (
+                            <span
+                              key={flag}
+                              className="font-mono-ui font-semibold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40"
+                            >
+                              {flag === "t1_berisi_alasan" &&
+                                "Tier 1 Memuat Kata Sebab"}
+                              {flag === "t3_kosong" &&
+                                "Tier 3 < 5 Kata / Kosong"}
+                              {flag === "t3_redundan" &&
+                                "Tier 3 Redundan dengan Tier 1"}
+                              {flag === "t3_hafalan" &&
+                                "Tier 3 Kutipan Hafalan Rumus"}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  {/* FOUR-TIER RESPONSES BREAKDOWN */}
+                  <div className="border-t border-outline-variant/20 pt-3 space-y-3">
                     <div className="flex items-center justify-between">
                       <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                        Teks Jawaban Mahasiswa
+                        Jawaban Mahasiswa (Four-Tier)
                       </h3>
                       {currentAttempt && (
                         <span className="text-[11px] text-on-surface-variant">
-                          Percobaan {currentAttempt.attempt_no} • {fmtDate(currentAttempt.submitted_at)}
+                          Percobaan {currentAttempt.attempt_no} •{" "}
+                          {fmtDate(currentAttempt.submitted_at)}
                         </span>
                       )}
                     </div>
-                    <div className="mt-2 whitespace-pre-wrap rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface font-mono-ui">
-                      {currentAttempt?.answer_text || "Mahasiswa belum mengumpulkan jawaban untuk butir ini."}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 1 — Kesimpulan
+                        </span>
+                        <p className="mt-1 text-sm font-semibold text-on-surface font-mono-ui">
+                          {currentAttempt?.tier1_answer ||
+                            currentAttempt?.answer_text ||
+                            "Belum ada jawaban"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 2 — Keyakinan Jawaban
+                        </span>
+                        <p className="mt-1 text-sm font-bold text-primary font-mono-ui">
+                          Skala {currentAttempt?.tier2_confidence ?? 1} / 6 (
+                          {(currentAttempt?.tier2_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Tidak Yakin"}
+                          )
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 3 — Alasan / Penalaran Ilmiah
+                        </span>
+                        <p className="mt-1 text-sm text-on-surface whitespace-pre-wrap font-mono-ui leading-relaxed">
+                          {currentAttempt?.tier3_reason ||
+                            currentAttempt?.answer_text ||
+                            "Belum ada alasan"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 4 — Keyakinan Alasan
+                        </span>
+                        <p className="mt-1 text-sm font-bold text-primary font-mono-ui">
+                          Skala {currentAttempt?.tier4_confidence ?? 1} / 6 (
+                          {(currentAttempt?.tier4_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Tidak Yakin"}
+                          )
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -538,7 +680,9 @@ export default function StudentPackageReviewPage() {
                 <footer className="border-t border-outline-variant/20 bg-surface-container-low/50 px-5 py-3 flex items-center justify-between">
                   <button
                     type="button"
-                    onClick={() => setActiveQuestionIdx((prev) => Math.max(0, prev - 1))}
+                    onClick={() =>
+                      setActiveQuestionIdx((prev) => Math.max(0, prev - 1))
+                    }
                     disabled={activeQuestionIdx === 0}
                     className="btn-secondary !py-1 !px-2.5 text-xs disabled:opacity-40"
                   >
@@ -549,7 +693,11 @@ export default function StudentPackageReviewPage() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => setActiveQuestionIdx((prev) => Math.min(data.questions.length - 1, prev + 1))}
+                    onClick={() =>
+                      setActiveQuestionIdx((prev) =>
+                        Math.min(data.questions.length - 1, prev + 1),
+                      )
+                    }
                     disabled={activeQuestionIdx === data.questions.length - 1}
                     className="btn-secondary !py-1 !px-2.5 text-xs disabled:opacity-40"
                   >
@@ -565,11 +713,13 @@ export default function StudentPackageReviewPage() {
                     <div className="flex items-center gap-2">
                       <BrainCircuit size={17} className="text-primary" />
                       <span className="text-xs font-bold uppercase tracking-wider text-on-surface">
-                        Analisis Diagnostik AI (Run #{currentAttempt.analysis.run_number})
+                        Evaluasi Modular AI (Run #
+                        {currentAttempt.analysis.run_number})
                       </span>
                     </div>
                     <span className="text-[11px] text-on-surface-variant">
-                      Kepercayaan: {(Number(currentAttempt.analysis.confidence) * 100).toFixed(0)}%
+                      Waktu Proses:{" "}
+                      {currentAttempt.analysis.execution_time_ms ?? "-"} ms
                     </span>
                   </header>
 
@@ -580,8 +730,12 @@ export default function StudentPackageReviewPage() {
                         Evaluasi Indikator Rubrik:
                       </h4>
                       <div className="space-y-2">
-                        {(currentAttempt.analysis.concept_breakdown_json?.indicators ?? []).map((ind) => {
-                          const badge = SCORE_BADGE[ind.score] ?? SCORE_BADGE.MISSING;
+                        {(
+                          currentAttempt.analysis.concept_breakdown_json
+                            ?.indicators ?? []
+                        ).map((ind) => {
+                          const badge =
+                            SCORE_BADGE[ind.score] ?? SCORE_BADGE.MISSING;
                           return (
                             <div
                               key={ind.order_index}
@@ -589,9 +743,12 @@ export default function StudentPackageReviewPage() {
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <span className="font-semibold text-on-surface text-xs">
-                                  #{ind.order_index} {ind.label} (bobot {ind.weight})
+                                  #{ind.order_index} {ind.label} (bobot{" "}
+                                  {ind.weight})
                                 </span>
-                                <span className={`badge ${badge.cls}`}>{badge.label}</span>
+                                <span className={`badge ${badge.cls}`}>
+                                  {badge.label}
+                                </span>
                               </div>
                               {ind.evidence && (
                                 <p className="mt-1 text-[11px] italic text-on-surface-variant leading-relaxed">
@@ -623,45 +780,55 @@ export default function StudentPackageReviewPage() {
                         </h4>
                       </div>
 
-                      {!(currentAttempt.analysis.concept_breakdown_json?.misconception_matches?.length) ? (
+                      {!currentAttempt.analysis.concept_breakdown_json
+                        ?.misconception_matches?.length ? (
                         <p className="text-on-surface-variant italic">
                           Tidak ada pola miskonsepsi yang terdeteksi.
                         </p>
                       ) : (
                         <div className="space-y-2">
-                          {currentAttempt.analysis.concept_breakdown_json.misconception_matches.map((m) => (
-                            <div
-                              key={m.misconception_id}
-                              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-semibold text-on-surface text-xs">{m.label}</span>
-                                <span className={`badge ${m.matched ? "badge-draft" : "badge-role"}`}>
-                                  {m.matched ? "Usulan AI" : "Tidak Cocok"}
-                                </span>
+                          {currentAttempt.analysis.concept_breakdown_json.misconception_matches.map(
+                            (m) => (
+                              <div
+                                key={m.misconception_id}
+                                className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-on-surface text-xs">
+                                    {m.label}
+                                  </span>
+                                  <span
+                                    className={`badge ${m.matched ? "badge-draft" : "badge-role"}`}
+                                  >
+                                    {m.matched ? "Usulan AI" : "Tidak Cocok"}
+                                  </span>
+                                </div>
+                                {m.reasoning && (
+                                  <p className="mt-1 text-[11px] text-on-surface-variant leading-relaxed">
+                                    {m.reasoning}
+                                  </p>
+                                )}
+                                <label className="mt-2.5 flex items-center gap-2 cursor-pointer font-medium text-on-surface text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      confirms[m.misconception_id] ?? m.matched
+                                    }
+                                    onChange={(e) =>
+                                      setConfirms((prev) => ({
+                                        ...prev,
+                                        [m.misconception_id]: e.target.checked,
+                                      }))
+                                    }
+                                    className="accent-primary h-3.5 w-3.5"
+                                  />
+                                  <span>
+                                    Konfirmasi keberadaan miskonsepsi ini
+                                  </span>
+                                </label>
                               </div>
-                              {m.reasoning && (
-                                <p className="mt-1 text-[11px] text-on-surface-variant leading-relaxed">
-                                  {m.reasoning}
-                                </p>
-                              )}
-                              <label className="mt-2.5 flex items-center gap-2 cursor-pointer font-medium text-on-surface text-xs">
-                                <input
-                                  id={`confirm-${m.misconception_id}`}
-                                  type="checkbox"
-                                  checked={confirms[m.misconception_id] ?? m.matched}
-                                  onChange={(e) =>
-                                    setConfirms((prev) => ({
-                                      ...prev,
-                                      [m.misconception_id]: e.target.checked,
-                                    }))
-                                  }
-                                  className="accent-primary h-3.5 w-3.5"
-                                />
-                                <span>Konfirmasi keberadaan miskonsepsi ini</span>
-                              </label>
-                            </div>
-                          ))}
+                            ),
+                          )}
                         </div>
                       )}
                     </div>
@@ -674,7 +841,11 @@ export default function StudentPackageReviewPage() {
             <div className="lg:col-span-5 lg:sticky lg:top-6 space-y-4">
               {!currentAttempt?.analysis ? (
                 <div className="glass-panel rounded-xl border border-outline-variant/40 p-6 text-center text-xs text-on-surface-variant">
-                  {analysisUnavailableMessage}
+                  {currentAttempt?.status === "ANALYZING"
+                    ? "Model AI sedang menganalisis percobaan ini."
+                    : currentAttempt?.status === "ANALYSIS_FAILED"
+                      ? "Analisis AI mengalami kendala dan dijadwalkan ulang oleh sistem."
+                      : "Belum ada analisis AI yang tersedia untuk divalidasi."}
                 </div>
               ) : (
                 <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40 shadow-sm">
@@ -696,18 +867,51 @@ export default function StudentPackageReviewPage() {
                   </header>
 
                   <div className="p-5 space-y-4">
-                    {/* Hasil Rekomendasi AI Header */}
+                    {/* 1. Kartu Kategori Diagnostik */}
+                    {categoryMeta && (
+                      <div className={`diag-card ${categoryMeta.cardCls}`}>
+                        <div className="flex items-center justify-between">
+                          <span className="diag-title">
+                            [{currentAttempt.analysis.four_tier_category}]{" "}
+                            {categoryMeta.label}
+                          </span>
+                        </div>
+                        <p className="diag-desc">{categoryMeta.desc}</p>
+                        <div className="diag-meta">
+                          <span>
+                            Modul A (T1):{" "}
+                            {currentAttempt.analysis.module_a_score}
+                          </span>
+                          <span>
+                            Modul B (T3):{" "}
+                            {currentAttempt.analysis.module_b_score}
+                          </span>
+                          {currentAttempt.analysis.module_c_code && (
+                            <span>
+                              Miskonsepsi:{" "}
+                              {currentAttempt.analysis.module_c_code}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 2. Box Hasil Prediksi AI (Bersih dari kata 'Tier 2') */}
                     <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 flex items-center justify-between">
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
-                          Hasil AI
+                          Hasil Prediksi AI
                         </p>
                         <div className="mt-1 flex items-baseline gap-2">
                           <span className="font-mono-ui text-xl font-extrabold text-primary">
-                            {Number(currentAttempt.analysis.percentage_correct).toFixed(1)}%
+                            {Number(
+                              currentAttempt.analysis.percentage_correct,
+                            ).toFixed(1)}
+                            %
                           </span>
-                          <span className="text-xs font-semibold text-on-surface-variant">
-                            Tier {currentAttempt.analysis.tier_level} ({currentAttempt.analysis.tier_label})
+                          <span className="text-xs font-bold text-on-surface">
+                            [{currentAttempt.analysis.four_tier_category}]{" "}
+                            {categoryMeta?.label}
                           </span>
                         </div>
                       </div>
@@ -721,10 +925,13 @@ export default function StudentPackageReviewPage() {
                       </button>
                     </div>
 
-                    {/* Direct Inputs for Final Score & Tier */}
+                    {/* 3. Input Skor Akhir & Dropdown Diagnosis Akhir (Kategori 4-Tier Murni) */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                       <div>
-                        <label htmlFor="final-pct" className="block text-[11px] font-bold uppercase text-on-surface-variant">
+                        <label
+                          htmlFor="final-pct"
+                          className="block text-[11px] font-bold uppercase text-on-surface-variant"
+                        >
                           Skor Akhir (%)
                         </label>
                         <input
@@ -741,22 +948,43 @@ export default function StudentPackageReviewPage() {
 
                       <div>
                         <span className="block text-[11px] font-bold uppercase text-on-surface-variant">
-                          Tier Akhir
+                          Diagnosis Akhir
                         </span>
                         <AppSelect
-                          value={String(finalTier)}
-                          onValueChange={(val) => setFinalTier(Number(val))}
+                          value={finalCategory}
+                          onValueChange={(val) => setFinalCategory(val)}
                           className="mt-1 w-full text-xs"
-                          ariaLabel="Pilih Tier Akhir"
-                          options={tiers.map((t) => ({
-                            value: String(t.level),
-                            label: `Tier ${t.level} - ${t.label}`,
-                          }))}
+                          ariaLabel="Pilih Diagnosis Akhir"
+                          options={[
+                            {
+                              value: "SC",
+                              label: "[SC] Sound Understanding",
+                            },
+                            {
+                              value: "LK",
+                              label: "[LK] Lack of Knowledge",
+                            },
+                            {
+                              value: "FP",
+                              label: "[FP] False Positive",
+                            },
+                            {
+                              value: "MSC",
+                              label: "[MSC] Misconception",
+                            },
+                            {
+                              value: "FN",
+                              label: "[FN] False Negative",
+                            },
+                          ]}
                         />
                       </div>
 
                       <div className="sm:col-span-2">
-                        <label htmlFor="feedback" className="block text-[11px] font-bold uppercase text-on-surface-variant">
+                        <label
+                          htmlFor="feedback"
+                          className="block text-[11px] font-bold uppercase text-on-surface-variant"
+                        >
                           Feedback untuk Mahasiswa
                         </label>
                         <textarea
@@ -770,23 +998,25 @@ export default function StudentPackageReviewPage() {
                       </div>
                     </div>
 
-                    {/* Conditional Rejection Notes Area */}
+                    {/* Rejection Notes Area */}
                     {showRejectBox && (
                       <div className="rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3 space-y-2">
                         <div className="flex items-center justify-between text-xs font-bold text-error">
                           <span className="inline-flex items-center gap-1.5">
-                            <XCircle size={14} /> Tolak &amp; Minta Analisis Ulang
+                            <XCircle size={14} /> Tolak &amp; Minta Analisis
+                            Ulang
                           </span>
                           <button
                             type="button"
                             onClick={() => setShowRejectBox(false)}
-                            className="text-[11px] text-on-surface-variant hover:text-on-surface"
+                            className="text-[11px] text-on-surface-variant hover:text-on-surface cursor-pointer"
                           >
                             Batal
                           </button>
                         </div>
                         <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                          Sertakan alasan penolakan. Catatan ini akan diumpankan ke worker AI saat re-analisis dijalankan.
+                          Sertakan alasan penolakan. Catatan ini akan diumpankan
+                          ke worker AI saat re-analisis dijalankan.
                         </p>
                         <textarea
                           rows={2}
@@ -800,7 +1030,7 @@ export default function StudentPackageReviewPage() {
                             type="button"
                             onClick={() => handleValidationSubmit("REJECTED")}
                             disabled={submittingValidation}
-                            className="btn-danger !py-1.5 !px-3 text-xs font-semibold"
+                            className="btn-danger !py-1.5 !px-3 text-xs font-semibold cursor-pointer"
                           >
                             Konfirmasi Tolak &amp; Re-analisis
                           </button>
@@ -808,10 +1038,12 @@ export default function StudentPackageReviewPage() {
                       </div>
                     )}
 
-                    {/* Optional Internal Notes when not in reject mode */}
                     {!showRejectBox && (
                       <div>
-                        <label htmlFor="internal-notes" className="block text-[11px] font-bold uppercase text-on-surface-variant">
+                        <label
+                          htmlFor="internal-notes"
+                          className="block text-[11px] font-bold uppercase text-on-surface-variant"
+                        >
                           Catatan Internal Dosen (Opsional)
                         </label>
                         <input
@@ -831,7 +1063,7 @@ export default function StudentPackageReviewPage() {
                         <button
                           type="button"
                           onClick={() => setShowRejectBox(true)}
-                          className="btn-danger !py-2 !px-3 text-xs font-semibold inline-flex items-center gap-1.5"
+                          className="btn-danger !py-2 !px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                           title="Tolak analisis AI dan jadwalkan analisis ulang"
                         >
                           <XCircle size={15} /> Tolak &amp; Re-analisis
@@ -844,10 +1076,12 @@ export default function StudentPackageReviewPage() {
                         type="button"
                         onClick={() => handleValidationSubmit()}
                         disabled={submittingValidation}
-                        className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm"
+                        className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
                       >
                         <ShieldCheck size={16} />
-                        {submittingValidation ? "Menyimpan..." : "Simpan Validasi"}
+                        {submittingValidation
+                          ? "Menyimpan..."
+                          : "Simpan Validasi"}
                       </button>
                     </div>
                   </div>

@@ -68,38 +68,47 @@ def _misconception_confirmations(breakdown: dict, confirmations: list) -> dict:
     return by_id
 
 
+DIAGNOSTIC_CATEGORIES = [
+    {
+        'code': 'SC',
+        'label': 'Sound Understanding',
+        'description': 'Paham konsep secara utuh dan konsisten.'
+    },
+    {
+        'code': 'LK',
+        'label': 'Lack of Knowledge',
+        'description': 'Kurang pengetahuan, ragu-ragu, atau indikasi menebak.'
+    },
+    {
+        'code': 'FP',
+        'label': 'False Positive',
+        'description': 'Jawaban benar menutupi miskonsepsi pada alasan.'
+    },
+    {
+        'code': 'MSC',
+        'label': 'Misconception',
+        'description': 'Miskonsepsi penuh dan diyakini secara konsisten.'
+    },
+    {
+        'code': 'FN',
+        'label': 'False Negative',
+        'description': 'Penalaran ilmiah benar tetapi kesimpulan akhir keliru.'
+    },
+]
+
 class ValidationTiersView(APIView):
-    """Tier diagnosis yang tersedia untuk subject (subject-specific menang atas universal).
-
-    Mirrors fn_resolve_diagnostic_tier's precedence so the P5 tier picker never
-    offers levels the proc would reject.
-    """
-
+    """Mengembalikan 5 Kategori Diagnostik Four-Tier untuk dropdown validasi dosen."""
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        subject_id = request.query_params.get('subject_id')
-        if not subject_id:
-            return Response({'detail': 'subject_id wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not is_lecturer_for_subject(request.user, subject_id):
-            return Response({'detail': 'Anda tidak berwenang untuk mata kuliah ini.'},
-                            status=status.HTTP_403_FORBIDDEN)
-
-        with connection.cursor() as cur:
-            cur.execute(
-                """
-                SELECT DISTINCT ON (dt.level) dt.level, dt.label, coalesce(dt.description, '')
-                FROM diagnostic_tiers dt
-                WHERE dt.is_active AND (dt.subject_id = %s OR dt.subject_id IS NULL)
-                ORDER BY dt.level, dt.subject_id NULLS LAST
-                """,
-                [subject_id],
-            )
-            rows = cur.fetchall()
-
         return Response([
-            {'level': r[0], 'label': r[1], 'description': r[2]} for r in rows
+            {
+                'level': item['code'],  # Gunakan kode kategori sebagai value
+                'label': f"[{item['code']}] {item['label']}",
+                'description': item['description']
+            }
+            for item in DIAGNOSTIC_CATEGORIES
         ])
 
 

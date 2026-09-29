@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   BrainCircuit,
   CheckCircle2,
   ClipboardCheck,
   Lightbulb,
-  PenLine,
+  RotateCcw,
   ShieldCheck,
   TriangleAlert,
   XCircle,
@@ -58,7 +59,16 @@ type Detail = {
       weight: string;
     }[];
   };
-  answer: { text: string; attempt_no: number; submitted_at: string };
+  answer: {
+    text: string;
+    tier1_answer?: string;
+    tier2_confidence?: number;
+    tier3_reason?: string;
+    tier4_confidence?: number;
+    heuristic_flags?: string[];
+    attempt_no: number;
+    submitted_at: string;
+  };
   llm: {
     model_identifier: string;
     prompt_version: string;
@@ -67,9 +77,21 @@ type Detail = {
     tier_label: string;
     confidence: string;
     explanation: string;
-    indicator_scores: IndicatorScore[];
-    misconception_matches: MisconceptionMatch[];
-    proposed_new_misconception: string | null;
+    module_a_score?: string;
+    module_b_score?: string;
+    module_c_code?: string;
+    four_tier_category?: string;
+    risk_level?: string;
+    concept_breakdown_json: {
+      indicators?: IndicatorScore[];
+      misconception_matches?: MisconceptionMatch[];
+      module_c?: {
+        code: string;
+        role: "CONFIRMED_MISCONCEPTION" | "CLASS_MAPPING_INDICATION";
+        role_label: string;
+      } | null;
+      heuristic_flags?: string[];
+    };
     execution_time_ms: number | null;
     created_at: string;
   };
@@ -84,39 +106,48 @@ type Detail = {
   } | null;
 };
 
-const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const CATEGORY_META: Record<
+  string,
+  { label: string; desc: string; cardCls: string }
+> = {
+  FP: {
+    label: "False Positive",
+    desc: "Jawaban benar menutupi miskonsepsi.",
+    cardCls: "diag-card-fp",
+  },
+  MSC: {
+    label: "Miskonsepsi",
+    desc: "Miskonsepsi penuh dan diyakini secara konsisten.",
+    cardCls: "diag-card-msc",
+  },
+  FN: {
+    label: "False Negative",
+    desc: "Penalaran benar tetapi kesimpulan keliru.",
+    cardCls: "diag-card-fn",
+  },
+  LK: {
+    label: "Lack of Knowledge",
+    desc: "Kurang pengetahuan, ragu-ragu, atau menebak.",
+    cardCls: "diag-card-lk",
+  },
+  SC: {
+    label: "Sound Understanding",
+    desc: "Paham konsep secara utuh dan konsisten.",
+    cardCls: "diag-card-sc",
+  },
+};
 
-const SCORE_META: Record<string, { label: string; cls: string }> = {
+const SCORE_BADGE: Record<string, { label: string; cls: string }> = {
   PRESENT: { label: "Terpenuhi", cls: "badge-active" },
   PARTIAL: { label: "Sebagian", cls: "badge-draft" },
-  MISSING: { label: "Tidak terpenuhi", cls: "badge-revoked" },
-};
-
-const fmtDate = (value: string) => {
-  try {
-    return new Date(value).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return value;
-  }
-};
-
-const fmtPct = (v: string | number | null | undefined) => {
-  if (v === null || v === undefined || v === "") return "-";
-  const n = typeof v === "number" ? v : Number.parseFloat(v);
-  return Number.isNaN(n) ? String(v) : `${n.toFixed(1)}%`;
-};
-
-/** Confidence is stored 0–1; display as percentage. */
-const fmtConf = (v: string) => {
-  const n = Number.parseFloat(v);
-  return Number.isNaN(n) ? v : `${(n * 100).toFixed(0)}%`;
+  MISSING: { label: "Tidak Terpenuhi", cls: "badge-revoked" },
 };
 
 export default function ValidationDetailPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams<{ id: string }>();
-  const analysisId = params?.id as string | undefined;
+  const analysisId = params?.id;
 
   const [data, setData] = useState<Detail | null>(null);
   const [fetching, setFetching] = useState(true);
@@ -124,46 +155,51 @@ export default function ValidationDetailPage() {
   const [notice, setNotice] = useState("");
   const [tiers, setTiers] = useState<{ level: number; label: string }[]>([]);
 
-  // Decision form state
-  const [mode, setMode] = useState<"ACCEPTED" | "EDITED" | "REJECTED">("ACCEPTED");
+  // Validation Form State
   const [finalPct, setFinalPct] = useState("");
   const [finalTier, setFinalTier] = useState<number | "">("");
   const [feedback, setFeedback] = useState("");
   const [notes, setNotes] = useState("");
   const [confirms, setConfirms] = useState<Record<string, boolean>>({});
+  const [showRejectBox, setShowRejectBox] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    if (!analysisId) {
-      setFetching(false);
-      setError("ID analisis tidak valid.");
-      return;
-    }
+    if (!analysisId) return;
     setFetching(true);
     setError("");
     try {
       const det = await apiFetch<Detail>(`/validations/${analysisId}`);
       setData(det);
-      setFinalPct(det.llm.percentage_correct);
-      setFinalTier(det.llm.tier_level);
-      setFeedback(det.llm.explanation);
+
+      const existing = det.existing_validation;
+      setFinalPct(existing?.final_percentage ?? det.llm.percentage_correct);
+      setFinalTier(existing?.final_tier_level ?? det.llm.tier_level);
+      setFeedback(existing?.final_feedback ?? det.llm.explanation);
+
       const initialConfirms: Record<string, boolean> = {};
-      det.llm.misconception_matches.forEach((m) => {
+      const matches =
+        det.llm.concept_breakdown_json?.misconception_matches ?? [];
+      matches.forEach((m) => {
         initialConfirms[m.misconception_id] =
           m.lecturer_confirmed !== undefined ? m.lecturer_confirmed : m.matched;
       });
       setConfirms(initialConfirms);
-      // Load available tiers for this subject (for the EDITED tier picker)
+
       try {
         const t = await apiFetch<{ level: number; label: string }[]>(
           `/validations/tiers?subject_id=${det.subject.id}`,
         );
         setTiers(t);
       } catch {
-        setTiers([1, 2, 3, 4].map((level) => ({ level, label: `Tier ${level}` })));
+        setTiers(
+          [1, 2, 3, 4].map((level) => ({ level, label: `Tier ${level}` })),
+        );
       }
     } catch (err) {
-      setError(errMsg(err));
+      setError(
+        err instanceof Error ? err.message : "Gagal memuat detail analisis.",
+      );
     } finally {
       setFetching(false);
     }
@@ -178,64 +214,120 @@ export default function ValidationDetailPage() {
     void load();
   }, [user, loading, router, load]);
 
-  const canEdit = data?.validatable === true;
-
-  const handleSubmit = async () => {
+  const handleValidationSubmit = async (forcedStatus?: "REJECTED") => {
     if (!analysisId || !data) return;
     setError("");
     setNotice("");
+
+    if (forcedStatus !== "REJECTED") {
+      if (finalTier === "" || finalTier === null) {
+        setError(
+          "Peringatan: Silakan pilih Tier Akhir sebelum menyimpan validasi.",
+        );
+        return;
+      }
+      if (finalPct === "" || Number.isNaN(Number(finalPct))) {
+        setError("Peringatan: Masukkan Skor Akhir (%) berupa angka valid.");
+        return;
+      }
+      const numPct = Number(finalPct);
+      if (numPct < 0 || numPct > 100) {
+        setError(
+          "Peringatan: Skor Akhir harus berada di rentang 0 sampai 100.",
+        );
+        return;
+      }
+      if (!feedback.trim()) {
+        setError("Peringatan: Feedback untuk mahasiswa tidak boleh kosong.");
+        return;
+      }
+    } else if (!notes.trim()) {
+      setError(
+        "Peringatan: Harap isi catatan alasan penolakan agar analisis ulang AI dapat diperbaiki.",
+      );
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const body: Record<string, unknown> = { status: mode };
-      if (mode !== "REJECTED") {
-        body.final_percentage = finalPct;
-        body.final_tier_level = finalTier;
-        body.final_feedback = feedback;
+      let decisionStatus: "ACCEPTED" | "EDITED" | "REJECTED" = "ACCEPTED";
+      if (forcedStatus === "REJECTED") {
+        decisionStatus = "REJECTED";
+      } else {
+        const isScoreChanged =
+          Number(finalPct) !== Number(data.llm.percentage_correct);
+        const isTierChanged = Number(finalTier) !== Number(data.llm.tier_level);
+        const isFeedbackChanged =
+          feedback.trim() !== data.llm.explanation.trim();
+        if (isScoreChanged || isTierChanged || isFeedbackChanged) {
+          decisionStatus = "EDITED";
+        }
       }
-      if (notes) body.notes = notes;
-      const confList = Object.entries(confirms).map(([misconception_id, confirmed]) => ({
-        misconception_id,
-        confirmed,
-      }));
-      if (confList.length) body.misconception_confirmations = confList;
 
-      const res = await apiFetch<{ message: string; submission_status: string }>(
-        `/validations/${analysisId}/submit`,
-        { method: "POST", body: JSON.stringify(body) },
+      const body: Record<string, unknown> = { status: decisionStatus };
+      if (decisionStatus !== "REJECTED") {
+        body.final_percentage = Number(finalPct);
+        body.final_tier_level = Number(finalTier);
+        body.final_feedback = feedback.trim();
+      }
+      if (notes.trim()) {
+        body.notes = notes.trim();
+      }
+
+      const confList = Object.entries(confirms).map(
+        ([misconception_id, confirmed]) => ({
+          misconception_id,
+          confirmed,
+        }),
       );
+      if (confList.length) {
+        body.misconception_confirmations = confList;
+      }
+
+      const res = await apiFetch<{
+        message: string;
+        submission_status: string;
+      }>(`/validations/${analysisId}/submit`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
       setNotice(res.message);
-      setData((prev) =>
-        prev ? { ...prev, submission_status: res.submission_status, validatable: false } : prev,
-      );
-      void load();
+      await load();
     } catch (err) {
-      setError(errMsg(err));
+      setError(
+        err instanceof Error ? err.message : "Gagal menyimpan validasi.",
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
-  const decisionChanged = useMemo(() => {
-    if (!data) return false;
-    return (
-      finalPct !== data.llm.percentage_correct ||
-      finalTier !== data.llm.tier_level ||
-      feedback !== data.llm.explanation
-    );
-  }, [data, finalPct, finalTier, feedback]);
+  const resetToAiValues = () => {
+    if (!data) return;
+    setFinalPct(data.llm.percentage_correct);
+    setFinalTier(data.llm.tier_level);
+    setFeedback(data.llm.explanation);
+  };
+
+  const categoryMeta = data?.llm.four_tier_category
+    ? CATEGORY_META[data.llm.four_tier_category]
+    : null;
+
+  const heuristicFlags =
+    data?.answer.heuristic_flags ??
+    data?.llm.concept_breakdown_json?.heuristic_flags ??
+    [];
 
   if (loading || !user) return null;
-
-  const indicatorByOrder = new Map(data?.question.indicators.map((i) => [i.order_index, i]));
 
   return (
     <PageContainer>
       <Link
         href="/validation"
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary"
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary no-underline"
       >
-        <ArrowLeft size={14} />
-        Kembali ke antrian validasi
+        <ArrowLeft size={14} /> Kembali ke antrian validasi
       </Link>
 
       {error && (
@@ -243,348 +335,500 @@ export default function ValidationDetailPage() {
           role="alert"
           className="mt-4 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"
         >
-          <TriangleAlert size={20} />
+          <TriangleAlert size={18} />
           <span>{error}</span>
         </div>
       )}
+
       {notice && (
         <div
           role="status"
           className="mt-4 flex items-center gap-3 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-4 text-sm text-primary"
         >
-          <CheckCircle2 size={20} />
+          <CheckCircle2 size={18} />
           <span>{notice}</span>
         </div>
       )}
 
       {fetching ? (
-        <p className="mt-8 text-sm text-on-surface-variant">Memuat detail analisis...</p>
-      ) : !data ? null : (
-        <>
-          <PageHeader className="mt-3" title={data.set.title} description={`${data.student.name} • Kode ${data.set.code} • ${data.subject.name} • Percobaan ke-${data.answer.attempt_no} • ${data.run_number > 1 ? `analisis ulang ke-${data.run_number}` : "analisis pertama"}`} icon={ClipboardCheck} eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ClipboardCheck size={14} /> Tinjau Analisis AI</span>} action={<div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-right">
-              <span
-                className={`badge ${
-                  data.submission_status === "PENDING_VALIDATION"
-                    ? "badge-draft"
-                    : data.submission_status === "VALIDATED"
-                      ? "badge-active"
-                      : "badge-revoked"
-                }`}
-              >
-                {data.submission_status === "PENDING_VALIDATION"
-                  ? "Menunggu validasi"
-                  : data.submission_status === "VALIDATED"
-                    ? "Tervalidasi"
-                    : data.submission_status}
+        <p className="mt-8 text-sm text-on-surface-variant">
+          Memuat data analisis...
+        </p>
+      ) : data ? (
+        <div className="mt-3 space-y-5">
+          <PageHeader
+            title={data.student.name}
+            description={`${data.set.title} • ${data.subject.name}`}
+            icon={ClipboardCheck}
+            eyebrow={
+              <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
+                {data.set.code} • Tinjauan Diagnostik Four-Tier
               </span>
-              <p className="mt-1 text-[11px] text-on-surface-variant">
-                Model {data.llm.model_identifier} • {data.llm.execution_time_ms ?? "-"}ms
-              </p>
-            </div>} />
-
-          {/* Side-by-side: student answer vs model answer */}
-          <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
-              <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Pertanyaan
-                </p>
-              </header>
-              <div className="px-5 py-4">
-                <p className="whitespace-pre-line text-sm text-on-surface">{data.question.prompt}</p>
-                <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Jawaban mahasiswa
-                </p>
-                <p className="mt-1 whitespace-pre-line rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 text-sm text-on-surface">
-                  {data.answer.text}
-                </p>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <span
+                  className={`badge ${
+                    data.submission_status === "PENDING_VALIDATION"
+                      ? "badge-draft"
+                      : data.submission_status === "VALIDATED"
+                        ? "badge-active"
+                        : "badge-revoked"
+                  }`}
+                >
+                  {data.submission_status === "PENDING_VALIDATION"
+                    ? "Menunggu Validasi"
+                    : data.submission_status === "VALIDATED"
+                      ? "Tervalidasi"
+                      : data.submission_status}
+                </span>
+                <span className="text-[11px] text-on-surface-variant font-mono-ui">
+                  Run #{data.run_number}
+                </span>
               </div>
-            </section>
+            }
+          />
 
-            <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
-              <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Jawaban model (acuan)
-                </p>
-              </header>
-              <div className="px-5 py-4">
-                <p className="whitespace-pre-line text-sm text-on-surface">
-                  {data.question.model_answer}
-                </p>
-              </div>
-            </section>
-          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* LEFT COLUMN: Reading Flow */}
+            <div className="lg:col-span-7 space-y-4">
+              <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+                <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant font-mono-ui">
+                    Pertanyaan &amp; Jawaban Model
+                  </span>
+                </header>
 
-          {/* LLM rubric scoring */}
-          <section className="glass-panel mt-5 overflow-hidden rounded-xl border border-outline-variant/40">
-            <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                <BrainCircuit size={15} color="var(--primary)" />
-                Penilaian rubrik AI •{" "}
-                <span className="font-mono-ui text-primary">
-                  {fmtPct(data.llm.percentage_correct)}
-                </span>{" "}
-                • Tier {data.llm.tier_level} ({data.llm.tier_label}) • keyakinan{" "}
-                {fmtConf(data.llm.confidence)}
-              </p>
-            </header>
-            <div className="divide-y divide-outline-variant/30">
-              {data.llm.indicator_scores.map((s) => {
-                const ind = indicatorByOrder.get(s.order_index);
-                const meta = SCORE_META[s.score] ?? { label: s.score, cls: "badge-role" };
-                return (
-                  <div key={s.order_index} className="px-5 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono-ui text-xs font-bold text-on-surface">
-                        #{s.order_index}
-                      </span>
-                      <span className="text-sm font-semibold text-on-surface">
-                        {ind?.label ?? s.label}
-                      </span>
-                      <span className="text-[11px] text-on-surface-variant">
-                        bobot {ind?.weight ?? s.weight}
-                      </span>
-                      <span className={`badge ${meta.cls}`}>{meta.label}</span>
+                <div className="p-5 space-y-4">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                      Pertanyaan Konseptual
+                    </h3>
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface font-medium leading-relaxed">
+                      {data.question.prompt}
+                    </p>
+                  </div>
+
+                  <div className="border-t border-outline-variant/20 pt-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                      Jawaban Referensi (Model Answer)
+                    </h3>
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface-variant leading-relaxed">
+                      {data.question.model_answer}
+                    </p>
+                  </div>
+
+                  {/* Heuristic Warnings */}
+                  {heuristicFlags.length > 0 && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300 space-y-1">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <AlertTriangle size={14} /> Penanda Otomatis Terdeteksi:
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {heuristicFlags.map((flag) => (
+                          <span
+                            key={flag}
+                            className="font-mono-ui font-semibold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40"
+                          >
+                            {flag === "t1_berisi_alasan" &&
+                              "Tier 1 Memuat Alasan"}
+                            {flag === "t3_kosong" && "Tier 3 Kosong / < 5 Kata"}
+                            {flag === "t3_redundan" &&
+                              "Tier 3 Redundan dengan Tier 1"}
+                            {flag === "t3_hafalan" &&
+                              "Tier 3 Kutipan Hafalan Rumus"}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    {s.evidence && (
-                      <p className="mt-1 text-xs italic text-on-surface-variant">
-                        Bukti: {s.evidence}
+                  )}
+
+                  {/* Four-Tier Student Response */}
+                  <div className="border-t border-outline-variant/20 pt-3 space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                      Jawaban Mahasiswa (Four-Tier)
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 1 — Kesimpulan
+                        </span>
+                        <p className="mt-1 text-sm font-semibold text-on-surface font-mono-ui">
+                          {data.answer.tier1_answer || data.answer.text || "-"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 2 — Keyakinan Jawaban
+                        </span>
+                        <p className="mt-1 text-sm font-bold text-primary font-mono-ui">
+                          Skala {data.answer.tier2_confidence ?? 1} / 6 (
+                          {(data.answer.tier2_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Tidak Yakin"}
+                          )
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 3 — Alasan Ilmiah
+                        </span>
+                        <p className="mt-1 text-sm text-on-surface whitespace-pre-wrap font-mono-ui leading-relaxed">
+                          {data.answer.tier3_reason || data.answer.text || "-"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
+                        <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                          Tier 4 — Keyakinan Alasan
+                        </span>
+                        <p className="mt-1 text-sm font-bold text-primary font-mono-ui">
+                          Skala {data.answer.tier4_confidence ?? 1} / 6 (
+                          {(data.answer.tier4_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Tidak Yakin"}
+                          )
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Modular AI Diagnostics */}
+              <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+                <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BrainCircuit size={17} className="text-primary" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-on-surface">
+                      Evaluasi Modular AI (Run #{data.run_number})
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-on-surface-variant font-mono-ui">
+                    {data.llm.execution_time_ms ?? "-"} ms
+                  </span>
+                </header>
+
+                <div className="p-5 space-y-4 text-xs">
+                  {/* Rubric Breakdown */}
+                  <div>
+                    <h4 className="font-bold uppercase tracking-wider text-on-surface-variant mb-2">
+                      Evaluasi Indikator Rubrik:
+                    </h4>
+                    <div className="space-y-2">
+                      {(data.llm.concept_breakdown_json?.indicators ?? []).map(
+                        (ind) => {
+                          const badge =
+                            SCORE_BADGE[ind.score] ?? SCORE_BADGE.MISSING;
+                          return (
+                            <div
+                              key={ind.order_index}
+                              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-on-surface text-xs">
+                                  #{ind.order_index} {ind.label} (bobot{" "}
+                                  {ind.weight})
+                                </span>
+                                <span className={`badge ${badge.cls}`}>
+                                  {badge.label}
+                                </span>
+                              </div>
+                              {ind.evidence && (
+                                <p className="mt-1 text-[11px] italic text-on-surface-variant leading-relaxed">
+                                  Bukti: &ldquo;{ind.evidence}&rdquo;
+                                </p>
+                              )}
+                            </div>
+                          );
+                        },
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-outline-variant/20 pt-3">
+                    <h4 className="font-bold uppercase tracking-wider text-on-surface-variant">
+                      Penjelasan Klinis AI:
+                    </h4>
+                    <p className="mt-1 whitespace-pre-wrap leading-relaxed text-on-surface text-xs">
+                      {data.llm.explanation}
+                    </p>
+                  </div>
+
+                  {/* Misconception Catalog Matches */}
+                  <div className="border-t border-outline-variant/20 pt-3">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Lightbulb size={14} className="text-primary" />
+                      <h4 className="font-bold uppercase tracking-wider text-on-surface-variant">
+                        Miskonsepsi Terdeteksi (Katalog &amp; Indikasi)
+                      </h4>
+                    </div>
+
+                    {!data.llm.concept_breakdown_json?.misconception_matches
+                      ?.length ? (
+                      <p className="text-on-surface-variant italic">
+                        Tidak ada pola miskonsepsi yang terdeteksi.
                       </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {data.llm.concept_breakdown_json.misconception_matches.map(
+                          (m) => (
+                            <div
+                              key={m.misconception_id}
+                              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-on-surface text-xs">
+                                  {m.label}
+                                </span>
+                                <span
+                                  className={`badge ${m.matched ? "badge-draft" : "badge-role"}`}
+                                >
+                                  {m.matched ? "Usulan AI" : "Tidak Cocok"}
+                                </span>
+                              </div>
+                              {m.reasoning && (
+                                <p className="mt-1 text-[11px] text-on-surface-variant leading-relaxed">
+                                  {m.reasoning}
+                                </p>
+                              )}
+                              <label className="mt-2.5 flex items-center gap-2 cursor-pointer font-medium text-on-surface text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    confirms[m.misconception_id] ?? m.matched
+                                  }
+                                  onChange={(e) =>
+                                    setConfirms((prev) => ({
+                                      ...prev,
+                                      [m.misconception_id]: e.target.checked,
+                                    }))
+                                  }
+                                  className="accent-primary h-3.5 w-3.5"
+                                />
+                                <span>
+                                  Konfirmasi keberadaan miskonsepsi ini
+                                </span>
+                              </label>
+                            </div>
+                          ),
+                        )}
+                      </div>
                     )}
                   </div>
-                );
-              })}
+                </div>
+              </section>
             </div>
-            <div className="border-t border-outline-variant/30 px-5 py-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                Penjelasan AI
-              </p>
-              <p className="mt-1 whitespace-pre-line text-sm text-on-surface">
-                {data.llm.explanation}
-              </p>
-            </div>
-          </section>
 
-          {/* Advisory misconception matches */}
-          <section className="glass-panel mt-5 overflow-hidden rounded-xl border border-outline-variant/40">
-            <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                <Lightbulb size={15} color="var(--primary)" />
-                Kecocokan miskonsepsi (advisory)
-              </p>
-              <p className="mt-1 text-[11px] text-on-surface-variant">
-                Usulan AI tidak memaksa tier. Konfirmasi atau tolak setiap kecocokan — keputusan
-                Anda yang tercatat.
-              </p>
-            </header>
-            <div className="px-5 py-4">
-              {data.llm.misconception_matches.length === 0 ? (
-                <p className="text-sm text-on-surface-variant">
-                  Tidak ada kecocokan miskonsepsi yang diusulkan AI.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {data.llm.misconception_matches.map((m) => {
-                    const confirmed = confirms[m.misconception_id] ?? m.matched;
-                    return (
-                      <div
-                        key={m.misconception_id}
-                        className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-semibold text-on-surface">{m.label}</span>
-                          <span className={`badge ${m.matched ? "badge-draft" : "badge-role"}`}>
-                            {m.matched ? "Cocok (usulan AI)" : "Tidak cocok"}
-                          </span>
-                          <span className="text-[11px] text-on-surface-variant">
-                            keyakinan {fmtConf(m.confidence)}
-                          </span>
-                        </div>
-                        {m.reasoning && (
-                          <p className="mt-1 text-xs italic text-on-surface-variant">
-                            {m.reasoning}
-                          </p>
-                        )}
-                        <div className="mt-2 flex items-center gap-4">
-                          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-on-surface">
-                            <input
-                              type="checkbox"
-                              disabled={!canEdit}
-                              checked={confirmed}
-                              onChange={(e) =>
-                                setConfirms((prev) => ({
-                                  ...prev,
-                                  [m.misconception_id]: e.target.checked,
-                                }))
-                              }
-                            />
-                            Konfirmasi miskonsepsi ini
-                          </label>
-                          {m.lecturer_confirmed !== undefined && (
-                            <span className="badge badge-active">Sudah ditinjau</span>
-                          )}
-                        </div>
+            {/* RIGHT COLUMN: Sticky Validation Desk */}
+            <div className="lg:col-span-5 lg:sticky lg:top-6 space-y-4">
+              <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40 shadow-sm">
+                <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={18} className="text-primary" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-on-surface">
+                      Keputusan Validasi Dosen
+                    </h4>
+                  </div>
+                  {data.existing_validation && (
+                    <span className="text-[11px] text-on-surface-variant">
+                      Status:{" "}
+                      <strong className="text-on-surface font-semibold">
+                        {data.existing_validation.status}
+                      </strong>
+                    </span>
+                  )}
+                </header>
+
+                <div className="p-5 space-y-4">
+                  {/* Matrix Category Banner */}
+                  {categoryMeta && (
+                    <div className={`diag-card ${categoryMeta.cardCls}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="diag-title">
+                          [{data.llm.four_tier_category}] {categoryMeta.label}
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-              {data.llm.proposed_new_misconception && (
-                <div className="mt-3 rounded-lg border border-dashed border-primary-fixed-dim bg-primary-fixed/40 p-3">
-                  <p className="text-xs font-semibold text-primary">
-                    Pola miskonsepsi baru yang diusulkan AI (belum ada di katalog):
-                  </p>
-                  <p className="mt-1 text-sm text-on-surface">
-                    {data.llm.proposed_new_misconception}
-                  </p>
-                </div>
-              )}
-            </div>
-          </section>
+                      <p className="diag-desc">{categoryMeta.desc}</p>
+                      <div className="diag-meta">
+                        <span>Modul A: {data.llm.module_a_score}</span>
+                        <span>Modul B: {data.llm.module_b_score}</span>
+                        {data.llm.module_c_code && (
+                          <span>Miskonsepsi: {data.llm.module_c_code}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-          {/* Decision panel */}
-          {canEdit ? (
-            <section className="glass-panel mt-5 overflow-hidden rounded-xl border border-outline-variant/40">
-              <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                  <ShieldCheck size={15} color="var(--primary)" />
-                  Keputusan validasi
-                </p>
-              </header>
-              <div className="px-5 py-4">
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMode("ACCEPTED")}
-                    className={`btn-secondary text-xs ${mode === "ACCEPTED" ? "!border-primary !text-primary" : ""}`}
-                  >
-                    <CheckCircle2 size={15} />
-                    Terima apa adanya
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode("EDITED")}
-                    className={`btn-secondary text-xs ${mode === "EDITED" ? "!border-primary !text-primary" : ""}`}
-                  >
-                    <PenLine size={15} />
-                    Koreksi
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode("REJECTED")}
-                    className={`btn-danger text-xs ${mode === "REJECTED" ? "!border-error" : ""}`}
-                  >
-                    <XCircle size={15} />
-                    Tolak & analisis ulang
-                  </button>
-                </div>
-
-                {mode !== "REJECTED" && (
-                  <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {/* AI Recommendation Summary */}
+                  <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 flex items-center justify-between">
                     <div>
-                      <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-                        Skor akhir (%)
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                        Hasil Prediksi AI
+                      </p>
+                      <div className="mt-1 flex items-baseline gap-2">
+                        <span className="font-mono-ui text-xl font-extrabold text-primary">
+                          {Number(data.llm.percentage_correct).toFixed(1)}%
+                        </span>
+                        <span className="text-xs font-semibold text-on-surface-variant">
+                          Tier {data.llm.tier_level} ({data.llm.tier_label})
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={resetToAiValues}
+                      className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 cursor-pointer font-medium"
+                      title="Kembalikan form ke nilai awal AI"
+                    >
+                      <RotateCcw size={12} /> Reset ke AI
+                    </button>
+                  </div>
+
+                  {/* Direct Controls for Score, Tier, and Feedback */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label
+                        htmlFor="final-pct-v"
+                        className="block text-[11px] font-bold uppercase text-on-surface-variant"
+                      >
+                        Skor Akhir (%)
                       </label>
                       <input
+                        id="final-pct-v"
                         type="number"
                         min={0}
                         max={100}
-                        step={0.01}
+                        step={0.1}
                         value={finalPct}
                         onChange={(e) => setFinalPct(e.target.value)}
-                        className="form-input mt-1"
+                        className="form-input mt-1 w-full text-xs font-mono-ui"
                       />
-                      {decisionChanged && mode === "ACCEPTED" && (
-                        <p className="mt-1 text-[11px] text-on-surface-variant">
-                          Nilai diubah dari usulan AI — pertimbangkan mode Koreksi.
-                        </p>
-                      )}
                     </div>
+
                     <div>
-                      <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-                        Tier akhir
-                      </label>
-                      <AppSelect value={String(finalTier)} onValueChange={(value) => setFinalTier(Number(value))} className="mt-1" ariaLabel="Tier akhir" options={tiers.map((tier) => ({ value: String(tier.level), label: `Tier ${tier.level} - ${tier.label}` }))} />
+                      <span className="block text-[11px] font-bold uppercase text-on-surface-variant">
+                        Tier Akhir
+                      </span>
+                      <AppSelect
+                        value={String(finalTier)}
+                        onValueChange={(val) => setFinalTier(Number(val))}
+                        className="mt-1 w-full text-xs"
+                        ariaLabel="Pilih Tier Akhir"
+                        options={tiers.map((t) => ({
+                          value: String(t.level),
+                          label: `Tier ${t.level} - ${t.label}`,
+                        }))}
+                      />
                     </div>
+
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-                        Umpan balik final untuk mahasiswa
+                      <label
+                        htmlFor="feedback-v"
+                        className="block text-[11px] font-bold uppercase text-on-surface-variant"
+                      >
+                        Feedback untuk Mahasiswa
                       </label>
                       <textarea
-                        rows={3}
+                        id="feedback-v"
+                        rows={4}
                         value={feedback}
                         onChange={(e) => setFeedback(e.target.value)}
-                        className="form-input mt-1"
+                        className="form-input mt-1 w-full text-xs leading-relaxed"
+                        placeholder="Tuliskan umpan balik atau klarifikasi konseptual..."
                       />
                     </div>
                   </div>
-                )}
 
-                {mode === "REJECTED" && (
-                  <div className="mt-4 rounded-lg border border-dashed border-error/40 bg-error-container/40 p-3 text-xs text-on-surface-variant">
-                    Menolak akan menandai submission REJECTED dan memasukkannya ke antrian analisis
-                    ulang worker. Catatan Anda dikirim ke LLM sebagai konteks perbaikan.
+                  {/* Rejection Mode */}
+                  {showRejectBox && (
+                    <div className="rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-error">
+                        <span className="inline-flex items-center gap-1.5">
+                          <XCircle size={14} /> Tolak &amp; Minta Analisis Ulang
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowRejectBox(false)}
+                          className="text-[11px] text-on-surface-variant hover:text-on-surface cursor-pointer"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                        Sertakan catatan penolakan. Catatan ini akan dikirimkan
+                        ke worker AI saat re-analisis dijalankan.
+                      </p>
+                      <textarea
+                        rows={2}
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Jelaskan alasan kenapa analisis ini ditolak..."
+                        className="form-input w-full text-xs"
+                      />
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleValidationSubmit("REJECTED")}
+                          disabled={submitting}
+                          className="btn-danger !py-1.5 !px-3 text-xs font-semibold"
+                        >
+                          Konfirmasi Tolak &amp; Re-analisis
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!showRejectBox && (
+                    <div>
+                      <label
+                        htmlFor="notes-v"
+                        className="block text-[11px] font-bold uppercase text-on-surface-variant"
+                      >
+                        Catatan Internal Dosen (Opsional)
+                      </label>
+                      <input
+                        id="notes-v"
+                        type="text"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Catatan untuk arsip atau penelitian..."
+                        className="form-input mt-1 w-full text-xs"
+                      />
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="pt-3 border-t border-outline-variant/20 flex items-center justify-between gap-3">
+                    {!showRejectBox ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowRejectBox(true)}
+                        className="btn-danger !py-2 !px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                        title="Tolak analisis AI dan jadwalkan analisis ulang"
+                      >
+                        <XCircle size={15} /> Tolak &amp; Re-analisis
+                      </button>
+                    ) : (
+                      <div />
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleValidationSubmit()}
+                      disabled={submitting}
+                      className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    >
+                      <ShieldCheck size={16} />
+                      {submitting ? "Menyimpan..." : "Simpan Validasi"}
+                    </button>
                   </div>
-                )}
-
-                <div className="mt-4">
-                  <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-                    Catatan internal (opsional{mode === "REJECTED" ? ", dikirim ke analisis ulang" : ""})
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="form-input mt-1"
-                    placeholder={
-                      mode === "REJECTED"
-                        ? "Jelaskan mengapa analisis ditolak agar analisis ulang lebih baik..."
-                        : "Catatan untuk audit..."
-                    }
-                  />
                 </div>
-
-                <div className="mt-4 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleSubmit}
-                    disabled={submitting}
-                    style={{ color: "#ffffff" }}
-                    className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-semibold shadow-sm transition-colors hover:bg-primary-container disabled:opacity-50"
-                  >
-                    <ShieldCheck size={16} color="#ffffff" />
-                    {submitting ? "Menyimpan..." : "Simpan keputusan"}
-                  </button>
-                </div>
-              </div>
-            </section>
-          ) : data.existing_validation ? (
-            <section className="glass-panel mt-5 overflow-hidden rounded-xl border border-outline-variant/40">
-              <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Sudah divalidasi
-                </p>
-              </header>
-              <div className="px-5 py-4 text-sm text-on-surface">
-                <p>
-                  <span className="badge badge-active">{data.existing_validation.status}</span>{" "}
-                  oleh {data.existing_validation.lecturer_name} •{" "}
-                  {fmtDate(data.existing_validation.validated_at)}
-                </p>
-                <p className="mt-2 text-xs text-on-surface-variant">
-                  Skor final {fmtPct(data.existing_validation.final_percentage)} • Tier{" "}
-                  {data.existing_validation.final_tier_level ?? "-"}
-                </p>
-                {data.existing_validation.final_feedback && (
-                  <p className="mt-2 whitespace-pre-line text-sm">
-                    {data.existing_validation.final_feedback}
-                  </p>
-                )}
-              </div>
-            </section>
-          ) : null}
-        </>
-      )}
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </PageContainer>
   );
 }

@@ -1,12 +1,10 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
-  CheckCircle2,
   ClipboardList,
   HelpCircle,
   LogOut,
@@ -39,7 +37,7 @@ type StudentSet = {
   questions: StudentQuestion[];
 };
 
-type FourTierAnswer = {
+type QuestionAnswer = {
   t1_answer: string;
   t2_confidence: number | null; // 1 - 6
   t3_reason: string;
@@ -47,15 +45,21 @@ type FourTierAnswer = {
 };
 
 const CONFIDENCE_LEVELS = [
-  { val: 1, label: "1 - Sangat Tidak Yakin", type: "TY" },
-  { val: 2, label: "2 - Tidak Yakin", type: "TY" },
-  { val: 3, label: "3 - Kurang Yakin", type: "TY" },
-  { val: 4, label: "4 - Cukup Yakin", type: "Y" },
-  { val: 5, label: "5 - Yakin", type: "Y" },
-  { val: 6, label: "6 - Sangat Yakin", type: "Y" },
+  { val: 1, label: "1", desc: "Sangat Ragu", type: "TY" },
+  { val: 2, label: "2", desc: "Tidak Yakin", type: "TY" },
+  { val: 3, label: "3", desc: "Kurang Yakin", type: "TY" },
+  { val: 4, label: "4", desc: "Cukup Yakin", type: "Y" },
+  { val: 5, label: "5", desc: "Yakin", type: "Y" },
+  { val: 6, label: "6", desc: "Sangat Yakin", type: "Y" },
 ];
 
-const REASON_KEYWORDS = ["karena", "sebab", "oleh karena itu", "dikarenakan", "karna"];
+const REASON_KEYWORDS = [
+  "karena",
+  "sebab",
+  "oleh karena itu",
+  "dikarenakan",
+  "karna",
+];
 
 function AnswerSetContent() {
   const { user, loading } = useAuth();
@@ -69,16 +73,16 @@ function AnswerSetContent() {
   const [data, setData] = useState<StudentSet | null>(null);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
-  const [answers, setAnswers] = useState<Record<string, FourTierAnswer>>({});
+  const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({});
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showExitWarningModal, setShowExitWarningModal] = useState(false);
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const storageKey = setId && user ? `exam_answers_${setId}_${user.id}` : null;
+  const storageKey = setId && user ? `exam_response_${setId}_${user.id}` : null;
 
-  // 1. Load Data Soal & Pulihkan Jawaban Tersimpan (Persistent State)
+  // 1. Load Data Soal & Pulihkan Jawaban
   const load = useCallback(async () => {
     if (!code) {
       setFetching(false);
@@ -88,11 +92,12 @@ function AnswerSetContent() {
     setFetching(true);
     setError("");
     try {
-      const res = await apiFetch<StudentSet>(`/student/sets?code=${encodeURIComponent(code)}`);
+      const res = await apiFetch<StudentSet>(
+        `/student/sets?code=${encodeURIComponent(code)}`,
+      );
       setData(res);
 
-      // Inisialisasi awal
-      const initial: Record<string, FourTierAnswer> = {};
+      const initial: Record<string, QuestionAnswer> = {};
       res.questions.forEach((q) => {
         initial[q.question_id] = {
           t1_answer: "",
@@ -102,14 +107,13 @@ function AnswerSetContent() {
         };
       });
 
-      // Cek apakah ada progress tersimpan di localStorage browser
       if (storageKey) {
         const saved = localStorage.getItem(storageKey);
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
             Object.assign(initial, parsed);
-            setStarted(true); // Langsung lanjutkan jika sudah ada pengerjaan
+            setStarted(true);
           } catch {}
         }
       }
@@ -131,13 +135,13 @@ function AnswerSetContent() {
     void load();
   }, [user, loading, router, load]);
 
-  // 2. Simpan Progres Otomatis setiap kali jawaban berubah
+  // 2. Simpan Progres Otomatis
   useEffect(() => {
     if (!storageKey || Object.keys(answers).length === 0) return;
     localStorage.setItem(storageKey, JSON.stringify(answers));
   }, [answers, storageKey]);
 
-  // 3. Peringatan Browser jika refresh / tutup tab
+  // 3. Peringatan Browser saat keluar/refresh
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (started && !submitting) {
@@ -158,7 +162,7 @@ function AnswerSetContent() {
       }
     : null;
 
-  const updateCurrent = (patch: Partial<FourTierAnswer>) => {
+  const updateCurrent = (patch: Partial<QuestionAnswer>) => {
     if (!activeQuestion) return;
     setAnswers((prev) => ({
       ...prev,
@@ -176,7 +180,9 @@ function AnswerSetContent() {
 
   const t1HasReasonKeyword = Boolean(
     currentAnswer?.t1_answer &&
-      REASON_KEYWORDS.some((kw) => currentAnswer.t1_answer.toLowerCase().includes(kw))
+    REASON_KEYWORDS.some((kw) =>
+      currentAnswer.t1_answer.toLowerCase().includes(kw),
+    ),
   );
 
   const isQuestionComplete = (qId: string) => {
@@ -194,19 +200,19 @@ function AnswerSetContent() {
     if (!data || !activeQuestion || !currentAnswer) return;
 
     if (!currentAnswer.t1_answer.trim()) {
-      setError("Isi kesimpulan singkat Anda pada Tier 1.");
+      setError("Harap isi kesimpulan jawaban Anda terlebih dahulu.");
       return;
     }
     if (currentAnswer.t2_confidence === null) {
-      setError("Pilih tingkat keyakinan Anda pada Tier 2.");
+      setError("Pilih tingkat keyakinan terhadap kesimpulan jawaban Anda.");
       return;
     }
     if (!currentAnswer.t3_reason.trim()) {
-      setError("Uraikan alasan ilmiah Anda pada Tier 3.");
+      setError("Harap isi alasan / penalaran ilmiah Anda terlebih dahulu.");
       return;
     }
     if (currentAnswer.t4_confidence === null) {
-      setError("Pilih tingkat keyakinan Anda pada Tier 4.");
+      setError("Pilih tingkat keyakinan terhadap alasan Anda.");
       return;
     }
 
@@ -214,12 +220,22 @@ function AnswerSetContent() {
     if (activeIndex < data.questions.length - 1) {
       setActiveIndex((idx) => idx + 1);
     } else {
+      const incomplete = data.questions.find(
+        (q) => !isQuestionComplete(q.question_id),
+      );
+      if (incomplete) {
+        setError(
+          `Pertanyaan nomor ${incomplete.order_index} belum diselesaikan secara lengkap.`,
+        );
+        setActiveIndex(data.questions.indexOf(incomplete));
+        return;
+      }
       setShowConfirmModal(true);
     }
   };
 
   const executeSubmit = async () => {
-    if (!data) return;
+    if (!data || !setId) return;
     setShowConfirmModal(false);
     setError("");
     setSubmitting(true);
@@ -229,10 +245,9 @@ function AnswerSetContent() {
         const a = answers[q.question_id];
         return {
           question_id: q.question_id,
-          answer_text: `[TIER 1]: ${a.t1_answer}\n[TIER 2]: ${a.t2_confidence}/6\n[TIER 3]: ${a.t3_reason}\n[TIER 4]: ${a.t4_confidence}/6`,
-          tier1_answer: a.t1_answer,
+          tier1_answer: a.t1_answer.trim(),
           tier2_confidence: a.t2_confidence,
-          tier3_reason: a.t3_reason,
+          tier3_reason: a.t3_reason.trim(),
           tier4_confidence: a.t4_confidence,
         };
       });
@@ -242,7 +257,6 @@ function AnswerSetContent() {
         body: JSON.stringify({ answers: payloadAnswers }),
       });
 
-      // Bersihkan penyimpanan lokal setelah submit berhasil
       if (storageKey) {
         localStorage.removeItem(storageKey);
       }
@@ -257,6 +271,7 @@ function AnswerSetContent() {
 
   if (loading || !user) return null;
 
+  // Layar Petunjuk Awal Sebelum Mulai
   if (data && !started) {
     return (
       <PageContainer>
@@ -270,28 +285,37 @@ function AnswerSetContent() {
         <section className="glass-panel mt-6 rounded-xl border border-outline-variant/40 p-8 space-y-5">
           <PageHeader
             title={data.title}
-            description="Format Ujian 4-Tier Diagnostik Miskonsepsi Klinis"
+            description="Format Evaluasi Pemahaman Konseptual"
             icon={ClipboardList}
           />
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 text-sm text-on-surface space-y-3">
             <h3 className="font-bold text-primary flex items-center gap-2">
-              <ClipboardList size={18} /> Aturan Pengerjaan 4-Tier:
+              <ClipboardList size={18} /> Petunjuk Pengisian Soal:
             </h3>
-            <ul className="list-disc pl-5 space-y-1.5 text-xs text-on-surface-variant leading-relaxed">
+            <ul className="list-disc pl-5 space-y-2 text-xs text-on-surface-variant leading-relaxed">
               <li>
-                <strong>Tier 1 (Kesimpulan):</strong> Tuliskan kesimpulan singkat Anda (maksimal 120 karakter).
+                <strong>1. Kesimpulan / Jawaban Singkat:</strong> Tuliskan
+                kesimpulan langsung atas pertanyaan, tanpa penjelasan panjang
+                (maksimal 120 karakter).
               </li>
               <li>
-                <strong>Tier 2 (Keyakinan Jawaban):</strong> Pilih skala 1–6 seberapa yakin Anda dengan jawaban Tier 1.
+                <strong>2. Tingkat Keyakinan Jawaban:</strong> Pilih skala
+                keyakinan 1–6 terhadap kesimpulan Anda (1–3: Ragu / Tidak Yakin,
+                4–6: Yakin).
               </li>
               <li>
-                <strong>Tier 3 (Alasan):</strong> Tuliskan dasar penalaran dan prinsip ilmiah yang Anda gunakan.
+                <strong>3. Alasan / Penalaran Ilmiah:</strong> Uraikan dasar
+                logika dan penjelasan konsep ilmiah mengapa Anda memilih
+                kesimpulan tersebut.
               </li>
               <li>
-                <strong>Tier 4 (Keyakinan Alasan):</strong> Pilih skala 1–6 seberapa yakin Anda dengan alasan di Tier 3.
+                <strong>4. Tingkat Keyakinan Alasan:</strong> Pilih skala
+                keyakinan 1–6 terhadap kebenaran alasan ilmiah yang Anda
+                berikan.
               </li>
-              <li className="text-emerald-400 font-semibold">
-                Jawaban tersimpan otomatis di perangkat ini. Jika terjadi gangguan jaringan, Anda dapat melanjutkan kembali kapan saja.
+              <li className="text-emerald-500 font-semibold">
+                Seluruh kolom terbuka langsung dan jawaban Anda tersimpan
+                otomatis pada perangkat ini.
               </li>
             </ul>
           </div>
@@ -301,7 +325,7 @@ function AnswerSetContent() {
             onClick={() => setStarted(true)}
             className="btn-primary mt-4 cursor-pointer"
           >
-            Mulai Ujian 4-Tier <Send size={16} />
+            Mulai Pengerjaan <Send size={16} />
           </button>
         </section>
       </PageContainer>
@@ -314,7 +338,6 @@ function AnswerSetContent() {
 
   return (
     <PageContainer>
-      {/* Header Bar dengan Tombol Keluar yang Memunculkan Warning */}
       <div className="flex items-center justify-between mb-4">
         <button
           type="button"
@@ -324,7 +347,8 @@ function AnswerSetContent() {
           <LogOut size={14} /> Keluar dari Lembar Soal
         </button>
         <span className="text-xs font-mono-ui font-semibold text-primary">
-          Soal Terisi Lengkap: {completedQuestionsCount} / {data?.questions.length ?? 0}
+          Soal Selesai: {completedQuestionsCount} /{" "}
+          {data?.questions.length ?? 0}
         </span>
       </div>
 
@@ -340,31 +364,32 @@ function AnswerSetContent() {
 
       {activeQuestion && currentAnswer && (
         <div className="space-y-5">
-          {/* Box Pertanyaan */}
-          <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40 p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
-              <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
-                Soal Nomor {activeQuestion.order_index} dari {data?.questions.length}
-              </span>
-            </div>
-
+          {/* Teks Pertanyaan Konseptual */}
+          <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40 p-6 space-y-3">
+            <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
+              Soal Nomor {activeQuestion.order_index} dari{" "}
+              {data?.questions.length}
+            </span>
             <p className="whitespace-pre-line text-base font-semibold text-on-surface leading-relaxed">
               {activeQuestion.prompt}
             </p>
           </section>
 
-          {/* TIER 1: Jawaban Kesimpulan Singkat (Bebas Edit, Max 120 Karakter) */}
+          {/* 1. Kesimpulan / Jawaban Singkat */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
-                  Tier 1: Jawaban / Kesimpulan Singkat
+                  1. Kesimpulan / Jawaban Singkat
                 </h3>
-                <p className="text-[11px] text-on-surface-variant">
-                  Tuliskan kesimpulan saja, tanpa penjelasan (maksimal 120 karakter).
+                <p className="text-[11px] text-on-surface-variant mt-0.5">
+                  Tuliskan kesimpulan langsung saja tanpa penjelasan panjang
+                  (maksimal 120 karakter).
                 </p>
               </div>
-              <span className="text-xs font-mono-ui text-on-surface-variant">
+              <span
+                className={`text-xs font-mono-ui font-bold ${currentAnswer.t1_answer.length > 120 ? "text-error" : "text-on-surface-variant"}`}
+              >
                 {currentAnswer.t1_answer.length} / 120
               </span>
             </div>
@@ -374,28 +399,31 @@ function AnswerSetContent() {
               maxLength={120}
               value={currentAnswer.t1_answer}
               onChange={(e) => updateCurrent({ t1_answer: e.target.value })}
-              placeholder="Tuliskan kesimpulan Anda..."
+              placeholder="Contoh: Resultan gayanya nol."
               className="form-input text-xs w-full"
             />
 
             {t1HasReasonKeyword && (
-              <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] text-amber-400">
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] text-amber-500">
                 <AlertTriangle size={15} className="shrink-0" />
                 <span>
-                  Catatan: Terdeteksi kata &quot;karena/sebab&quot;. Di Tier 1 cukup kesimpulannya saja, penjelasan dituliskan pada Tier 3.
+                  Catatan: Terdeteksi kata sebab (&ldquo;karena/sebab&rdquo;).
+                  Di bagian ini tuliskan kesimpulannya saja; alasan ilmiah
+                  diuraikan pada kolom alasan di bawah.
                 </span>
               </div>
             )}
           </section>
 
-          {/* TIER 2: Keyakinan Jawaban (Radio Button 1-6) */}
+          {/* 2. Tingkat Keyakinan pada Jawaban */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div>
               <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
-                Tier 2: Tingkat Keyakinan pada Jawaban Tier 1
+                2. Tingkat Keyakinan pada Jawaban
               </h3>
-              <p className="text-[11px] text-on-surface-variant">
-                Pilih skala keyakinan 1–6 (1–3 = Tidak Yakin, 4–6 = Yakin).
+              <p className="text-[11px] text-on-surface-variant mt-0.5">
+                Seberapa yakin Anda dengan kesimpulan jawaban di atas? (Skala
+                1–3: Tidak Yakin, 4–6: Yakin)
               </p>
             </div>
 
@@ -420,21 +448,24 @@ function AnswerSetContent() {
                       className="hidden"
                     />
                     <span className="font-mono-ui text-lg">{lvl.val}</span>
-                    <span className="text-[10px] mt-0.5">{lvl.type === "TY" ? "Tidak Yakin" : "Yakin"}</span>
+                    <span className="text-[10px] mt-0.5">
+                      {lvl.type === "TY" ? "Tidak Yakin" : "Yakin"}
+                    </span>
                   </label>
                 );
               })}
             </div>
           </section>
 
-          {/* TIER 3: Alasan Ilmiah */}
+          {/* 3. Alasan / Penalaran Ilmiah */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div>
               <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
-                Tier 3: Alasan Konseptual
+                3. Alasan / Penalaran Ilmiah
               </h3>
-              <p className="text-[11px] text-on-surface-variant">
-                Jelaskan mengapa Anda menjawab demikian secara ilmiah.
+              <p className="text-[11px] text-on-surface-variant mt-0.5">
+                Jelaskan mengapa Anda menjawab demikian secara ilmiah. Tuliskan
+                dasar logika dan hukum fisika Anda.
               </p>
             </div>
 
@@ -442,19 +473,20 @@ function AnswerSetContent() {
               rows={4}
               value={currentAnswer.t3_reason}
               onChange={(e) => updateCurrent({ t3_reason: e.target.value })}
-              placeholder="Uraikan alasan ilmiah Anda..."
+              placeholder="Uraikan penalaran ilmiah dan dasar konsep Anda di sini..."
               className="form-input text-xs w-full"
             />
           </section>
 
-          {/* TIER 4: Keyakinan Alasan (Radio Button 1-6) */}
+          {/* 4. Tingkat Keyakinan pada Alasan */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div>
               <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
-                Tier 4: Tingkat Keyakinan pada Alasan Tier 3
+                4. Tingkat Keyakinan pada Alasan
               </h3>
-              <p className="text-[11px] text-on-surface-variant">
-                Seberapa yakin Anda dengan ketepatan alasan ilmiah di Tier 3?
+              <p className="text-[11px] text-on-surface-variant mt-0.5">
+                Seberapa yakin Anda dengan kebenaran penalaran ilmiah yang Anda
+                berikan? (Skala 1–3: Tidak Yakin, 4–6: Yakin)
               </p>
             </div>
 
@@ -479,7 +511,9 @@ function AnswerSetContent() {
                       className="hidden"
                     />
                     <span className="font-mono-ui text-lg">{lvl.val}</span>
-                    <span className="text-[10px] mt-0.5">{lvl.type === "TY" ? "Tidak Yakin" : "Yakin"}</span>
+                    <span className="text-[10px] mt-0.5">
+                      {lvl.type === "TY" ? "Tidak Yakin" : "Yakin"}
+                    </span>
                   </label>
                 );
               })}
@@ -491,7 +525,10 @@ function AnswerSetContent() {
             <button
               type="button"
               disabled={activeIndex === 0}
-              onClick={() => setActiveIndex((idx) => Math.max(0, idx - 1))}
+              onClick={() => {
+                setError("");
+                setActiveIndex((idx) => Math.max(0, idx - 1));
+              }}
               className="btn-secondary text-xs !py-2 !px-4 disabled:opacity-30 cursor-pointer"
             >
               ← Soal Sebelumnya
@@ -507,7 +544,9 @@ function AnswerSetContent() {
               className="btn-primary text-xs !py-2.5 !px-6 cursor-pointer"
             >
               {activeIndex === data.questions.length - 1 ? (
-                <>Selesai &amp; Kumpulkan Semua <Send size={14} /></>
+                <>
+                  Selesai &amp; Kumpulkan Semua <Send size={14} />
+                </>
               ) : (
                 <>Lanjut ke Soal Berikutnya →</>
               )}
@@ -516,18 +555,24 @@ function AnswerSetContent() {
         </div>
       )}
 
-      {/* Navigasi Pill Nomor Soal */}
+      {/* Pill Nomor Soal untuk Pindah Cepat */}
       {data && data.questions.length > 1 && (
-        <nav className="mt-6 flex flex-wrap gap-2" aria-label="Navigasi nomor soal">
+        <nav
+          className="mt-6 flex flex-wrap gap-2"
+          aria-label="Navigasi nomor soal"
+        >
           {data.questions.map((q, idx) => {
             const isDone = isQuestionComplete(q.question_id);
             const isCurrent = idx === activeIndex;
 
-            let pillStyle = "border-outline-variant/50 text-on-surface bg-surface-container-low";
+            let pillStyle =
+              "border-outline-variant/50 text-on-surface bg-surface-container-low";
             if (isCurrent) {
-              pillStyle = "border-primary bg-primary text-white shadow-sm ring-2 ring-primary/40 font-bold";
+              pillStyle =
+                "border-primary bg-primary text-white shadow-sm ring-2 ring-primary/40 font-bold";
             } else if (isDone) {
-              pillStyle = "border-emerald-500/50 bg-emerald-500/15 text-emerald-400 font-semibold";
+              pillStyle =
+                "border-emerald-500/50 bg-emerald-500/15 text-emerald-400 font-semibold";
             }
 
             return (
@@ -549,7 +594,10 @@ function AnswerSetContent() {
 
       {/* Modal Peringatan Keluar */}
       {showExitWarningModal && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog">
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+        >
           <div className="w-full max-w-md rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2 text-rose-400">
@@ -564,7 +612,9 @@ function AnswerSetContent() {
               </button>
             </div>
             <p className="text-sm text-on-surface-variant leading-relaxed">
-              Ujian sedang berlangsung. Seluruh jawaban yang sudah Anda ketikkan <strong>tersimpan aman secara otomatis</strong> di perangkat ini. Anda dapat masuk kembali kapan saja untuk melanjutkan.
+              Jawaban yang telah Anda isi{" "}
+              <strong>tersimpan aman di perangkat ini</strong>. Anda dapat
+              kembali kapan saja untuk melanjutkan.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button
@@ -586,13 +636,17 @@ function AnswerSetContent() {
         </div>
       )}
 
-      {/* Modal Konfirmasi Kumpulkan Semua */}
+      {/* Modal Konfirmasi Pengumpulan Akhir */}
       {showConfirmModal && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog">
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+        >
           <div className="w-full max-w-md rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2">
-                <HelpCircle size={18} className="text-primary" /> Kumpulkan Ujian 4-Tier?
+                <HelpCircle size={18} className="text-primary" /> Kumpulkan
+                Seluruh Jawaban?
               </h3>
               <button
                 type="button"
@@ -603,7 +657,9 @@ function AnswerSetContent() {
               </button>
             </div>
             <p className="text-sm text-on-surface-variant leading-relaxed">
-              Anda akan mengumpulkan jawaban untuk <strong>{data?.questions.length} butir soal</strong>. Jawaban akan langsung dikirim ke database untuk antrean evaluasi klinis.
+              Seluruh pertanyaan pada{" "}
+              <strong>{data?.questions.length} butir soal</strong> telah Anda
+              lengkapi. Jawaban akan dikirimkan untuk evaluasi pemahaman konsep.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button

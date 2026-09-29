@@ -167,6 +167,30 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
                 })
         return attrs
 
+class FourTierSubmissionItemSerializer(serializers.Serializer):
+    question_id = serializers.UUIDField()
+    tier1_answer = serializers.CharField(max_length=120, allow_blank=False)
+    tier2_confidence = serializers.IntegerField(min_value=1, max_value=6)
+    tier3_reason = serializers.CharField(min_length=1, max_length=10000, allow_blank=False)
+    tier4_confidence = serializers.IntegerField(min_value=1, max_value=6)
+
+    def validate_tier1_answer(self, val):
+        val = val.strip()
+        if not val:
+            raise serializers.ValidationError("Tier 1 kesimpulan tidak boleh kosong.")
+        if len(val) > 120:
+            raise serializers.ValidationError("Tier 1 kesimpulan dibatasi maksimal 120 karakter.")
+        return val
+
+
+class FourTierPackageSubmissionSerializer(serializers.Serializer):
+    answers = FourTierSubmissionItemSerializer(many=True, allow_empty=False)
+
+    def validate_answers(self, answers):
+        q_ids = [a['question_id'] for a in answers]
+        if len(q_ids) != len(set(q_ids)):
+            raise serializers.ValidationError("Setiap pertanyaan hanya boleh dijawab satu kali.")
+        return answers
 
 # ============================================================================
 # SPRINT 3: STUDENT SUBMISSION SERIALIZERS (UC-01 / P3)

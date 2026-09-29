@@ -1,33 +1,29 @@
 """P4 worker — Django management command.
 
-No Celery in this project (verified: not in requirements/settings/compose).
-This is a deliberately simple polling worker over `idx_submissions_active_queue`:
-
+Polling worker over `idx_submissions_active_queue`:
     python manage.py analyze_submissions            # one pass over the queue
-    python manage.py analyze_submissions --loop     # keep polling (dev worker)
+    python manage.py analyze_submissions --loop     # keep polling (daemon)
     python manage.py analyze_submissions --limit 5  # cap per pass
 
-Queue selection (matches sp_mark_submission_analyzing's legal source states):
+Queue selection:
     SUBMITTED        — never analyzed
-    REJECTED         — lecturer rejected the analysis; re-run with notes
-    ANALYSIS_FAILED  — retry, up to LLM_MAX_RUNS analyses per submission
+    REJECTED         — lecturer rejected; re-run with notes up to LLM_MAX_RUNS
+    ANALYSIS_FAILED  — retry, up to LLM_MAX_RUNS per submission
 
-Zombie recovery: submissions stuck in ANALYZING (worker died mid-run) are
-reclaimed after ANALYZING_TIMEOUT_MINUTES.
-
-Claims are atomic: `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`
-so multiple workers never process the same submission.
+Zombies in ANALYZING > 10 min are marked ANALYSIS_FAILED.
+Claims use SELECT ... FOR UPDATE SKIP LOCKED.
 """
 
 import logging
 import time
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import connection
 from django.utils import timezone
 
-from api.llm import MAX_ANALYSIS_RUNS, analyze_submission
+from api.llm import analyze_submission
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +37,18 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--loop', action='store_true', help='keep polling instead of one pass')
         parser.add_argument('--limit', type=int, default=25, help='max submissions per pass')
-        parser.add_argument('--interval', type=int, default=POLL_INTERVAL_SECONDS,
-                            help='poll interval seconds with --loop')
+        parser.add_argument(
+            '--interval',
+            type=int,
+            default=POLL_INTERVAL_SECONDS,
+            help='poll interval seconds with --loop',
+        )
 
     def handle(self, *args, **options):
-        logging.basicConfig(level=logging.INFO,
-                            format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+        )
         while True:
             processed = self._pass(options['limit'])
             if not options['loop']:
@@ -68,7 +70,6 @@ class Command(BaseCommand):
         return processed
 
     def _recover_zombies(self):
-        """ANALYZING rows older than the timeout belong to a dead worker -> ANALYSIS_FAILED."""
         cutoff = timezone.now() - timedelta(minutes=ANALYZING_TIMEOUT_MINUTES)
         with connection.cursor() as cur:
             cur.execute(
@@ -91,11 +92,7 @@ class Command(BaseCommand):
                 logger.warning('Zombie recovery failed for %s: %s', sid, e)
 
     def _claim_next(self):
-        """Atomically take the next queueable submission id (or None).
-
-        REJECTED is only re-run while run budget remains; beyond that it waits
-        for a lecturer to EDIT-validate instead of looping forever.
-        """
+        max_runs = getattr(settings, 'LLM_MAX_RUNS', 3)
         with connection.cursor() as cur:
             cur.execute(
                 """
@@ -117,7 +114,7 @@ class Command(BaseCommand):
                 )
                 RETURNING id;
                 """,
-                [MAX_ANALYSIS_RUNS],
+                [max_runs],
             )
             row = cur.fetchone()
         return str(row[0]) if row else None

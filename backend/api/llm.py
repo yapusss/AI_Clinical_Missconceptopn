@@ -1,27 +1,25 @@
-"""LLM analysis pipeline (P4) — rubric-only grading.
+"""Four-Tier AI Diagnostic Pipeline (v2.6 - Calibrated).
 
-Design (locked decisions 2026-09-20):
-- Rubric-only: model answer + concept indicators + attached misconceptions.
-  No RAG (knowledge_chunks is empty; ingestion is P1, deferred).
-- Deterministic math: percentage_correct is computed HERE from per-indicator
-  scores (PRESENT=1.0, PARTIAL=0.5, MISSING=0.0, weighted). The LLM never
-  supplies the final percentage — its number is ignored.
-- Advisory misconception matches: the LLM proposes matches against attached
-  misconceptions; the lecturer confirms/denies each in P5 validation. A match
-  never forces a tier.
-- Provider-agnostic: any OpenAI-compatible endpoint (dev: local Ollama;
-  production: stakeholder-supplied external API). Configured via
-  LLM_BASE_URL / LLM_API_KEY / LLM_MODEL env (see settings).
+1. Heuristic Pre-Check (Rules Engine, Non-AI, PDF Hal. 4):
+   - t1_berisi_alasan: Tier 1 memuat kata sebab ('karena', 'sebab', dll.)
+   - t3_kosong: Tier 3 kosong atau < 5 kata
+   - t3_redundan: Tier 3 hanya menyalin ulang isi Tier 1 tanpa penurunan baru
+   - t3_hafalan: Tier 3 hanya mengutip nama/bunyi hukum tanpa penerapan variabel/matematika
 
-State contract (all lifecycle writes go through stored procedures):
-  SUBMITTED|REJECTED|ANALYSIS_FAILED --sp_mark_submission_analyzing--> ANALYZING
-  ANALYZING --sp_record_llm_analysis--> PENDING_VALIDATION
-  ANALYZING --sp_mark_submission_failed--> ANALYSIS_FAILED
+2. Modular AI Grading:
+   - Module A: Menilai kesimpulan Tier 1 (maks 120 karakter) -> BENAR / BENAR_SEBAGIAN / SALAH
+   - Module B: Menilai alasan Tier 3 (termasuk penurunan aljabar/matematis) -> BENAR / SALAH
+   - Module C: Menilai miskonsepsi dari katalog jika Modul B bernilai SALAH
 
-`suggested_materials_json` is always [] until the KB exists (NOT NULL column;
-the LLM is not asked for materials it cannot ground — no hallucinated refs).
+3. Deterministic Decision Matrix (16 Rules, PDF Hal. 3):
+   - Memetakan kombinasi (T1, T2, T3, T4) ke kategori SC, LK, FP, FN, MSC.
+
+4. Deterministic Percentage Scoring (Option A):
+   - Tier 1: Maksimal 30.00%
+   - Tier 3: Maksimal 70.00% (proporsional terhadap bobot indikator rubrik)
 """
 
+import dataclasses
 import json
 import logging
 import re
@@ -35,19 +33,56 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = 'rubric-v1'
-INDICATOR_SCORES = {'PRESENT': Decimal('1.0'), 'PARTIAL': Decimal('0.5'), 'MISSING': Decimal('0.0')}
-MAX_ANALYSIS_RUNS = int(getattr(settings, 'LLM_MAX_RUNS', 3))
+PROMPT_VERSION = 'four-tier-v2.6'
 LLM_TEMPERATURE = 0.1
-LLM_MAX_RETRIES = 2  # retries within one analysis attempt (parse/API errors)
+LLM_MAX_RETRIES = 2
+
+# 16-Row Deterministic Decision Matrix (T1, T2_is_yakin, T3, T4_is_yakin)
+MATRIX_RULES = {
+    ('B', True,  'B', True):  ('SC',  'Paham konsep utuh',                   'RENDAH'),
+    ('B', True,  'B', False): ('LK',  'Benar, ragu pada penalaran',          'SEDANG_RENDAH'),
+    ('B', False, 'B', True):  ('LK',  'Benar, ragu pada jawaban',            'SEDANG_RENDAH'),
+    ('B', False, 'B', False): ('LK',  'Indikasi menebak',                    'SEDANG_RENDAH'),
+    ('B', True,  'S', True):  ('FP',  'Jawaban benar menutupi miskonsepsi',   'TERTINGGI'),
+    ('B', True,  'S', False): ('LK',  'Penalaran salah tapi ragu',           'SEDANG_RENDAH'),
+    ('B', False, 'S', True):  ('LK',  'Pola tidak konsisten',                'SEDANG_RENDAH'),
+    ('B', False, 'S', False): ('LK',  'Pengetahuan lemah',                   'SEDANG_RENDAH'),
+    ('S', True,  'B', True):  ('FN',  'Penalaran benar, jawaban keliru',     'SEDANG'),
+    ('S', True,  'B', False): ('LK',  'Tidak konsisten',                     'SEDANG_RENDAH'),
+    ('S', False, 'B', True):  ('LK',  'Tidak konsisten',                     'SEDANG_RENDAH'),
+    ('S', False, 'B', False): ('LK',  'Pengetahuan lemah',                   'SEDANG_RENDAH'),
+    ('S', True,  'S', True):  ('MSC', 'Miskonsepsi penuh, diyakini',         'TINGGI'),
+    ('S', True,  'S', False): ('LK',  'Salah tapi ragu',                     'SEDANG_RENDAH'),
+    ('S', False, 'S', True):  ('LK',  'Salah tapi ragu',                     'SEDANG_RENDAH'),
+    ('S', False, 'S', False): ('LK',  'Tidak paham konsep',                  'SEDANG_RENDAH'),
+}
+
+INTERVENTIONS = {
+    'FP': (
+        "Fokus Klarifikasi: Mahasiswa memperoleh jawaban akhir yang benar, tetapi alasan atau proses berpikir yang digunakan masih kurang tepat. "
+        "Dosen disarankan menggali kembali cara berpikir mahasiswa melalui pertanyaan pemantik agar mahasiswa menyadari dan memperbaiki kesalahan penalarannya."
+    ),
+    'MSC': (
+        "Fokus Remediasi Konsep: Mahasiswa memiliki pemahaman konsep yang keliru dan meyakininya sebagai konsep yang benar. "
+        "Dosen disarankan membantu membangun ulang pemahaman mahasiswa melalui contoh pembanding, eksperimen sederhana, simulasi, atau penjelasan konsep yang lebih mendalam."
+    ),
+    'FN': (
+        "Fokus Perbaikan Penalaran: Mahasiswa sudah memahami konsep dan langkah analisis dengan baik, tetapi masih kurang tepat dalam menarik kesimpulan akhir. "
+        "Dosen cukup memberikan arahan untuk membantu mahasiswa memeriksa kembali hubungan antara proses berpikir dan hasil kesimpulannya."
+    ),
+    'LK': (
+        "Fokus Penguatan Dasar: Mahasiswa masih mengalami kesulitan dalam memahami konsep dasar atau belum memiliki keyakinan yang cukup terhadap jawabannya. "
+        "Dosen disarankan mengarahkan mahasiswa untuk meninjau kembali definisi, prinsip dasar, dan contoh penerapan konsep terkait."
+    ),
+    'SC': (
+        "Fokus Pengembangan Lanjutan: Mahasiswa menunjukkan pemahaman konsep yang baik dan mampu memberikan penalaran yang konsisten. "
+        "Tidak diperlukan tindakan remediasi; mahasiswa dapat diberikan tantangan lanjutan berupa soal analisis, penerapan konsep, atau eksplorasi materi yang lebih kompleks."
+    ),
+}
 
 
 class LlmAnalysisError(Exception):
-    """Raised when the LLM output cannot be turned into a valid analysis.
-
-    The worker maps this to ANALYSIS_FAILED (retryable), never to a recorded
-    analysis — garbage must not reach llm_analyses.
-    """
+    pass
 
 
 def get_llm_client() -> OpenAI:
@@ -59,34 +94,82 @@ def get_llm_client() -> OpenAI:
 
 
 # ----------------------------------------------------------------------------
-# Context loading (single round-trip per submission)
+# 1. Deterministic Heuristic Pre-Checks
+# ----------------------------------------------------------------------------
+
+CAUSAL_WORDS_REGEX = re.compile(
+    r'\b(karena|sebab|dikarenakan|oleh karena itu|akibatnya|maka dari itu|karna)\b', re.IGNORECASE
+)
+
+HAFALAN_WORDS_REGEX = re.compile(
+    r'\b(bunyi hukum|menurut hukum|definisi hukum)\b', re.IGNORECASE
+)
+
+
+def compute_heuristic_flags(tier1: str, tier3: str) -> list[str]:
+    flags = []
+    t1 = (tier1 or '').strip()
+    t3 = (tier3 or '').strip()
+    words_t3 = t3.split()
+
+    # Rule 1: Tier 1 memuat kata sebab
+    if CAUSAL_WORDS_REGEX.search(t1):
+        flags.append('t1_berisi_alasan')
+
+    # Rule 2: Tier 3 kosong atau kurang dari 5 kata
+    if len(words_t3) < 5:
+        flags.append('t3_kosong')
+
+    # Rule 3: Tier 3 redundan dengan Tier 1
+    # Hanya ditandai jika Tier 3 hampir 100% sama dengan Tier 1 (bukan sekadar hasil hitungan akhir yang cocok)
+    clean_t1 = re.sub(r'[^\w\s]', '', t1).lower().strip()
+    clean_t3 = re.sub(r'[^\w\s]', '', t3).lower().strip()
+    if clean_t1 and clean_t3:
+        if clean_t1 == clean_t3 or (clean_t1 in clean_t3 and len(clean_t3) <= len(clean_t1) + 6):
+            flags.append('t3_redundan')
+
+    # Rule 4: Tier 3 hanya kutipan hukum hafalan tanpa penerapan
+    # Hanya ditandai jika mahasiswa mengutip nama hukum TANPA ada operasi matematika/variabel soal
+    has_law_quote = bool(HAFALAN_WORDS_REGEX.search(t3))
+    has_math_or_derivation = bool(re.search(r'[=+\-*/<>]|\d', t3))
+    if has_law_quote and not has_math_or_derivation and len(words_t3) < 12:
+        flags.append('t3_hafalan')
+
+    return flags
+
+
+# ----------------------------------------------------------------------------
+# 2. Context Loading
 # ----------------------------------------------------------------------------
 
 @dataclass
-class AnalysisContext:
+class FourTierContext:
     submission_id: str
     subject_id: str
     status: str
-    answer_text: str
-    attempt_no: int
-    run_count: int
+    tier1_answer: str
+    tier2_confidence: int
+    tier3_reason: str
+    tier4_confidence: int
+    heuristic_flags: list[str]
     question_prompt: str
     model_answer: str
     set_title: str
-    indicators: list          # [{label, description, weight(Decimal), order_index}]
+    indicators: list          # [{label, description, weight, order_index}]
     misconceptions: list      # [{id, label, description}]
-    tiers: list               # [{level, label, description}] resolved for subject
-    rejection_notes: str      # latest validation notes when re-running a REJECTED
-    prior_explanation: str    # prior (rejected/failed) analysis explanation
+    rejection_notes: str
+    prior_explanation: str
 
 
-def load_context(submission_id: str) -> AnalysisContext:
+def load_context(submission_id: str) -> FourTierContext:
     with connection.cursor() as cur:
         cur.execute(
             """
-            SELECT s.id, s.subject_id, s.status, s.answer_text, s.attempt_no,
-                   qv.prompt, qv.model_answer, qs.title,
-                   (SELECT count(*) FROM llm_analyses la WHERE la.submission_id = s.id)
+            SELECT s.id, s.subject_id, s.status,
+                   COALESCE(s.tier1_answer, ''), COALESCE(s.tier2_confidence, 1),
+                   COALESCE(s.tier3_reason, s.answer_text), COALESCE(s.tier4_confidence, 1),
+                   COALESCE(s.heuristic_flags, '[]'::jsonb),
+                   qv.prompt, qv.model_answer, qs.title
             FROM submissions s
             JOIN question_versions qv ON qv.id = s.question_version_id
             JOIN questions q ON q.id = qv.question_id
@@ -101,7 +184,7 @@ def load_context(submission_id: str) -> AnalysisContext:
 
         cur.execute(
             """
-            SELECT label, coalesce(description, ''), weight, order_index
+            SELECT label, COALESCE(description, ''), weight, order_index
             FROM concept_indicators
             WHERE question_version_id = (
                 SELECT question_version_id FROM submissions WHERE id = %s)
@@ -110,14 +193,9 @@ def load_context(submission_id: str) -> AnalysisContext:
             [submission_id],
         )
         indicators = [
-            {'label': r[0], 'description': r[1], 'weight': r[2], 'order_index': r[3]}
+            {'label': r[0], 'description': r[1], 'weight': float(r[2]), 'order_index': r[3]}
             for r in cur.fetchall()
         ]
-        if not indicators:
-            raise LlmAnalysisError(
-                f'Submission {submission_id}: question version has no concept indicators '
-                '(rubric grading impossible)'
-            )
 
         cur.execute(
             """
@@ -130,36 +208,13 @@ def load_context(submission_id: str) -> AnalysisContext:
             [submission_id],
         )
         misconceptions = [
-            {'id': str(r[0]), 'label': r[1], 'description': r[2]} for r in cur.fetchall()
+            {'id': str(r[0]), 'label': r[1], 'description': r[2]}
+            for r in cur.fetchall()
         ]
 
         cur.execute(
             """
-            SELECT dt.level, dt.label, coalesce(dt.description, '')
-            FROM diagnostic_tiers dt
-            WHERE dt.is_active
-              AND (dt.subject_id = (SELECT subject_id FROM submissions WHERE id = %s)
-                   OR dt.subject_id IS NULL)
-            ORDER BY dt.subject_id NULLS LAST, dt.level
-            """,
-            [submission_id],
-        )
-        seen_levels = set()
-        tiers = []
-        for level, label, description in cur.fetchall():
-            if level in seen_levels:  # subject-specific wins over universal
-                continue
-            seen_levels.add(level)
-            tiers.append({'level': level, 'label': label, 'description': description})
-        if not tiers:
-            raise LlmAnalysisError(
-                f'Submission {submission_id}: no diagnostic tiers resolvable for subject'
-            )
-
-        # Re-run context: latest rejection notes + prior explanation (bounded).
-        cur.execute(
-            """
-            SELECT coalesce(v.notes, ''), coalesce(a.explanation, '')
+            SELECT COALESCE(v.notes, ''), COALESCE(a.explanation, '')
             FROM llm_analyses a
             LEFT JOIN validations v ON v.analysis_id = a.id
             WHERE a.submission_id = %s
@@ -170,123 +225,32 @@ def load_context(submission_id: str) -> AnalysisContext:
         )
         prior = cur.fetchone() or ('', '')
 
-    return AnalysisContext(
+    flags = row[7] if isinstance(row[7], list) else []
+
+    return FourTierContext(
         submission_id=str(row[0]),
         subject_id=str(row[1]),
         status=row[2],
-        answer_text=row[3],
-        attempt_no=row[4],
-        run_count=row[8],
-        question_prompt=row[5],
-        model_answer=row[6],
-        set_title=row[7],
+        tier1_answer=row[3],
+        tier2_confidence=int(row[4]),
+        tier3_reason=row[5],
+        tier4_confidence=int(row[6]),
+        heuristic_flags=flags,
+        question_prompt=row[8],
+        model_answer=row[9],
+        set_title=row[10],
         indicators=indicators,
         misconceptions=misconceptions,
-        tiers=tiers,
         rejection_notes=(prior[0] or '')[:2000],
         prior_explanation=(prior[1] or '')[:2000],
     )
 
 
 # ----------------------------------------------------------------------------
-# Prompt construction
-# ----------------------------------------------------------------------------
-
-def build_messages(ctx: AnalysisContext) -> list[dict]:
-    indicator_lines = '\n'.join(
-        f"{i + 1}. {ind['label']} (bobot {ind['weight']})"
-        + (f" — {ind['description']}" if ind['description'] else '')
-        for i, ind in enumerate(ctx.indicators)
-    )
-    tier_lines = '\n'.join(
-        f"Level {t['level']} = {t['label']}: {t['description']}" for t in ctx.tiers
-    )
-    tier_levels = [t['level'] for t in ctx.tiers]
-
-    if ctx.misconceptions:
-        misconception_lines = '\n'.join(
-            f"- id={m['id']} | {m['label']}: {m['description']}" for m in ctx.misconceptions
-        )
-        misconception_block = (
-            'Daftar miskonsepsi yang dikenal untuk soal ini (sifatnya ADVISORY — '
-            'usulan Anda akan dikonfirmasi/ditolak oleh dosen, dan TIDAK boleh memaksa tier):\n'
-            f'{misconception_lines}\n'
-            'Untuk tiap miskonsepsi di atas, nilai apakah jawaban mahasiswa cocok '
-            '(matched true/false) beserta alasannya.\n'
-        )
-        matched_schema = (
-            '"misconception_matches": [{"misconception_id": "<id dari daftar>", '
-            '"matched": true|false, "confidence": 0.0, "reasoning": "..."}], '
-            '"proposed_new_misconception": "label singkat bila ada pola keliru di luar daftar, else null"'
-        )
-    else:
-        misconception_block = (
-            'Tidak ada daftar miskonsepsi untuk soal ini. Kosongkan '
-            '"misconception_matches" ([]) dan isi "proposed_new_misconception" hanya '
-            'bila jawaban menunjukkan pola miskonsepsi yang jelas.\n'
-        )
-        matched_schema = (
-            '"misconception_matches": [], '
-            '"proposed_new_misconception": "label singkat bila ada pola keliru yang jelas, else null"'
-        )
-
-    rerun_block = ''
-    if ctx.status == 'REJECTED' and (ctx.rejection_notes or ctx.prior_explanation):
-        rerun_block = (
-            '\nCATATAN PENTING — ANALISIS ULANG:\n'
-            'Analisis sebelumnya untuk jawaban ini DITOLAK oleh dosen.\n'
-            f'Catatan dosen: {ctx.rejection_notes or "(tidak ada catatan)"}\n'
-            f'Analisis sebelumnya: {ctx.prior_explanation or "(tidak tersedia)"}\n'
-            'Perhatikan catatan dosen tersebut dan hasilkan analisis yang lebih baik.\n'
-        )
-
-    system_prompt = (
-        'Anda adalah pakar diagnosis miskonsepsi konseptual untuk platform evaluasi akademik.\n'
-        'Tugas: menilai jawaban esai mahasiswa terhadap satu pertanyaan konseptual, '
-        'berdasarkan RUBRIK indikator yang diberikan.\n\n'
-        'ATURAN PENILAIAN:\n'
-        f'1. Untuk SETIAP indikator rubrik, beri skor: "PRESENT" (terpenuhi penuh), '
-        f'"PARTIAL" (sebagian), atau "MISSING" (tidak terpenuhi), beserta bukti singkat '
-        f'kutipan/parafrase dari jawaban.\n'
-        '2. JANGAN menghitung persentase akhir — sistem yang menghitung dari skor indikator Anda.\n'
-        f'3. Pilih tier diagnosis HANYA dari level yang tersedia: {tier_levels}.\n'
-        f'Definisi tier:\n{tier_lines}\n'
-        '4. "explanation": analisis klinis singkat (2-4 kalimat) dalam Bahasa Indonesia: '
-        'apa yang dipahami, apa yang keliru/kurang, dan saran perbaikan konseptual.\n'
-        '5. "confidence": keyakinan Anda 0.0-1.0 terhadap diagnosis ini.\n'
-        '6. Jawaban kosong/irrelevan -> semua indikator MISSING dan tier terendah.\n\n'
-        f'{misconception_block}\n'
-        'Kembalikan HANYA satu objek JSON valid, tanpa teks lain, dengan struktur:\n'
-        '{\n'
-        '  "indicators": [{"order_index": 1, "score": "PRESENT|PARTIAL|MISSING", "evidence": "..."}],\n'
-        f'  {matched_schema},\n'
-        '  "tier_level": <int, dari level yang tersedia>,\n'
-        '  "explanation": "...",\n'
-        '  "confidence": 0.0\n'
-        '}'
-    )
-
-    user_prompt = (
-        f'Pertanyaan konseptual (set: {ctx.set_title}):\n{ctx.question_prompt}\n\n'
-        f'Jawaban model (acuan kebenaran):\n{ctx.model_answer}\n\n'
-        f'RUBRIK indikator (bobot harus digunakan sistem, Anda hanya memberi skor per indikator):\n'
-        f'{indicator_lines}\n\n'
-        f'Jawaban mahasiswa:\n{ctx.answer_text}\n'
-        f'{rerun_block}'
-    )
-
-    return [
-        {'role': 'system', 'content': system_prompt},
-        {'role': 'user', 'content': user_prompt},
-    ]
-
-
-# ----------------------------------------------------------------------------
-# LLM call + strict output validation
+# 3. LLM Caller Helper
 # ----------------------------------------------------------------------------
 
 def _extract_json(raw: str) -> dict:
-    """Parse the JSON object out of a completion (tolerates code fences/prose)."""
     text = raw.strip()
     text = re.sub(r'^```(?:json)?', '', text, flags=re.MULTILINE)
     text = re.sub(r'```$', '', text, flags=re.MULTILINE).strip()
@@ -299,20 +263,20 @@ def _extract_json(raw: str) -> dict:
         raise LlmAnalysisError('LLM output is not valid JSON')
 
 
-def _call_llm(messages: list[dict]) -> tuple[dict, str, int]:
-    """Returns (parsed_json, raw_text, execution_time_ms)."""
+def _call_llm_json(system_prompt: str, user_prompt: str) -> dict:
     client = get_llm_client()
-    model = settings.LLM_MODEL
-    started = time.monotonic()
+    messages = [
+        {'role': 'system', 'content': system_prompt},
+        {'role': 'user', 'content': user_prompt},
+    ]
     last_error = None
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
             kwargs = {
-                'model': model,
+                'model': settings.LLM_MODEL,
                 'messages': messages,
                 'temperature': LLM_TEMPERATURE,
             }
-            # JSON mode where supported; _extract_json handles providers without it.
             try:
                 response = client.chat.completions.create(
                     response_format={'type': 'json_object'}, **kwargs
@@ -320,189 +284,382 @@ def _call_llm(messages: list[dict]) -> tuple[dict, str, int]:
             except Exception:
                 response = client.chat.completions.create(**kwargs)
             raw = response.choices[0].message.content or ''
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-            return _extract_json(raw), raw, elapsed_ms
-        except LlmAnalysisError as e:
+            return _extract_json(raw)
+        except Exception as e:
             last_error = e
-            if attempt < LLM_MAX_RETRIES:
-                continue
-        except Exception as e:  # API/network errors
-            last_error = LlmAnalysisError(f'LLM API error: {e}')
             if attempt < LLM_MAX_RETRIES:
                 time.sleep(1.5 * (attempt + 1))
                 continue
-    raise last_error
-
-
-def compute_percentage(ctx: AnalysisContext, indicator_scores: dict[int, str]) -> Decimal:
-    """Deterministic weighted score: sum(weight * score_value) * 100, clamped 0-100.
-
-    This is the ONLY source of percentage_correct — the LLM's number is never used.
-    """
-    total = Decimal(0)
-    for ind in ctx.indicators:
-        score = indicator_scores.get(ind['order_index'], 'MISSING')
-        total += Decimal(ind['weight']) * INDICATOR_SCORES[score]
-    pct = (total * 100).quantize(Decimal('0.01'))
-    return max(Decimal('0.00'), min(Decimal('100.00'), pct))
-
-
-def validate_output(ctx: AnalysisContext, payload: dict, raw: str) -> dict:
-    """Strict structural validation. Any failure -> LlmAnalysisError (never persisted)."""
-    valid_levels = {t['level'] for t in ctx.tiers}
-
-    raw_indicators = payload.get('indicators')
-    if not isinstance(raw_indicators, list) or not raw_indicators:
-        raise LlmAnalysisError('"indicators" missing or not a non-empty list')
-
-    indicator_scores: dict[int, str] = {}
-    breakdown = []
-    expected_orders = {ind['order_index'] for ind in ctx.indicators}
-    for item in raw_indicators:
-        if not isinstance(item, dict):
-            raise LlmAnalysisError('indicator entry is not an object')
-        try:
-            order = int(item.get('order_index'))
-        except (TypeError, ValueError):
-            raise LlmAnalysisError(f'invalid indicator order_index: {item.get("order_index")!r}')
-        if order not in expected_orders:
-            raise LlmAnalysisError(f'indicator order_index {order} not in rubric {sorted(expected_orders)}')
-        score = str(item.get('score', '')).upper()
-        if score not in INDICATOR_SCORES:
-            raise LlmAnalysisError(f'invalid indicator score {score!r} for order_index {order}')
-        if order in indicator_scores:
-            raise LlmAnalysisError(f'duplicate indicator order_index {order}')
-        indicator_scores[order] = score
-        breakdown.append({
-            'order_index': order,
-            'label': next(i['label'] for i in ctx.indicators if i['order_index'] == order),
-            'weight': str(next(i['weight'] for i in ctx.indicators if i['order_index'] == order)),
-            'score': score,
-            'evidence': str(item.get('evidence', ''))[:500],
-        })
-    if set(indicator_scores) != expected_orders:
-        missing = sorted(expected_orders - set(indicator_scores))
-        raise LlmAnalysisError(f'indicators missing scores for order_index {missing}')
-    breakdown.sort(key=lambda b: b['order_index'])
-
-    try:
-        tier_level = int(payload.get('tier_level'))
-    except (TypeError, ValueError):
-        raise LlmAnalysisError(f'invalid tier_level: {payload.get("tier_level")!r}')
-    if tier_level not in valid_levels:
-        raise LlmAnalysisError(
-            f'tier_level {tier_level} not in subject tiers {sorted(valid_levels)}'
-        )
-
-    explanation = str(payload.get('explanation', '')).strip()
-    if not explanation:
-        raise LlmAnalysisError('"explanation" is empty')
-
-    try:
-        confidence = Decimal(str(payload.get('confidence')))
-    except Exception:
-        raise LlmAnalysisError(f'invalid confidence: {payload.get("confidence")!r}')
-    if not (Decimal(0) <= confidence <= Decimal(1)):
-        raise LlmAnalysisError(f'confidence {confidence} outside [0,1]')
-    confidence = confidence.quantize(Decimal('0.001'))
-
-    # Advisory misconception matches: keep only ids attached to this version.
-    known_ids = {m['id'] for m in ctx.misconceptions}
-    matches = []
-    raw_matches = payload.get('misconception_matches') or []
-    if isinstance(raw_matches, list):
-        for m in raw_matches:
-            if not isinstance(m, dict):
-                continue
-            mid = str(m.get('misconception_id', ''))
-            if mid not in known_ids:
-                continue  # hallucinated id -> drop silently (advisory data)
-            try:
-                m_conf = max(Decimal(0), min(Decimal(1), Decimal(str(m.get('confidence', 0)))))
-            except Exception:
-                m_conf = Decimal(0)
-            matches.append({
-                'misconception_id': mid,
-                'label': next(x['label'] for x in ctx.misconceptions if x['id'] == mid),
-                'matched': bool(m.get('matched')),
-                'confidence': str(m_conf.quantize(Decimal('0.001'))),
-                'reasoning': str(m.get('reasoning', ''))[:500],
-            })
-
-    proposed = payload.get('proposed_new_misconception')
-    proposed = str(proposed).strip()[:255] if isinstance(proposed, str) and proposed.strip() else None
-
-    percentage = compute_percentage(ctx, indicator_scores)
-
-    concept_breakdown = {
-        'indicators': breakdown,
-        'percentage_correct': str(percentage),
-        'misconception_matches': matches,
-        'proposed_new_misconception': proposed,
-    }
-
-    return {
-        'percentage_correct': percentage,
-        'tier_level': tier_level,
-        'concept_breakdown': concept_breakdown,
-        'suggested_materials': [],  # KB empty (P1 deferred); NOT NULL column needs []
-        'explanation': explanation,
-        'confidence': confidence,
-        'raw_output': {'llm_json': payload, 'raw_text': raw[:8000]},
-    }
+    raise LlmAnalysisError(f'LLM call failed after retries: {last_error}')
 
 
 # ----------------------------------------------------------------------------
-# Pipeline entry point — one submission, end to end
+# 4. Modular AI Evaluation Modules (Modul A, Modul B, Modul C)
+# ----------------------------------------------------------------------------
+
+def run_module_a(ctx: FourTierContext) -> tuple[str, str]:
+    """Modul A — Penilai Jawaban Singkat (Tier 1)."""
+    sys_prompt = (
+        "Anda adalah Modul A: Penilai Jawaban (Tier 1) untuk asesmen diagnostik Four-Tier.\n"
+        "Tugas: Nilai ketepatan kesimpulan esai singkat mahasiswa (maks 120 karakter).\n"
+        "Kembalikan HANYA format JSON valid:\n"
+        "{\n"
+        '  "score": "BENAR" | "BENAR_SEBAGIAN" | "SALAH",\n'
+        '  "reasoning": "penjelasan singkat 1 kalimat dalam Bahasa Indonesia"\n'
+        "}"
+    )
+    user_prompt = (
+        f"Pertanyaan:\n{ctx.question_prompt}\n\n"
+        f"Jawaban Model (Acuan Kebenaran):\n{ctx.model_answer}\n\n"
+        f"Jawaban Singkat Mahasiswa (Tier 1):\n{ctx.tier1_answer}"
+    )
+    if ctx.rejection_notes:
+        user_prompt += f"\n\n[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]:\n{ctx.rejection_notes}"
+
+    data = _call_llm_json(sys_prompt, user_prompt)
+    score = str(data.get('score', '')).upper()
+    if score not in ('BENAR', 'BENAR_SEBAGIAN', 'SALAH'):
+        score = 'SALAH'
+    return score, str(data.get('reasoning', ''))
+
+
+def run_module_b(ctx: FourTierContext) -> tuple[str, list[dict], str]:
+    """Modul B — Penilai Alasan (Tier 3) dengan Pengakuan Penurunan Matematis."""
+    indicator_lines = '\n'.join(
+        f"- Indikator #{ind['order_index']}: {ind['label']} (bobot {ind['weight']}) — {ind['description']}"
+        for ind in ctx.indicators
+    )
+    sys_prompt = (
+        "Anda adalah Modul B: Penilai Alasan & Penalaran (Tier 3) untuk asesmen Four-Tier bidang Fisika.\n"
+        "Tugas: Nilai apakah penjelasan/alasan mahasiswa secara ilmiah BENAR atau SALAH berdasarkan rubrik.\n\n"
+        "PANDUAN EVALUASI ILMIAH & MATEMATIS (WAJIB DIPATUHI):\n"
+        "1. PENALARAN ALJABAR/MATEMATIS: Mahasiswa DIPERBOLEHKAN menyajikan alasan dalam bentuk penurunan rumus matematis/aljabar langkah-demi-langkah "
+        "(misalnya: substitusi langsung percepatan sistem a = F/2m ke dalam persamaan tegangan tali T = m(F/2m) = F/2). "
+        "Jika langkah penalaran matematis tersebut secara prinsip fisis BENAR, indikator terkait WAJIB dinilai 'PRESENT' (BENAR).\n"
+        "2. TIDAK WAJIB MENULIS ULANG NARASI: Jangan menyalahkan mahasiswa hanya karena menuliskan penurunan rumus ringkas tanpa kalimat narasi panjang, "
+        "selama alur penurunan fisisnya valid dan dapat dipertanggungjawabkan.\n"
+        "3. HUBUNGAN DENGAN TIER 1: Mahasiswa tidak wajib mengulang kata atau angka yang sudah ditulis di Tier 1 jika penurunan rumus di Tier 3 "
+        "sudah secara langsung membuktikan kesimpulan tersebut.\n"
+        "4. ANTI-HALUSINASI: Nilai HANYA apa yang tertulis. Jangan mengarang langkah yang tidak ada di teks mahasiswa.\n"
+        "5. Seluruh field 'reasoning' WAJIB menggunakan Bahasa Indonesia formal.\n\n"
+        "Kembalikan HANYA format JSON valid:\n"
+        "{\n"
+        '  "score": "BENAR" | "SALAH",\n'
+        '  "indicators": [{"order_index": 1, "status": "PRESENT"|"PARTIAL"|"MISSING", "evidence": "kutipan langkah/penalaran mahasiswa"}],\n'
+        '  "reasoning": "penjelasan evaluasi penalaran mahasiswa dalam Bahasa Indonesia"\n'
+        "}"
+    )
+    user_prompt = (
+        f"Pertanyaan:\n{ctx.question_prompt}\n\n"
+        f"Jawaban Model (Acuan Kebenaran Fisika):\n{ctx.model_answer}\n\n"
+        f"Rubrik Indikator:\n{indicator_lines}\n\n"
+        f"Kesimpulan Mahasiswa di Tier 1:\n\"{ctx.tier1_answer}\"\n\n"
+        f"Alasan/Penalaran Mahasiswa di Tier 3:\n\"{ctx.tier3_reason}\""
+    )
+    if ctx.rejection_notes:
+        user_prompt += f"\n\n[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]:\n{ctx.rejection_notes}"
+
+    data = _call_llm_json(sys_prompt, user_prompt)
+    score = str(data.get('score', '')).upper()
+    if score not in ('BENAR', 'SALAH'):
+        score = 'SALAH'
+    indicators = data.get('indicators') if isinstance(data.get('indicators'), list) else []
+    return score, indicators, str(data.get('reasoning', ''))
+
+
+def run_module_c(ctx: FourTierContext) -> tuple[str, str, float, str]:
+    """Modul C — Klasifikasi Miskonsepsi dari Katalog.
+    
+    Mengembalikan: (code, label_name, confidence, reasoning)
+    """
+    misc_label_map = {str(m['id']): str(m['label']) for m in ctx.misconceptions}
+    
+    if ctx.misconceptions:
+        misc_catalog = '\n'.join(
+            f"- Nama Miskonsepsi: \"{m['label']}\" (ID: {m['id']}) — {m['description']}"
+            for m in ctx.misconceptions
+        )
+    else:
+        misc_catalog = "- Tidak ada katalog miskonsepsi khusus untuk butir ini."
+
+    sys_prompt = (
+        "Anda adalah Modul C: Klasifikasi Tipe Miskonsepsi Mahasiswa.\n"
+        "Tugas: Baca teks gabungan Tier 1 (jawaban) dan Tier 3 (alasan). Miskonsepsi adalah milik mahasiswa, "
+        "bukan milik kolom — temukan pola keliru di mana pun mahasiswa menuliskannya.\n"
+        f"Daftar Tipe Miskonsepsi Terdaftar:\n{misc_catalog}\n"
+        "Bila tidak ada yang cocok dari katalog atau mahasiswa sebenarnya menurunkan rumus dengan benar, gunakan kode 'MK-LAIN'.\n\n"
+        "ATURAN BAHASA & KETELITIAN KETAT:\n"
+        "1. DILARANG KERAS mengarang miskonsepsi palsu jika penurunan aljabar mahasiswa benar.\n"
+        "2. Seluruh isi field 'reasoning' WAJIB ditulis murni dalam Bahasa Indonesia formal.\n"
+        "3. Field 'misconception_name' WAJIB diisi Nama Label Miskonsepsi dari daftar (BUKAN berupa deretan angka/huruf UUID ID), atau 'MK-LAIN'.\n\n"
+        "Kembalikan HANYA format JSON valid:\n"
+        "{\n"
+        '  "misconception_code": "<id_atau_MK-LAIN>",\n'
+        '  "misconception_name": "<nama_lengkap_label_miskonsepsi_atau_MK-LAIN>",\n'
+        '  "confidence": 0.85,\n'
+        '  "reasoning": "penjelasan evaluasi dalam Bahasa Indonesia"\n'
+        "}"
+    )
+    user_prompt = (
+        f"Pertanyaan:\n{ctx.question_prompt}\n\n"
+        f"Teks Gabungan Mahasiswa:\n"
+        f"Jawaban (Tier 1): {ctx.tier1_answer}\n"
+        f"Alasan (Tier 3): {ctx.tier3_reason}"
+    )
+    data = _call_llm_json(sys_prompt, user_prompt)
+    code = str(data.get('misconception_code') or 'MK-LAIN').strip()
+    
+    # Terjemahkan UUID menjadi Nama Label yang mudah dibaca
+    raw_name = str(data.get('misconception_name') or '').strip()
+    if raw_name and raw_name != code and not re.match(r'^[0-9a-f\-]{30,}$', raw_name, re.I):
+        label_name = raw_name
+    else:
+        label_name = misc_label_map.get(code, code)
+        
+    try:
+        conf = float(data.get('confidence', 0.8))
+    except Exception:
+        conf = 0.8
+        
+    return code, label_name, conf, str(data.get('reasoning', ''))
+
+
+# ----------------------------------------------------------------------------
+# 5. Deterministic Mesin Aturan (16-Row Decision Matrix)
+# ----------------------------------------------------------------------------
+
+def evaluate_decision_matrix(
+    t1_score: str,
+    t2_confidence: int,
+    t3_score: str,
+    t4_confidence: int,
+) -> tuple[str, str, str]:
+    """Applies the deterministic matrix into pure 5 categories."""
+    t1_norm = 'B' if t1_score == 'BENAR' else 'S'
+    t2_yakin = t2_confidence >= 4
+    t3_norm = 'B' if t3_score == 'BENAR' else 'S'
+    t4_yakin = t4_confidence >= 4
+
+    key = (t1_norm, t2_yakin, t3_norm, t4_yakin)
+    return MATRIX_RULES.get(key, ('LK', 'Tidak konsisten', 'SEDANG_RENDAH'))
+
+
+# ----------------------------------------------------------------------------
+# 6. Full Analysis Pipeline Execution
 # ----------------------------------------------------------------------------
 
 def analyze_submission(submission_id: str) -> str:
-    """Run the full P4 pipeline for one submission. Returns final status.
-
-    All state transitions go through stored procedures. On any LLM/parse
-    failure the submission is marked ANALYSIS_FAILED (retryable).
-    """
+    """Runs the calibrated 4-tier pipeline for one submission."""
     started = time.monotonic()
 
-    # 1. Claim: -> ANALYZING (proc enforces legal source states)
     with connection.cursor() as cur:
         try:
             cur.execute('CALL sp_mark_submission_analyzing(%s);', [submission_id])
         except Exception as e:
-            logger.warning('Cannot claim submission %s: %s', submission_id, e)
+            logger.warning('Gagal mengklaim submission %s: %s', submission_id, e)
             return 'SKIPPED'
 
     try:
         ctx = load_context(submission_id)
-        messages = build_messages(ctx)
-        payload, raw, llm_ms = _call_llm(messages)
-        result = validate_output(ctx, payload, raw)
-        total_ms = int((time.monotonic() - started) * 1000)
 
+        # 1. Deterministic Heuristic Pre-Checks
+        flags = compute_heuristic_flags(ctx.tier1_answer, ctx.tier3_reason)
+        # Update TANPA 'if flags' agar bendera lama otomatis dibersihkan jika flags sekarang kosong []
         with connection.cursor() as cur:
             cur.execute(
-                'CALL sp_record_llm_analysis(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL);',
+                'UPDATE submissions SET heuristic_flags = %s WHERE id = %s;',
+                [json.dumps(flags), submission_id]
+            )
+
+        # 2. Penanganan t3_kosong (< 5 kata / kosong)
+        if 't3_kosong' in flags:
+            mod_a_score, mod_a_exp = run_module_a(ctx)
+            mod_b_score = 'SALAH'
+            ind_breakdown = [
+                {
+                    'order_index': ind['order_index'],
+                    'status': 'MISSING',
+                    'evidence': 'Alasan kosong atau kurang dari 5 kata (penanda: t3_kosong)',
+                }
+                for ind in ctx.indicators
+            ]
+            mod_b_exp = 'Alasan tidak diisi atau kurang dari 5 kata (t3_kosong). Diarahkan ke LK untuk penguatan materi dasar.'
+            mod_c_code = None
+            mod_c_label = None
+            mod_c_conf = 0.0
+            mod_c_exp = ''
+            category = 'LK'
+            meaning = 'Tidak paham konsep / alasan kosong'
+            risk = 'SEDANG_RENDAH'
+
+        else:
+            if 't1_berisi_alasan' in flags or 't3_redundan' in flags:
+                combined_reason = f"Jawaban: {ctx.tier1_answer}\nAlasan: {ctx.tier3_reason}"
+                eval_b_ctx = dataclasses.replace(ctx, tier3_reason=combined_reason)
+            else:
+                eval_b_ctx = ctx
+
+            mod_a_score, mod_a_exp = run_module_a(ctx)
+            mod_b_score, ind_breakdown, mod_b_exp = run_module_b(eval_b_ctx)
+
+            # Safeguard C: Validasi di Python
+            t3_words = [w for w in ctx.tier3_reason.strip().split() if w]
+            has_math_derivation = bool(re.search(r'[=+\-*/]', ctx.tier3_reason))
+
+            if mod_b_score == 'BENAR' and len(t3_words) <= 3 and not has_math_derivation:
+                mod_b_score = 'SALAH'
+                mod_b_exp = 'Teks alasan terlalu singkat untuk memuat penurunan konsep ilmiah yang valid.'
+                for ind in ind_breakdown:
+                    ind['status'] = 'MISSING'
+
+            if mod_b_score == 'BENAR' and ind_breakdown:
+                clean_student_text = (
+                    eval_b_ctx.tier3_reason.lower()
+                    if ('t1_berisi_alasan' in flags or 't3_redundan' in flags)
+                    else ctx.tier3_reason.lower()
+                )
+                unverified_count = 0
+                for ind in ind_breakdown:
+                    ev = ind.get('evidence', '').strip().lower()
+                    if ev and ev not in clean_student_text:
+                        ind['status'] = 'MISSING'
+                        unverified_count += 1
+
+                if unverified_count > 0 and all(ind.get('status') != 'PRESENT' for ind in ind_breakdown):
+                    mod_b_score = 'SALAH'
+                    mod_b_exp = 'Bukti penalaran ilmiah yang dikutip AI tidak ditemukan dalam teks asli mahasiswa.'
+
+            # Modul C: Ambil code dan label_name
+            mod_c_code = None
+            mod_c_label = None
+            mod_c_exp = ''
+            mod_c_conf = 0.0
+            if mod_b_score == 'SALAH' or 't1_berisi_alasan' in flags:
+                mod_c_code, mod_c_label, mod_c_conf, mod_c_exp = run_module_c(ctx)
+
+            # Matriks Keputusan
+            category, meaning, risk = evaluate_decision_matrix(
+                mod_a_score, ctx.tier2_confidence,
+                mod_b_score, ctx.tier4_confidence
+            )
+
+        # 3. Perhitungan Skor 30/70
+        score_a = Decimal('30.00') if mod_a_score == 'BENAR' else (
+            Decimal('15.00') if mod_a_score == 'BENAR_SEBAGIAN' else Decimal('0.00')
+        )
+
+        earned_b_ratio = Decimal('0.0')
+        if ind_breakdown and ctx.indicators:
+            for ind in ind_breakdown:
+                idx = ind.get('order_index')
+                matching_spec = next((item for item in ctx.indicators if item['order_index'] == idx), None)
+                w = Decimal(str(matching_spec['weight'])) if matching_spec else Decimal('0.0')
+                status = ind.get('status', 'MISSING')
+                factor = Decimal('1.0') if status == 'PRESENT' else (
+                    Decimal('0.5') if status == 'PARTIAL' else Decimal('0.0')
+                )
+                earned_b_ratio += w * factor
+        elif mod_b_score == 'BENAR':
+            earned_b_ratio = Decimal('1.0')
+
+        score_b = (earned_b_ratio * Decimal('70.00')).quantize(Decimal('0.01'))
+        percentage_correct = min(Decimal('100.00'), max(Decimal('0.00'), score_a + score_b))
+
+        total_ms = int((time.monotonic() - started) * 1000)
+
+        # 4. Penyelarasan Label Miskonsepsi
+        if category == 'SC':
+            mod_c_code = None
+            mod_c_label = None
+            misc_role = None
+            misc_role_label = None
+        elif mod_c_code and mod_c_code != 'MK-LAIN':
+            is_confirmed_type = category in ('FP', 'MSC')
+            misc_role = 'CONFIRMED_MISCONCEPTION' if is_confirmed_type else 'CLASS_MAPPING_INDICATION'
+            misc_role_label = 'Miskonsepsi yang Diyakini' if is_confirmed_type else 'Indikasi untuk Pemetaan Kelas'
+        elif mod_c_code == 'MK-LAIN':
+            misc_role = 'CLASS_MAPPING_INDICATION'
+            misc_role_label = 'Catatan Penalaran Tambahan'
+        else:
+            misc_role = None
+            misc_role_label = None
+
+        # 5. Sintesis Penjelasan Klinis (Gunakan mod_c_label, BUKAN UUID)
+        intervention_text = INTERVENTIONS.get(
+            category,
+            "Dosen disarankan meninjau kembali pemahaman konsep mahasiswa secara berkala."
+        )
+
+        explanation_lines = [
+            f"Kategori: [{category}] {meaning}.",
+            f"Jawaban (Tier 1): {mod_a_score} ({mod_a_exp}).",
+            f"Alasan (Tier 3): {mod_b_score} ({mod_b_exp}).",
+        ]
+        if mod_c_code and misc_role_label:
+            # Menggunakan mod_c_label (Nama Miskonsepsi) agar tidak muncul UUID lagi
+            display_text = mod_c_label if mod_c_label else mod_c_code
+            explanation_lines.append(f"{misc_role_label}: {display_text} ({mod_c_exp}).")
+
+        explanation_lines.append(f"Rekomendasi Intervensi Dosen: {intervention_text}")
+        explanation = "\n".join(explanation_lines)
+
+        concept_breakdown = {
+            'module_a': {'score': mod_a_score, 'reasoning': mod_a_exp, 'earned_points': float(score_a)},
+            'module_b': {'score': mod_b_score, 'indicators': ind_breakdown, 'reasoning': mod_b_exp, 'earned_points': float(score_b)},
+            'module_c': {
+                'code': mod_c_code,
+                'label': mod_c_label,
+                'confidence': mod_c_conf,
+                'reasoning': mod_c_exp,
+                'role': misc_role,
+                'role_label': misc_role_label,
+            } if mod_c_code else None,
+            'decision_matrix': {
+                't1': mod_a_score, 't2_yakin': ctx.tier2_confidence >= 4,
+                't3': mod_b_score, 't4_yakin': ctx.tier4_confidence >= 4,
+                'category': category, 'meaning': meaning, 'risk': risk,
+            },
+            'heuristic_flags': flags,
+            'percentage_correct': float(percentage_correct),
+            'intervention': intervention_text,
+        }
+
+        # 6. Simpan Hasil Analisis via Stored Procedure
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                CALL sp_record_llm_analysis(
+                    %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, NULL
+                );
+                """,
                 [
                     submission_id,
                     settings.LLM_MODEL[:100],
                     PROMPT_VERSION,
-                    result['percentage_correct'],
-                    result['tier_level'],
-                    json.dumps(result['concept_breakdown'], ensure_ascii=False),
-                    json.dumps(result['suggested_materials']),
-                    result['explanation'],
-                    result['confidence'],
-                    json.dumps(result['raw_output'], ensure_ascii=False),
+                    percentage_correct,
+                    json.dumps(concept_breakdown, ensure_ascii=False),
+                    json.dumps([]),
+                    explanation,
+                    Decimal('0.900'),
+                    json.dumps({'concept_breakdown': concept_breakdown}),
                     total_ms,
+                    mod_a_score,
+                    mod_b_score,
+                    mod_c_code,
+                    category,
+                    risk,
                 ],
             )
+
         logger.info(
-            'Submission %s analyzed: tier=%s pct=%s (%dms, llm %dms)',
-            submission_id, result['tier_level'], result['percentage_correct'], total_ms, llm_ms,
+            'Four-Tier Submission %s dianalisis -> [%s] %s (Skor: %s%%) dalam %dms',
+            submission_id, category, meaning, percentage_correct, total_ms
         )
         return 'PENDING_VALIDATION'
+
     except Exception as e:
-        logger.error('Analysis failed for %s: %s', submission_id, e)
+        logger.error('Analisis Four-Tier gagal untuk %s: %s', submission_id, e)
         try:
             with connection.cursor() as cur:
                 cur.execute(
@@ -510,5 +667,5 @@ def analyze_submission(submission_id: str) -> str:
                     [submission_id, str(e)[:2000]],
                 )
         except Exception as mark_err:
-            logger.error('Could not mark %s failed: %s', submission_id, mark_err)
+            logger.error('Gagal menandai submission %s failed: %s', submission_id, mark_err)
         return 'ANALYSIS_FAILED'

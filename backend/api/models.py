@@ -283,6 +283,11 @@ class Submission(models.Model):
     question_version_id = models.UUIDField()
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
     answer_text = models.TextField()
+    tier1_answer = models.CharField(max_length=255, null=True, blank=True)
+    tier2_confidence = models.SmallIntegerField(null=True, blank=True)
+    tier3_reason = models.TextField(null=True, blank=True)
+    tier4_confidence = models.SmallIntegerField(null=True, blank=True)
+    heuristic_flags = models.JSONField(default=list)
     attempt_no = models.IntegerField(default=1)
     status = models.CharField(max_length=30)
     submitted_at = models.DateTimeField(auto_now_add=True)
@@ -310,6 +315,11 @@ class LlmAnalysis(models.Model):
     confidence = models.DecimalField(max_digits=4, decimal_places=3)
     raw_output_json = models.JSONField()
     execution_time_ms = models.IntegerField(null=True, blank=True)
+    module_a_score = models.CharField(max_length=20, null=True, blank=True)
+    module_b_score = models.CharField(max_length=20, null=True, blank=True)
+    module_c_code = models.CharField(max_length=100, null=True, blank=True)
+    four_tier_category = models.CharField(max_length=10, null=True, blank=True)
+    risk_level = models.CharField(max_length=20, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

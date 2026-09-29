@@ -6,14 +6,14 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
   Building2,
+  CircleHelp,
   ClipboardList,
   FileSearch,
-  CircleHelp,
   GraduationCap,
   LayoutDashboard,
-  PanelsTopLeft,
   LogOut,
   Menu,
+  PanelsTopLeft,
   Settings,
   UserRound,
   X,
@@ -61,9 +61,6 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const { user, loading, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  // Must start false on the server AND on the first client render (hydration),
-  // then flip in an effect â€” see React's two-pass pattern. Diverging here causes
-  // a hydration mismatch and a client-side re-render of the whole shell.
   const [mounted, setMounted] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentSearch, setCurrentSearch] = useState("");
@@ -103,8 +100,6 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
   const appRole = user.is_superuser ? "ADMIN" : selectedRole ?? fallbackRole;
   const items = MENU_ITEMS.filter((item) => item.roles.includes(appRole));
 
-  // set by an effect (below) so the first client render matches the server
-
   const isActive = (path: string) => {
     if (path === "/dashboard") {
       const hasView = new URLSearchParams(currentSearch).has("view");
@@ -114,7 +109,11 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
       const target = new URLSearchParams(path.split("?")[1]).get("view");
       return new URLSearchParams(currentSearch).get("view") === target;
     }
-    return pathname === path || (path === "/admin/subjects" && pathname.startsWith("/admin/subjects/"));
+    return (
+      pathname === path ||
+      (path === "/admin/subjects" && pathname.startsWith("/admin/subjects/")) ||
+      (path === "/questions" && pathname.startsWith("/questions"))
+    );
   };
 
   const handleLogout = () => {
