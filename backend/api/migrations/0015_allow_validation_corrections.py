@@ -129,7 +129,7 @@ REVERSE_SQL = ""
 
 class Migration(migrations.Migration):
     dependencies = [
-        ('api', '0013_student_nim'),
+        ('api', '0014_remove_rubric_publication_gate'),
     ]
 
     operations = [
