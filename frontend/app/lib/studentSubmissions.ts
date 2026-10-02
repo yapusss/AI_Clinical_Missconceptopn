@@ -1,16 +1,7 @@
-export type RubricIndicatorResult = {
-  order_index: number;
-  label: string;
-  description: string;
-  max_weight_percent: number;
-  earned_points_percent: number;
-  status: "PRESENT" | "PARTIAL" | "MISSING";
-  evidence?: string;
-};
-
-export type ConfirmedMisconception = {
-  label: string;
-  reasoning: string;
+export type StudentFeedbackDetail = {
+  poin_tepat: string;
+  letak_kekeliruan: string;
+  konsep_seharusnya: string;
 };
 
 export type StudentEvaluation = {
@@ -20,8 +11,11 @@ export type StudentEvaluation = {
   tier_level: number;
   tier_label: string;
   clinical_feedback: string;
-  confirmed_misconceptions: ConfirmedMisconception[];
-  rubric_breakdown: RubricIndicatorResult[];
+  student_feedback?: StudentFeedbackDetail | null;
+  misconception_info?: {
+    code: string;
+    category?: string;
+  } | null;
   suggested_materials?: string[];
   validator_name?: string;
   validated_at?: string;
@@ -76,6 +70,10 @@ export type StudentSetGroup = {
   status_summary: string;
   status_counts: Record<string, number>;
   last_submitted_at: string;
+  overall_score?: number | null;
+  correct_count?: number;
+  validated_count?: number;
+  is_fully_validated?: boolean;
   questions: StudentQuestionGroup[];
 };
 
@@ -123,15 +121,6 @@ export const SHORT_LABEL: Record<string, string> = {
   REJECTED: "analisis ulang",
 };
 
-export const PRIORITY = [
-  "ANALYSIS_FAILED",
-  "REJECTED",
-  "PENDING_VALIDATION",
-  "SUBMITTED",
-  "ANALYZING",
-  "VALIDATED",
-];
-
 export const statusMeta = (status: string): StatusMeta =>
   STATUS_META[status] ?? { label: status, cls: "badge-role", hint: "" };
 
@@ -153,7 +142,7 @@ export function getSemanticStatus(status: string): SemanticStatus {
       return {
         badgeLabel: "AI: Analyzing",
         badgeClass: "border-amber-500/40 bg-amber-500/10 text-amber-400",
-        description: "Model AI sedang mengidentifikasi indikator konsep dan pola penalaran.",
+        description: "Model AI sedang mengidentifikasi konsep dan pola penalaran fisis.",
       };
     case "ANALYSIS_FAILED":
       return {

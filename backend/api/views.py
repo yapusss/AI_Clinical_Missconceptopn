@@ -1698,7 +1698,7 @@ class QuestionSetReviewView(APIView):
 
 
 class QuestionSetStudentReviewView(APIView):
-    """Full package review for one student, supporting all submission attempts and 4-tier diagnostics."""
+    """Full package review for one student, supporting all submission attempts, 4-tier diagnostics, and package score aggregation."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1735,7 +1735,6 @@ class QuestionSetStudentReviewView(APIView):
         package_versions = list(QuestionVersion.objects.filter(question_id__in=question_ids))
         package_version_ids = [version.id for version in package_versions]
         
-        # Fetch ALL submissions from this student for this package
         submissions = list(
             Submission.objects.filter(
                 student=student,
@@ -1774,7 +1773,6 @@ class QuestionSetStudentReviewView(APIView):
             if not version:
                 continue
 
-            # Group all attempts for this question
             question_subs = [
                 s for s in submissions if version_question_ids.get(s.question_version_id) == question.id
             ]
@@ -1835,6 +1833,40 @@ class QuestionSetStudentReviewView(APIView):
                 'attempts': attempts_payload,
             })
 
+        # Hitung poin per soal menurut banyaknya butir soal (100 / N)
+        total_questions = len(rows)
+        validated_count = 0
+        correct_count = 0
+
+        for r in rows:
+            if r['attempts']:
+                latest = r['attempts'][0]
+                val = latest.get('analysis', {}).get('validation') if latest.get('analysis') else None
+                if latest['status'] == 'VALIDATED' or (val and val.get('status') in ('ACCEPTED', 'EDITED')):
+                    validated_count += 1
+                    pct = (
+                        float(val['final_percentage'])
+                        if (val and val.get('final_percentage') is not None)
+                        else (float(latest['analysis']['percentage_correct']) if latest.get('analysis') else 0.0)
+                    )
+                    if pct >= 99.9:
+                        correct_count += 1
+
+        is_all_validated = (validated_count == total_questions and total_questions > 0)
+        overall_score = (
+            round((correct_count / total_questions) * 100.0, 1)
+            if total_questions > 0
+            else 0.0
+        )
+
+        summary = {
+            'total_questions': total_questions,
+            'validated_count': validated_count,
+            'correct_count': correct_count,
+            'overall_score': overall_score,
+            'is_all_validated': is_all_validated,
+        }
+
         return Response({
             'package': {
                 'id': str(q_set.id),
@@ -1852,6 +1884,7 @@ class QuestionSetStudentReviewView(APIView):
             'published_question_count': len(rows),
             'answered_count': sum(len(row['attempts']) > 0 for row in rows),
             'total_attempts_count': sum(len(row['attempts']) for row in rows),
+            'summary': summary,
             'questions': rows,
         })
 
@@ -2377,8 +2410,8 @@ class StudentSubmissionListView(APIView):
 def _build_submission_set_groups(user):
     """Group a student's submissions per question set with comprehensive pedagogical diagnostics.
 
-    Exposes rubric points breakdown, attempt-bound evaluations, model answer benchmarks,
-    and verified misconceptions without leaking internal unvalidated AI hypotheses.
+    Exposes structured student feedback (poin tepat, letak kekeliruan, konsep seharusnya),
+    binary question grading, and whole-package aggregated score.
     """
     submissions = list(
         Submission.objects.filter(student=user).order_by('submitted_at')
@@ -2398,11 +2431,6 @@ def _build_submission_set_groups(user):
         s.id: s
         for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject', 'topic')
     }
-
-    # Fetch concept indicators for all versions in scope
-    indicators_by_version = {}
-    for ind in ConceptIndicator.objects.filter(question_version_id__in=version_ids).order_by('order_index'):
-        indicators_by_version.setdefault(ind.question_version_id, []).append(ind)
 
     # Fetch current analyses and validations for every attempt
     sub_ids = [s.id for s in submissions]
@@ -2461,40 +2489,24 @@ def _build_submission_set_groups(user):
                 evaluation_payload = None
 
                 if s.status == 'VALIDATED' and validation:
-                    v_indicators = indicators_by_version.get(s.question_version_id, [])
                     breakdown = analysis.concept_breakdown_json or {}
-                    indicator_results = {
-                        item.get('order_index'): item
-                        for item in breakdown.get('indicators', [])
+                    raw_student_fb = breakdown.get('student_feedback') or {}
+
+                    # Target 7: Umpan balik terstruktur 3 kartu
+                    student_feedback_payload = {
+                        'poin_tepat': raw_student_fb.get('poin_tepat') or (
+                            'Kesimpulan dan penalaran fisis yang disampaikan sudah tepat.'
+                            if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
+                            else 'Telah menyampaikan kesimpulan dan alasan.'
+                        ),
+                        'letak_kekeliruan': raw_student_fb.get('letak_kekeliruan') or (
+                            '-' if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
+                            else (analysis.module_b_score if analysis else 'Terdapat ketidaksinkronan konsep atau penalaran.')
+                        ),
+                        'konsep_seharusnya': raw_student_fb.get('konsep_seharusnya') or (
+                            versions.get(s.question_version_id).model_answer if s.question_version_id in versions else ''
+                        ),
                     }
-
-                    # Construct explainable rubric scoring breakdown
-                    rubric_breakdown = []
-                    for ind in v_indicators:
-                        res = indicator_results.get(ind.order_index, {})
-                        score_enum = res.get('score', 'MISSING')
-                        credit_factor = 1.0 if score_enum == 'PRESENT' else (0.5 if score_enum == 'PARTIAL' else 0.0)
-                        weight_float = float(ind.weight)
-                        earned_points = round(weight_float * credit_factor * 100, 2)
-
-                        rubric_breakdown.append({
-                            'order_index': ind.order_index,
-                            'label': ind.label,
-                            'description': ind.description or '',
-                            'max_weight_percent': round(weight_float * 100, 1),
-                            'earned_points_percent': earned_points,
-                            'status': score_enum,
-                            'evidence': res.get('evidence', ''),
-                        })
-
-                    # Filter lecturer-confirmed misconceptions
-                    confirmed_misconceptions = []
-                    for m in breakdown.get('misconception_matches', []):
-                        if m.get('lecturer_confirmed') is True:
-                            confirmed_misconceptions.append({
-                                'label': m.get('label'),
-                                'reasoning': m.get('reasoning'),
-                            })
 
                     final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
 
@@ -2505,8 +2517,11 @@ def _build_submission_set_groups(user):
                         'tier_level': validation.final_tier_level_snapshot or analysis.tier_level_snapshot,
                         'tier_label': validation.final_tier_label_snapshot or analysis.tier_label_snapshot,
                         'clinical_feedback': validation.final_feedback or analysis.explanation,
-                        'confirmed_misconceptions': confirmed_misconceptions,
-                        'rubric_breakdown': rubric_breakdown,
+                        'student_feedback': student_feedback_payload,
+                        'misconception_info': {
+                            'code': analysis.module_c_code,
+                            'category': analysis.four_tier_category,
+                        } if analysis and analysis.module_c_code else None,
                         'suggested_materials': analysis.suggested_materials_json or [],
                         'validator_name': validation.lecturer.full_name,
                         'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
@@ -2533,7 +2548,6 @@ def _build_submission_set_groups(user):
                     'evaluation': evaluation_payload,
                 })
 
-            # Retrieve prompt and reference model answer from latest version
             latest_version = versions[sorted(subs, key=lambda x: x.attempt_no)[-1].question_version_id]
             questions_payload.append({
                 'question_id': str(qid),
@@ -2569,6 +2583,27 @@ def _build_submission_set_groups(user):
         questions_payload.sort(key=lambda item: item['order_index'])
         status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
 
+        # Target 3: Kalkulasi Nilai Keseluruhan Paket Soal
+        total_questions = published_count.get(set_id, 0) or len(questions_payload)
+        validated_questions_count = 0
+        correct_questions_count = 0
+
+        for q_item in questions_payload:
+            if q_item['answered'] and q_item['attempts']:
+                latest_att = q_item['attempts'][-1]
+                if latest_att['status'] == 'VALIDATED':
+                    validated_questions_count += 1
+                    eval_d = latest_att.get('evaluation')
+                    if eval_d and float(eval_d.get('percentage_correct', 0)) >= 99.9:
+                        correct_questions_count += 1
+
+        is_fully_validated = (validated_questions_count == total_questions and total_questions > 0)
+        overall_score = (
+            round((correct_questions_count / total_questions) * 100.0, 1)
+            if total_questions > 0
+            else 0.0
+        )
+
         results.append({
             'set_id': str(q_set.id),
             'code': q_set.code,
@@ -2577,13 +2612,17 @@ def _build_submission_set_groups(user):
             'subject_name': q_set.subject.name,
             'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
             'topic_name': q_set.topic.name if q_set.topic else None,
-            'question_count': published_count.get(set_id, 0),
+            'question_count': total_questions,
             'answered_count': sum(1 for item in questions_payload if item['answered']),
             'total_attempts': sum(status_counts.values()),
             'max_attempt_no': max_attempt,
             'status_summary': status_summary,
             'status_counts': status_counts,
             'last_submitted_at': last_submitted,
+            'overall_score': overall_score,
+            'correct_count': correct_questions_count,
+            'validated_count': validated_questions_count,
+            'is_fully_validated': is_fully_validated,
             'questions': questions_payload,
         })
 

@@ -14,6 +14,8 @@
 # Metrics are computed over `validations` (original_* vs final_* columns):
 # agreement-with-expert metrics; there is no other ground truth in this system.
 
+import json
+
 from django.db import connection, transaction
 from django.db.models import Q
 from rest_framework import status
@@ -257,7 +259,7 @@ class ValidationDetailView(APIView):
 
 
 class ValidationSubmitView(APIView):
-    """Accept/edit/reject satu analisis via sp_validate_analysis (lifecycle write through proc)."""
+    """Accept/edit/reject satu analisis via sp_validate_analysis (mendukung validasi baru & koreksi validasi)."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -271,9 +273,10 @@ class ValidationSubmitView(APIView):
         except LlmAnalysis.DoesNotExist:
             return Response({'detail': 'Analisis tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if a.submission.status != 'PENDING_VALIDATION':
+        # Izinkan PENDING_VALIDATION (validasi baru) serta VALIDATED / REJECTED (koreksi oleh dosen)
+        if a.submission.status not in ('PENDING_VALIDATION', 'VALIDATED', 'REJECTED'):
             return Response(
-                {'detail': f'Submission dalam status {a.submission.status}; hanya PENDING_VALIDATION yang dapat divalidasi.'},
+                {'detail': f'Submission dalam status {a.submission.status}; tidak dapat divalidasi.'},
                 status=status.HTTP_409_CONFLICT,
             )
 
@@ -282,34 +285,110 @@ class ValidationSubmitView(APIView):
         data = serializer.validated_data
 
         final_feedback = data.get('final_feedback') or None
-        # chk_final_required_unless_rejected: ACCEPTED/EDITED need final values;
-        # proc COALESCEs to originals when NULL, but final_feedback must be present.
         if data['status'] != 'REJECTED' and not final_feedback:
-            final_feedback = a.explanation  # accept LLM explanation as feedback when unchanged
+            final_feedback = a.explanation
 
         confirmations = data.get('misconception_confirmations') or []
+        existing_val = Validation.objects.filter(analysis=a).first()
 
         try:
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        'CALL sp_validate_analysis(%s, %s, %s, %s, %s, %s, %s, NULL);',
-                        [
-                            str(a.id),
-                            str(request.user.id),
-                            data['status'],
-                            data.get('final_percentage'),
-                            data.get('final_tier_level'),
-                            final_feedback,
-                            data.get('notes') or None,
-                        ],
-                    )
-                    row = cursor.fetchone()
-                    validation_id = str(row[0]) if row and row[0] else None
+                    if existing_val:
+                        # MODE KOREKSI: Update record validasi yang sudah ada
+                        v_effective_final_pct = data.get('final_percentage') if data['status'] != 'REJECTED' else None
+                        v_effective_final_tier = data.get('final_tier_level') if data['status'] != 'REJECTED' else None
 
-                # Persist lecturer confirmations of advisory misconception matches
-                # onto the analysis breakdown (data enrichment; the status
-                # transition above already went through the proc).
+                        v_final_tier_id = None
+                        v_final_tier_level = None
+                        v_final_tier_label = None
+
+                        if data['status'] != 'REJECTED':
+                            cursor.execute(
+                                "SELECT tier_id, tier_level, tier_label FROM fn_resolve_diagnostic_tier(%s, %s);",
+                                [str(a.subject_id), v_effective_final_tier or a.tier_level_snapshot]
+                            )
+                            tier_row = cursor.fetchone()
+                            if tier_row:
+                                v_final_tier_id, v_final_tier_level, v_final_tier_label = tier_row
+
+                        structured_diff = {
+                            'percentage': {
+                                'from': float(existing_val.original_percentage),
+                                'to': float(v_effective_final_pct) if v_effective_final_pct is not None else None,
+                                'modified': float(existing_val.original_percentage) != float(v_effective_final_pct or 0),
+                            },
+                            'tier': {
+                                'from_level': existing_val.original_tier_level_snapshot,
+                                'to_level': v_final_tier_level,
+                                'modified': str(existing_val.original_tier_id) != str(v_final_tier_id),
+                            }
+                        }
+
+                        cursor.execute(
+                            """
+                            UPDATE validations
+                            SET lecturer_id = %s,
+                                status = %s,
+                                final_percentage = %s,
+                                final_tier_id = %s,
+                                final_tier_level_snapshot = %s,
+                                final_tier_label_snapshot = %s,
+                                final_feedback = %s,
+                                structured_diff_json = %s,
+                                notes = %s,
+                                validated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s;
+                            """,
+                            [
+                                str(request.user.id),
+                                data['status'],
+                                v_effective_final_pct,
+                                v_final_tier_id,
+                                v_final_tier_level,
+                                v_final_tier_label,
+                                final_feedback if data['status'] != 'REJECTED' else None,
+                                json.dumps(structured_diff),
+                                data.get('notes') or None,
+                                str(existing_val.id),
+                            ]
+                        )
+                        validation_id = str(existing_val.id)
+
+                        new_sub_status = 'REJECTED' if data['status'] == 'REJECTED' else 'VALIDATED'
+                        cursor.execute(
+                            "UPDATE submissions SET status = %s WHERE id = %s;",
+                            [new_sub_status, str(a.submission_id)]
+                        )
+
+                        cursor.execute(
+                            """
+                            INSERT INTO audit_logs (actor_id, action, entity_name, entity_id, metadata_json)
+                            VALUES (%s, 'UPDATE_VALIDATION', 'validations', %s, %s::jsonb);
+                            """,
+                            [
+                                str(request.user.id),
+                                str(existing_val.id),
+                                json.dumps({'status': data['status'], 'diff': structured_diff})
+                            ]
+                        )
+                    else:
+                        # VALIDASI PERTAMA KALI
+                        cursor.execute(
+                            'CALL sp_validate_analysis(%s, %s, %s, %s, %s, %s, %s, NULL);',
+                            [
+                                str(a.id),
+                                str(request.user.id),
+                                data['status'],
+                                data.get('final_percentage'),
+                                data.get('final_tier_level'),
+                                final_feedback,
+                                data.get('notes') or None,
+                            ],
+                        )
+                        row = cursor.fetchone()
+                        validation_id = str(row[0]) if row and row[0] else None
+
                 if confirmations:
                     breakdown = a.concept_breakdown_json or {}
                     _misconception_confirmations(breakdown, confirmations)
@@ -324,11 +403,10 @@ class ValidationSubmitView(APIView):
             'submission_status': a.submission.status,
             'message': {
                 'ACCEPTED': 'Analisis diterima dan ditandai VALIDATED.',
-                'EDITED': 'Koreksi tersimpan dan ditandai VALIDATED.',
+                'EDITED': 'Koreksi validasi tersimpan dan ditandai VALIDATED.',
                 'REJECTED': 'Analisis ditolak; submission menunggu analisis ulang.',
             }[data['status']],
         }, status=status.HTTP_201_CREATED)
-
 
 # ============================================================================
 # MODEL PERFORMANCE METRICS (agreement with expert validations)

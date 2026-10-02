@@ -7,13 +7,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Award,
   BrainCircuit,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
   ClipboardCheck,
-  HelpCircle,
   Info,
   Lock,
   RotateCcw,
@@ -74,6 +74,14 @@ type QuestionReviewItem = {
   attempts: AttemptItem[];
 };
 
+type PackageReviewSummary = {
+  total_questions: number;
+  validated_count: number;
+  correct_count: number;
+  overall_score: number;
+  is_all_validated: boolean;
+};
+
 type PackageReview = {
   package: {
     id: string;
@@ -87,6 +95,7 @@ type PackageReview = {
   published_question_count: number;
   answered_count: number;
   total_attempts_count: number;
+  summary?: PackageReviewSummary;
   questions: QuestionReviewItem[];
 };
 
@@ -114,7 +123,6 @@ const CATEGORY_TO_LEVEL: Record<string, number> = {
   LK: 1,
 };
 
-// STANDAR WARNA & DESKRIPSI UNTUK 5 KATEGORI FOUR-TIER
 const CATEGORY_STYLES: Record<
   string,
   { badgeCls: string; label: string; desc: string; detailExpl: string }
@@ -162,6 +170,10 @@ const fmtDate = (val: string) => {
   }
 };
 
+const fmtPct = (num: number) => {
+  return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
+};
+
 export default function StudentPackageReviewPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -180,13 +192,12 @@ export default function StudentPackageReviewPage() {
   >({});
 
   // Form State
-  const [finalPct, setFinalPct] = useState("");
+  const [isCorrect, setIsCorrect] = useState<boolean>(false);
   const [finalCategory, setFinalCategory] = useState<string>("LK");
   const [feedback, setFeedback] = useState("");
   const [notes, setNotes] = useState("");
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [showAiDetails, setShowAiDetails] = useState(false);
-  const [showScoreBasis, setShowScoreBasis] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [submittingValidation, setSubmittingValidation] = useState(false);
 
@@ -240,48 +251,47 @@ export default function StudentPackageReviewPage() {
     return attemptsDesc[0];
   }, [activeQuestion, attemptsDesc, selectedAttemptByQuestion]);
 
-  const allQuestionsValidated = useMemo(() => {
-    if (!data?.questions?.length) return false;
-    return data.questions.every(
-      (q) => q.attempts.length > 0 && q.attempts[0].status === "VALIDATED"
-    );
-  }, [data]);
-
-  // Sinkronisasi data saat berpindah soal atau percobaan
   useEffect(() => {
     if (!currentAttempt || !currentAttempt.analysis) return;
     const a = currentAttempt.analysis;
     const v = a.validation;
 
-    setFinalPct(v?.final_percentage ?? a.percentage_correct);
+    const initialScoreVal =
+      v?.final_percentage !== null && v?.final_percentage !== undefined
+        ? Number(v.final_percentage)
+        : Number(a.percentage_correct);
+
+    setIsCorrect(initialScoreVal >= 99.9);
     setFinalCategory(a.four_tier_category ?? "LK");
     setFeedback(v?.final_feedback ?? a.explanation);
     setNotes("");
     setShowRejectBox(false);
     setShowAiDetails(false);
-    setShowScoreBasis(false);
     setIsUnlocked(false);
   }, [currentAttempt]);
 
   const isAlreadyValidated = Boolean(currentAttempt?.analysis?.validation);
   const isLocked = isAlreadyValidated && !isUnlocked;
 
-  // Deteksi perubahan yang belum disimpan
   const isFormModified = useMemo(() => {
     if (!currentAttempt?.analysis) return false;
     const a = currentAttempt.analysis;
     const v = a.validation;
-    const initialPct = v?.final_percentage ?? a.percentage_correct;
+    const initialScoreVal =
+      v?.final_percentage !== null && v?.final_percentage !== undefined
+        ? Number(v.final_percentage)
+        : Number(a.percentage_correct);
+    const initialIsCorrect = initialScoreVal >= 99.9;
     const initialCat = a.four_tier_category ?? "LK";
     const initialFeedback = v?.final_feedback ?? a.explanation;
 
     return (
-      Math.abs(Number(finalPct) - Number(initialPct)) > 0.01 ||
+      isCorrect !== initialIsCorrect ||
       finalCategory !== initialCat ||
       feedback.trim() !== initialFeedback.trim() ||
       notes.trim().length > 0
     );
-  }, [currentAttempt, finalPct, finalCategory, feedback, notes]);
+  }, [currentAttempt, isCorrect, finalCategory, feedback, notes]);
 
   const handleSelectAttempt = (questionId: string, attemptNo: number) => {
     setSelectedAttemptByQuestion((prev) => ({
@@ -300,15 +310,6 @@ export default function StudentPackageReviewPage() {
         setError("Peringatan: Silakan pilih Diagnosis Akhir Dosen terlebih dahulu.");
         return;
       }
-      if (finalPct === "" || isNaN(Number(finalPct))) {
-        setError("Peringatan: Masukkan Skor Akhir Dosen (%) berupa angka valid.");
-        return;
-      }
-      const numPct = Number(finalPct);
-      if (numPct < 0 || numPct > 100) {
-        setError("Peringatan: Skor Akhir harus berada di rentang 0 sampai 100.");
-        return;
-      }
       if (!feedback.trim()) {
         setError("Peringatan: Feedback untuk mahasiswa tidak boleh kosong.");
         return;
@@ -323,11 +324,13 @@ export default function StudentPackageReviewPage() {
     try {
       const a = currentAttempt.analysis;
       let decisionStatus: "ACCEPTED" | "EDITED" | "REJECTED" = "ACCEPTED";
+      const targetScorePct = isCorrect ? 100.0 : 0.0;
+
       if (forcedStatus === "REJECTED") {
         decisionStatus = "REJECTED";
       } else {
         const isScoreChanged =
-          Math.abs(Number(finalPct) - Number(a.percentage_correct)) > 0.01;
+          Math.abs(targetScorePct - Number(a.percentage_correct)) > 0.01;
         const isCategoryChanged =
           finalCategory !== (a.four_tier_category ?? "LK");
         const isFeedbackChanged = feedback.trim() !== a.explanation.trim();
@@ -338,7 +341,7 @@ export default function StudentPackageReviewPage() {
 
       const body: Record<string, unknown> = { status: decisionStatus };
       if (decisionStatus !== "REJECTED") {
-        body.final_percentage = Number(finalPct);
+        body.final_percentage = targetScorePct;
         body.final_tier_level =
           CATEGORY_TO_LEVEL[finalCategory] ?? a.tier_level ?? 1;
         body.final_feedback = feedback.trim();
@@ -385,7 +388,7 @@ export default function StudentPackageReviewPage() {
 
   const resetToAiValues = () => {
     if (!currentAttempt?.analysis) return;
-    setFinalPct(currentAttempt.analysis.percentage_correct);
+    setIsCorrect(Number(currentAttempt.analysis.percentage_correct) >= 99.9);
     setFinalCategory(currentAttempt.analysis.four_tier_category ?? "LK");
     setFeedback(currentAttempt.analysis.explanation);
   };
@@ -394,7 +397,11 @@ export default function StudentPackageReviewPage() {
     if (!currentAttempt?.analysis) return;
     const a = currentAttempt.analysis;
     const v = a.validation;
-    setFinalPct(v?.final_percentage ?? a.percentage_correct);
+    const initialScoreVal =
+      v?.final_percentage !== null && v?.final_percentage !== undefined
+        ? Number(v.final_percentage)
+        : Number(a.percentage_correct);
+    setIsCorrect(initialScoreVal >= 99.9);
     setFinalCategory(a.four_tier_category ?? "LK");
     setFeedback(v?.final_feedback ?? a.explanation);
     setIsUnlocked(false);
@@ -404,11 +411,14 @@ export default function StudentPackageReviewPage() {
     ? CATEGORY_STYLES[currentAttempt.analysis.four_tier_category] ?? CATEGORY_STYLES.LK
     : null;
 
+  const summary = data?.summary;
+  const isAiPredictedCorrect =
+    Number(currentAttempt?.analysis?.percentage_correct || 0) >= 99.9;
+
   if (loading || !user) return null;
 
   return (
     <PageContainer>
-      {/* Tombol Navigasi Kembali */}
       <Link
         href={`/questions/${setId}`}
         className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary no-underline transition-colors"
@@ -416,7 +426,6 @@ export default function StudentPackageReviewPage() {
         <ArrowLeft size={14} /> Kembali ke daftar mahasiswa
       </Link>
 
-      {/* Header Evaluasi */}
       {data && (
         <PageHeader
           className="mt-2 mb-2"
@@ -433,40 +442,11 @@ export default function StudentPackageReviewPage() {
               <span className="badge badge-active text-xs">
                 Terjawab {data.answered_count} / {data.published_question_count} Soal
               </span>
-              <span className="badge badge-role font-mono-ui text-xs">
-                {data.total_attempts_count} Percobaan Total
-              </span>
             </div>
           }
         />
       )}
 
-      {/* Banner Penyelesaian Paket */}
-      {allQuestionsValidated && (
-        <div className="mt-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-emerald-600 dark:text-emerald-400 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-fade-in shadow-sm">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-emerald-500/20 rounded-lg shrink-0">
-              <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400" />
-            </div>
-            <div>
-              <h4 className="text-xs font-bold text-on-surface">
-                Seluruh Soal Mahasiswa Ini Telah Tervalidasi
-              </h4>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">
-                Semua butir soal telah diberi skor dan umpan balik final.
-              </p>
-            </div>
-          </div>
-          <Link
-            href={`/questions/${setId}`}
-            className="btn-primary !py-1.5 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
-          >
-            Kembali ke Rekap Kelas <ArrowRight size={13} />
-          </Link>
-        </div>
-      )}
-
-      {/* Alert Error / Sukses */}
       {error && (
         <div
           role="alert"
@@ -493,10 +473,9 @@ export default function StudentPackageReviewPage() {
         </p>
       ) : data && activeQuestion ? (
         <div className="mt-3.5 flex flex-col lg:flex-row gap-5 items-start">
-          {/* KOLOM KIRI (FLEX-1): WORKBENCH EVALUASI & VALIDASI */}
+          {/* KOLOM KIRI: WORKBENCH EVALUASI & VALIDASI */}
           <main className="flex-1 min-w-0 space-y-4">
             <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5 space-y-4">
-              {/* Header Kartu: Nomor Soal & Status */}
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
                 <div className="flex items-center gap-2">
                   <span className="font-mono-ui text-base font-bold text-primary">
@@ -508,7 +487,6 @@ export default function StudentPackageReviewPage() {
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {/* Selector Percobaan */}
                   <div className="flex items-center gap-1.5 text-xs">
                     <span className="text-on-surface-variant text-xs font-semibold uppercase tracking-wide">
                       Percobaan:
@@ -537,7 +515,6 @@ export default function StudentPackageReviewPage() {
                     />
                   </div>
 
-                  {/* Badge Status Soal */}
                   {currentAttempt ? (
                     <span className={`badge ${STATUS_BADGE[currentAttempt.status]?.cls} text-xs`}>
                       {STATUS_BADGE[currentAttempt.status]?.label}
@@ -548,9 +525,8 @@ export default function StudentPackageReviewPage() {
                 </div>
               </div>
 
-              {/* 1. KOMPARASI KONSEPTUAL: SOAL vs JAWABAN MAHASISWA */}
+              {/* SOAL vs JAWABAN MAHASISWA */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                {/* Kolom Kiri: Soal & Kunci Model */}
                 <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 flex flex-col justify-between space-y-3">
                   <div>
                     <span className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant block mb-1">
@@ -571,7 +547,6 @@ export default function StudentPackageReviewPage() {
                   </div>
                 </div>
 
-                {/* Kolom Kanan: Jawaban Mahasiswa (Font UI Standar, Proporsional) */}
                 <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 space-y-2.5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
@@ -585,7 +560,6 @@ export default function StudentPackageReviewPage() {
                       )}
                     </div>
 
-                    {/* Penanda Heuristik Antar-Tier */}
                     {currentAttempt?.heuristic_flags && currentAttempt.heuristic_flags.length > 0 && (
                       <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
                         <AlertTriangle size={12} className="shrink-0" />
@@ -601,7 +575,6 @@ export default function StudentPackageReviewPage() {
                       </div>
                     )}
 
-                    {/* Tier 1 (Kesimpulan) */}
                     <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
@@ -617,7 +590,6 @@ export default function StudentPackageReviewPage() {
                     </div>
                   </div>
 
-                  {/* Tier 3 (Alasan Ilmiah) */}
                   <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
@@ -634,7 +606,7 @@ export default function StudentPackageReviewPage() {
                 </div>
               </div>
 
-              {/* 2. STRIP REKOMENDASI AI (KOMPAK, 1 BARIS SUMMARY DENGAN KONSISTENSI WARNA) */}
+              {/* REKOMENDASI AI: MURNI STATUS BENAR/SALAH */}
               {currentAttempt?.analysis && (
                 <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/70 px-3.5 py-2.5 space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -643,9 +615,8 @@ export default function StudentPackageReviewPage() {
                         <BrainCircuit size={14} className="text-primary" /> REKOMENDASI AI:
                       </span>
 
-                      {/* Badge Kategori dengan Warna Terpadu */}
                       <span
-                        className={`font-mono-ui text-xs font-bold cursor-help inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
+                        className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
                           CATEGORY_STYLES[currentAttempt.analysis.four_tier_category ?? "LK"]?.badgeCls
                         }`}
                         title={categoryMeta?.detailExpl}
@@ -654,54 +625,16 @@ export default function StudentPackageReviewPage() {
                         <Info size={11} className="opacity-70" />
                       </span>
 
-                      {/* Skor Rekomendasi AI dengan Popover Perhitungan */}
-                      <div className="relative inline-block">
-                        <button
-                          type="button"
-                          onClick={() => setShowScoreBasis((prev) => !prev)}
-                          className="font-mono-ui font-bold text-xs text-primary bg-primary/10 hover:bg-primary/20 px-2.5 py-0.5 rounded border border-primary/20 inline-flex items-center gap-1 cursor-pointer transition-colors"
-                          title="Klik untuk melihat dasar perhitungan rekomendasi skor AI"
-                        >
-                          Skor: {Number(currentAttempt.analysis.percentage_correct).toFixed(1)}%
-                          <HelpCircle size={11} className="opacity-75" />
-                        </button>
+                      <span
+                        className={`font-mono-ui font-bold text-xs px-2.5 py-0.5 rounded border inline-flex items-center gap-1 ${
+                          isAiPredictedCorrect
+                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                            : "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                        }`}
+                      >
+                        {isAiPredictedCorrect ? "Prediksi: Benar" : "Prediksi: Salah"}
+                      </span>
 
-                        {/* Popover Dasar Penilaian Skor */}
-                        {showScoreBasis && (
-                          <div className="absolute left-0 top-full mt-1.5 z-30 w-72 p-3.5 rounded-xl border border-outline-variant/60 bg-surface-container-lowest shadow-2xl text-xs space-y-2 animate-fade-in">
-                            <div className="font-bold text-on-surface border-b border-outline-variant/30 pb-1.5 flex items-center justify-between">
-                              <span>Dasar Rekomendasi Skor</span>
-                              <button
-                                type="button"
-                                onClick={() => setShowScoreBasis(false)}
-                                className="text-on-surface-variant hover:text-on-surface text-sm"
-                              >
-                                ×
-                              </button>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-on-surface-variant">Kesimpulan (Tier 1):</span>
-                              <strong className="text-on-surface font-mono-ui">
-                                {currentAttempt.analysis.module_a_score}{" "}
-                                ({currentAttempt.analysis.module_a_score === "BENAR" ? "+30%" : currentAttempt.analysis.module_a_score === "BENAR_SEBAGIAN" ? "+15%" : "+0%"})
-                              </strong>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-on-surface-variant">Alasan Ilmiah (Tier 3):</span>
-                              <strong className="text-on-surface font-mono-ui">
-                                {currentAttempt.analysis.module_b_score}{" "}
-                                (+{(Number(currentAttempt.analysis.percentage_correct) - (currentAttempt.analysis.module_a_score === "BENAR" ? 30 : currentAttempt.analysis.module_a_score === "BENAR_SEBAGIAN" ? 15 : 0)).toFixed(1)}%)
-                              </strong>
-                            </div>
-                            <div className="flex justify-between border-t border-outline-variant/20 pt-1.5 font-bold text-primary font-mono-ui">
-                              <span>Total Skor AI:</span>
-                              <span>{Number(currentAttempt.analysis.percentage_correct).toFixed(1)}%</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Status Modul T1 & T3 */}
                       <span className="text-xs text-on-surface-variant">
                         T1: <strong className="text-on-surface">{currentAttempt.analysis.module_a_score}</strong> · T3: <strong className="text-on-surface">{currentAttempt.analysis.module_b_score}</strong>
                       </span>
@@ -720,24 +653,22 @@ export default function StudentPackageReviewPage() {
                     </button>
                   </div>
 
-                  {/* Summary 1 Kalimat Temuan AI */}
                   <p className="text-xs text-on-surface-variant leading-relaxed">
-                    <strong className="text-on-surface">Temuan: </strong>
+                    <strong className="text-on-surface">Temuan AI: </strong>
                     {currentAttempt.analysis.four_tier_category === "FP"
-                      ? "Jawaban benar, tetapi alasan/penalaran menunjukkan miskonsepsi."
+                      ? "Kesimpulan benar, namun alasan ilmiah menunjukkan miskonsepsi (False Positive)."
                       : currentAttempt.analysis.four_tier_category === "SC"
-                      ? "Jawaban dan penalaran konsisten dengan konsep acuan ilmiah."
+                      ? "Kesimpulan dan penalaran fisis konsisten dengan kunci ilmiah (Sound Understanding)."
                       : currentAttempt.analysis.explanation.split("\n")[0] || currentAttempt.analysis.explanation}
                   </p>
 
-                  {/* Detail Tambahan AI (Expandable) */}
                   {showAiDetails && (
                     <div className="pt-2 mt-1.5 border-t border-outline-variant/20 text-xs space-y-1.5 text-on-surface-variant animate-fade-in">
                       <div className="bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/25 whitespace-pre-wrap leading-relaxed">
                         {currentAttempt.analysis.explanation}
                       </div>
                       <div className="flex items-center justify-between text-[11px] font-mono-ui text-on-surface-variant/80">
-                        <span>Kepercayaan AI: {Number(currentAttempt.analysis.confidence).toFixed(2)}</span>
+                        <span>Tingkat Keyakinan Model AI: {Number(currentAttempt.analysis.confidence).toFixed(2)}</span>
                         <span>Waktu Analisis: {currentAttempt.analysis.execution_time_ms ?? "-"} ms</span>
                       </div>
                     </div>
@@ -745,7 +676,7 @@ export default function StudentPackageReviewPage() {
                 </div>
               )}
 
-              {/* 3. KEPUTUSAN VALIDASI DOSEN (DENGAN LOCK STATE PASCA-VALIDASI) */}
+              {/* KEPUTUSAN VALIDASI DOSEN */}
               {currentAttempt?.analysis ? (
                 <section
                   className={`rounded-xl border-2 transition-all p-4 sm:p-5 space-y-3.5 shadow-sm ${
@@ -768,7 +699,6 @@ export default function StudentPackageReviewPage() {
                       </h3>
                     </div>
 
-                    {/* Indikator Status Validasi */}
                     <div>
                       {isLocked ? (
                         <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 inline-flex items-center gap-1.5">
@@ -786,16 +716,20 @@ export default function StudentPackageReviewPage() {
                     </div>
                   </div>
 
-                  {/* KONDISI TERKUNCI (READ-ONLY VIEW) */}
                   {isLocked ? (
                     <div className="space-y-3 pt-1">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                         <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
                           <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
-                            SKOR AKHIR DOSEN
+                            STATUS BUTIR INI
                           </span>
-                          <span className="font-mono-ui text-2xl font-extrabold text-primary">
-                            {Number(finalPct).toFixed(1)}%
+                          <span
+                            className={`font-mono-ui text-lg font-extrabold inline-flex items-center gap-1.5 ${
+                              isCorrect ? "text-emerald-500" : "text-rose-500"
+                            }`}
+                          >
+                            {isCorrect ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
+                            {isCorrect ? "Benar" : "Salah"}
                           </span>
                         </div>
 
@@ -840,7 +774,6 @@ export default function StudentPackageReviewPage() {
                       </div>
                     </div>
                   ) : (
-                    /* KONDISI FORM EDITABLE */
                     <div className="space-y-3.5">
                       {isAlreadyValidated && (
                         <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-1.5 text-xs text-amber-300">
@@ -857,29 +790,42 @@ export default function StudentPackageReviewPage() {
                         </div>
                       )}
 
-                      {/* Input Skor Akhir & Diagnosis Akhir */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
-                        {/* Skor Akhir Dosen */}
+                        {/* Status Biner: Benar / Salah */}
                         <div>
-                          <label
-                            htmlFor="final-pct"
-                            className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1"
-                          >
-                            SKOR AKHIR DOSEN (%)
+                          <label className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
+                            PENILAIAN BUTIR SOAL INI
                           </label>
-                          <input
-                            id="final-pct"
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={finalPct}
-                            onChange={(e) => setFinalPct(e.target.value)}
-                            className="form-input w-32 text-sm font-mono-ui font-bold"
-                          />
-                          <div className="mt-1 text-xs text-on-surface-variant flex items-center gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setIsCorrect(true)}
+                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-bold font-mono-ui cursor-pointer transition-all ${
+                                isCorrect
+                                  ? "bg-emerald-500 text-white border-emerald-500 shadow-sm ring-2 ring-emerald-500/30"
+                                  : "bg-surface-container text-on-surface border-outline-variant/40 hover:bg-surface-container-high"
+                              }`}
+                            >
+                              🟢 Benar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsCorrect(false)}
+                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-bold font-mono-ui cursor-pointer transition-all ${
+                                !isCorrect
+                                  ? "bg-rose-600 text-white border-rose-600 shadow-sm ring-2 ring-rose-600/30"
+                                  : "bg-surface-container text-on-surface border-outline-variant/40 hover:bg-surface-container-high"
+                              }`}
+                            >
+                              🔴 Salah
+                            </button>
+                          </div>
+                          <div className="mt-1.5 text-xs text-on-surface-variant flex items-center gap-1.5">
                             <span>
-                              Rekomendasi AI: <strong className="text-on-surface font-mono-ui">{Number(currentAttempt.analysis.percentage_correct).toFixed(1)}%</strong>
+                              Rekomendasi AI:{" "}
+                              <strong className="text-on-surface font-mono-ui">
+                                {isAiPredictedCorrect ? "Benar" : "Salah"}
+                              </strong>
                             </span>
                             <span className="text-outline-variant">·</span>
                             <button
@@ -888,7 +834,7 @@ export default function StudentPackageReviewPage() {
                               className="text-primary hover:underline font-semibold cursor-pointer inline-flex items-center gap-0.5"
                               title="Gunakan nilai rekomendasi AI"
                             >
-                              <RotateCcw size={10} /> Gunakan
+                              <RotateCcw size={10} /> Reset ke AI
                             </button>
                           </div>
                         </div>
@@ -939,13 +885,9 @@ export default function StudentPackageReviewPage() {
                             className="form-input w-full text-xs leading-relaxed resize-y"
                             placeholder="Tuliskan umpan balik atau bimbingan konsep yang akan dibaca oleh mahasiswa pada lembar evaluasinya..."
                           />
-                          <p className="text-[11px] text-on-surface-variant mt-1">
-                            Feedback ini akan diterima mahasiswa setelah validasi disimpan.
-                          </p>
                         </div>
                       </div>
 
-                      {/* Mode Tolak & Re-analisis */}
                       {showRejectBox && (
                         <div className="rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3 space-y-2">
                           <div className="flex items-center justify-between text-xs font-bold text-error">
@@ -980,14 +922,12 @@ export default function StudentPackageReviewPage() {
                         </div>
                       )}
 
-                      {/* Bar Tombol Simpan / Tolak */}
                       <div className="pt-2 border-t border-outline-variant/20 flex items-center justify-between gap-3">
                         {!showRejectBox ? (
                           <button
                             type="button"
                             onClick={() => setShowRejectBox(true)}
                             className="btn-danger !py-2 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                            title="Tolak analisis AI dan jadwalkan analisis ulang"
                           >
                             <XCircle size={14} /> Tolak &amp; Re-analisis
                           </button>
@@ -1029,7 +969,7 @@ export default function StudentPackageReviewPage() {
                 </div>
               )}
 
-              {/* NAVIGASI INLINE DI BAWAH KARTU */}
+              {/* NAVIGASI INLINE */}
               <div className="flex items-center justify-between pt-2.5 border-t border-outline-variant/20">
                 <button
                   type="button"
@@ -1064,8 +1004,9 @@ export default function StudentPackageReviewPage() {
             </section>
           </main>
 
-          {/* KOLOM KANAN (LG:W-52 RAMPING): DAFTAR NOMOR SOAL STICKY */}
+          {/* KOLOM KANAN: DAFTAR SOAL + KARTU NILAI AKHIR (100%, 75%, 50%, ETC) */}
           <aside className="w-full lg:w-52 shrink-0 lg:sticky lg:top-6 space-y-3">
+            {/* 1. KOTAK DAFTAR SOAL */}
             <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
                 <h3 className="font-bold text-xs text-on-surface uppercase tracking-wide">Daftar Soal</h3>
@@ -1074,7 +1015,6 @@ export default function StudentPackageReviewPage() {
                 </span>
               </div>
 
-              {/* Grid Kotak Nomor Soal */}
               <div className="flex flex-wrap items-center gap-2 py-3">
                 {data.questions.map((q, idx) => {
                   const isCurrent = idx === activeQuestionIdx;
@@ -1085,15 +1025,24 @@ export default function StudentPackageReviewPage() {
                   const isValidated =
                     q.attempts.length > 0 &&
                     q.attempts[0].status === "VALIDATED";
+                  const isCorrectItem =
+                    isValidated &&
+                    Number(q.attempts[0]?.analysis?.validation?.final_percentage ?? q.attempts[0]?.analysis?.percentage_correct ?? 0) >= 99.9;
 
                   let boxBorderCls = "border-outline-variant/50 bg-surface-container text-on-surface-variant";
                   let dotColor = "bg-slate-400";
                   let statusTitle = "Belum Dijawab";
 
                   if (isValidated) {
-                    boxBorderCls = "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
-                    dotColor = "bg-emerald-400";
-                    statusTitle = "Tervalidasi Dosen";
+                    if (isCorrectItem) {
+                      boxBorderCls = "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
+                      dotColor = "bg-emerald-400";
+                      statusTitle = "Jawaban Benar";
+                    } else {
+                      boxBorderCls = "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
+                      dotColor = "bg-rose-400";
+                      statusTitle = "Jawaban Salah";
+                    }
                   } else if (hasPendingValidation) {
                     boxBorderCls = "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
                     dotColor = "bg-amber-400";
@@ -1120,8 +1069,6 @@ export default function StudentPackageReviewPage() {
                       title={`Soal ${idx + 1}: ${statusTitle}`}
                     >
                       {idx + 1}
-
-                      {/* Dot Indikator Status */}
                       <span
                         className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
                       />
@@ -1130,25 +1077,30 @@ export default function StudentPackageReviewPage() {
                 })}
               </div>
 
-              {/* Legenda Status Kotak */}
               <div className="pt-2 border-t border-outline-variant/30 space-y-1 text-[11px] text-on-surface-variant font-medium">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span>Tervalidasi</span>
+                  <span>Jawaban Benar</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-rose-400 shrink-0" />
+                  <span>Jawaban Salah</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
                   <span>Menunggu Validasi</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-blue-400 shrink-0" />
-                  <span>Tersimpan</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-slate-400 shrink-0" />
-                  <span>Belum Dijawab</span>
-                </div>
               </div>
+            </div>
+
+            {/* 2. KARTU NILAI AKHIR (SEPERTI 100%, 75%, 50%, ETC) TEPAT DI BAWAH KOTAK DAFTAR SOAL */}
+            <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4 shadow-sm">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block">
+                Nilai Akhir:
+              </span>
+              <span className="font-mono-ui text-3xl font-black text-on-surface mt-1.5 block">
+                {fmtPct(summary?.overall_score ?? 0)}
+              </span>
             </div>
           </aside>
         </div>
