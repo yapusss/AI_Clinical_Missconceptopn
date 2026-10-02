@@ -307,7 +307,6 @@ export default function QuestionsPage() {
             <tbody className="divide-y divide-outline-variant/30">
               {visibleSets.map((item) => {
                 const published = item.latest_versions?.length > 0 && item.latest_versions.every((v) => v.is_published);
-                const pending = item.pending_validations_count ?? 0;
                 const totalSubs = item.total_submissions_count ?? 0;
                 const students = item.distinct_students_count ?? 0;
                 const isMenuOpen = activeMenuId === item.id;
@@ -351,27 +350,10 @@ export default function QuestionsPage() {
                     </td>
 
                     <td className="px-5 py-4 align-middle whitespace-nowrap">
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-xs text-on-surface font-medium inline-flex items-center gap-1.5">
-                          <Users size={13} className="text-on-surface-variant" />
-                          <strong>{students}</strong> mahasiswa ({totalSubs} respons)
-                        </span>
-
-                        {pending > 0 ? (
-                          <span className="inline-flex items-center gap-1 w-fit rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-400">
-                            <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
-                            {pending} Perlu Validasi
-                          </span>
-                        ) : totalSubs > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
-                            <CircleCheck size={13} /> Semua tervalidasi
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-on-surface-variant/70 italic">
-                            Belum ada pengumpulan
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-xs text-on-surface font-medium inline-flex items-center gap-1.5">
+                        <Users size={13} className="text-on-surface-variant" />
+                        <strong>{students}</strong> mahasiswa ({totalSubs} respons)
+                      </span>
                     </td>
                     <td
                       className="pl-10 pr-5 py-4 align-middle text-right whitespace-nowrap"
