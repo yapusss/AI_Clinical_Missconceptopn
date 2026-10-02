@@ -464,11 +464,19 @@ export default function StudentPackageReviewPage() {
         <div className="mt-6 space-y-5">
           {/* Navigator Bar */}
           <div className="border-b border-outline-variant/30 bg-surface-container-low/70 px-4 py-3 sm:px-6 rounded-2xl border border-outline-variant/40 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mr-1">
                   Navigasi soal:
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveQuestionIdx((prev) => Math.max(0, prev - 1))}
+                  disabled={activeQuestionIdx === 0}
+                  className="btn-secondary !px-3 !py-1.5 text-xs disabled:opacity-40"
+                >
+                  <ChevronLeft size={14} /> Sebelumnya
+                </button>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {data.questions.map((q, idx) => {
                     const isCurrent = idx === activeQuestionIdx;
@@ -511,6 +519,17 @@ export default function StudentPackageReviewPage() {
                     );
                   })}
                 </div>
+                <span className="px-1 text-xs font-mono-ui text-on-surface-variant">
+                  {activeQuestionIdx + 1}/{data.questions.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveQuestionIdx((prev) => Math.min(data.questions.length - 1, prev + 1))}
+                  disabled={activeQuestionIdx === data.questions.length - 1}
+                  className="btn-primary !px-3 !py-1.5 text-xs disabled:opacity-40"
+                >
+                  Berikutnya <ChevronRight size={14} />
+                </button>
               </div>
 
               {/* Attempt Selector Dropdown */}
@@ -677,33 +696,6 @@ export default function StudentPackageReviewPage() {
                   </div>
                 </div>
 
-                <footer className="border-t border-outline-variant/20 bg-surface-container-low/50 px-5 py-3 flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveQuestionIdx((prev) => Math.max(0, prev - 1))
-                    }
-                    disabled={activeQuestionIdx === 0}
-                    className="btn-secondary !py-1 !px-2.5 text-xs disabled:opacity-40"
-                  >
-                    <ChevronLeft size={14} /> Soal Sebelumnya
-                  </button>
-                  <span className="text-xs font-mono-ui text-on-surface-variant">
-                    Soal {activeQuestionIdx + 1} dari {data.questions.length}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveQuestionIdx((prev) =>
-                        Math.min(data.questions.length - 1, prev + 1),
-                      )
-                    }
-                    disabled={activeQuestionIdx === data.questions.length - 1}
-                    className="btn-secondary !py-1 !px-2.5 text-xs disabled:opacity-40"
-                  >
-                    Soal Berikutnya <ChevronRight size={14} />
-                  </button>
-                </footer>
               </section>
 
               {/* 2. AI Clinical Analysis Details */}
