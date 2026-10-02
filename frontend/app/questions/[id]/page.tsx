@@ -30,6 +30,8 @@ type StudentProgress = {
   published_question_count: number;
   total_attempts_count: number;
   all_submissions: StudentSubmissionItem[];
+  validation_state?: "PENDING" | "VALIDATED";
+  roster_member?: boolean;
 };
 
 type QuestionSetReview = {
@@ -40,8 +42,29 @@ type QuestionSetReview = {
   subject_name: string;
   is_active: boolean;
   published_question_count: number;
+  roster_scope?: string;
+  unsubmitted_roster_available?: boolean;
   students: StudentProgress[];
 };
+
+type ValidationTabId = "PENDING" | "VALIDATED" | "ALL";
+
+const VALIDATION_TABS: { id: ValidationTabId; label: string }[] = [
+  { id: "PENDING", label: "Belum Divalidasi" },
+  { id: "VALIDATED", label: "Sudah Validasi" },
+  { id: "ALL", label: "Semua" },
+];
+
+function resolveValidationState(student: StudentProgress): "PENDING" | "VALIDATED" {
+  if (student.validation_state) return student.validation_state;
+  const submissions = student.all_submissions;
+  if (!submissions.length) return "PENDING";
+  return submissions.every((submission) => submission.validation_status === "VALIDATED") ? "VALIDATED" : "PENDING";
+}
+
+function isRosterMember(student: StudentProgress): boolean {
+  return student.roster_member ?? true;
+}
 
 const STATUS_META: Record<string, { label: string; badge: string }> = {
   SUBMITTED: { label: "Dikirim", badge: "badge-draft" },
@@ -60,6 +83,7 @@ export default function QuestionSetReviewPage() {
   const [data, setData] = useState<QuestionSetReview | null>(null);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState<ValidationTabId>("PENDING");
 
   const load = useCallback(async () => {
     if (!setId) return;
@@ -85,6 +109,17 @@ export default function QuestionSetReviewPage() {
 
   if (loading || !user) return null;
 
+  const students = (data?.students ?? []).filter(isRosterMember);
+  const pendingStudents = students.filter((student) => resolveValidationState(student) === "PENDING");
+  const validatedStudents = students.filter((student) => resolveValidationState(student) === "VALIDATED");
+  const visibleStudents =
+    activeTab === "PENDING" ? pendingStudents : activeTab === "VALIDATED" ? validatedStudents : students;
+  const tabCount: Record<ValidationTabId, number> = {
+    PENDING: pendingStudents.length,
+    VALIDATED: validatedStudents.length,
+    ALL: students.length,
+  };
+
   return (
     <PageContainer>
       <Link href="/questions" className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline">
@@ -105,9 +140,43 @@ export default function QuestionSetReviewPage() {
       {error && <div role="alert" className="mt-6 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"><TriangleAlert size={20} />{error}</div>}
       {fetching ? <p className="mt-8 text-sm text-on-surface-variant">Memuat progres mahasiswa...</p> : data && (
         <div className="mt-8 space-y-4">
-          {data.students.length === 0 ? (
-            <div className="glass-panel rounded-xl border border-outline-variant/40 p-8 text-center text-sm text-on-surface-variant">Belum ada mahasiswa yang mengumpulkan respons untuk paket ujian ini.</div>
-          ) : data.students.map((student) => {
+          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-1.5">
+            {VALIDATION_TABS.map((tab) => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  aria-pressed={active}
+                  className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors sm:flex-none ${active ? "bg-primary text-white shadow-sm" : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"}`}
+                >
+                  {tab.label}
+                  <span className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold ${active ? "bg-white/20 text-white" : "bg-surface-container text-on-surface-variant"}`}>
+                    {tabCount[tab.id]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {data.unsubmitted_roster_available === false && (
+            <p className="text-xs text-on-surface-variant">
+              Menampilkan mahasiswa yang sudah mengumpulkan jawaban. Mahasiswa yang belum mengumpulkan akan muncul setelah data roster paket tersedia.
+            </p>
+          )}
+
+          {visibleStudents.length === 0 ? (
+            <div className="glass-panel rounded-xl border border-outline-variant/40 p-8 text-center text-sm text-on-surface-variant">
+              {students.length === 0
+                ? "Belum ada mahasiswa yang mengumpulkan respons untuk paket ujian ini."
+                : activeTab === "PENDING"
+                  ? "Tidak ada mahasiswa yang perlu divalidasi."
+                  : activeTab === "VALIDATED"
+                    ? "Belum ada mahasiswa yang tervalidasi."
+                    : "Tidak ada mahasiswa pada paket ini."}
+            </div>
+          ) : visibleStudents.map((student) => {
             const counts = student.all_submissions.reduce<Record<string, number>>((acc, sub) => {
               acc[sub.status] = (acc[sub.status] ?? 0) + 1;
               return acc;

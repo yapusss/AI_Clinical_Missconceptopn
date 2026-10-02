@@ -1,77 +1,57 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  CircleCheck,
-  CircleStop,
-  ChevronDown,
-  ChevronUp,
-  ClipboardList,
-  Download,
-  Eye,
-  Filter,
-  FileUp,
-  GraduationCap,
-  MoreVertical,
-  Pencil,
-  Plus,
-  Send,
-  TriangleAlert,
-  Users,
-  X,
-} from "lucide-react";
+import { BookOpen, MoreVertical, TriangleAlert } from "lucide-react";
 import { useAuth } from "../components/AuthProvider";
-import ConfirmDialog from "../components/ConfirmDialog";
-import ListToolbar from "../components/ListToolbar";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
-import QuestionBankImport from "../components/QuestionBankImport";
+
+type SubjectOption = {
+  id: string;
+  slug: string;
+  name: string;
+};
 
 type QuestionSet = {
   id: string;
-  code: string;
-  title: string;
+  subject_id: string;
   subject_name: string;
-  topic_id?: string | null;
-  topic_name?: string | null;
-  question_count: number;
-  total_submissions_count?: number;
-  distinct_students_count?: number;
-  pending_validations_count?: number;
-  is_active: boolean;
-  latest_versions: { is_published: boolean }[];
 };
+
+const COURSE_BANNERS = [
+  "repeating-linear-gradient(90deg, rgba(255,255,255,0.10) 0 2px, transparent 2px 44px), repeating-linear-gradient(0deg, rgba(255,255,255,0.10) 0 2px, transparent 2px 44px), linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)",
+  "radial-gradient(circle at 22% 32%, rgba(255,255,255,0.18) 0 12%, transparent 13%), radial-gradient(circle at 72% 64%, rgba(255,255,255,0.14) 0 16%, transparent 17%), linear-gradient(135deg, #1d4ed8, #0ea5e9)",
+  "repeating-radial-gradient(circle at 50% 130%, rgba(255,255,255,0.12) 0 18px, transparent 18px 36px), linear-gradient(135deg, #1e40af, #3b82f6)",
+  "conic-gradient(from 45deg at 50% 50%, rgba(255,255,255,0.12) 0 25%, transparent 0 50%, rgba(255,255,255,0.12) 0 75%, transparent 0), linear-gradient(135deg, #1e3a8a, #2563eb)",
+  "repeating-linear-gradient(45deg, rgba(255,255,255,0.08) 0 14px, transparent 14px 28px), linear-gradient(135deg, #0284c7, #1e40af)",
+  "radial-gradient(circle at 80% 20%, rgba(255,255,255,0.20) 0 10%, transparent 11%), linear-gradient(135deg, #1e40af, #0ea5e9)",
+];
+
+function derivedSubjects(sets: QuestionSet[]): SubjectOption[] {
+  const seen = new Map<string, SubjectOption>();
+  sets.forEach((item) => {
+    if (item.subject_id && !seen.has(item.subject_id)) {
+      seen.set(item.subject_id, { id: item.subject_id, slug: item.subject_id, name: item.subject_name });
+    }
+  });
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export default function QuestionsPage() {
   const { user, token, loading } = useAuth();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
-
+  const [courses, setCourses] = useState<SubjectOption[]>([]);
   const [sets, setSets] = useState<QuestionSet[]>([]);
-  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
-
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [activeImportTab, setActiveImportTab] = useState(false);
-
-  const [pendingDeactivate, setPendingDeactivate] = useState<QuestionSet | null>(null);
-  const [message, setMessage] = useState("");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [statusFilters, setStatusFilters] = useState<string[]>([]);
-  const [subjectFilterIds, setSubjectFilterIds] = useState<string[]>([]);
-  const [topicFilterNames, setTopicFilterNames] = useState<string[]>([]);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [sortOrder, setSortOrder] = useState("CODE_ASC");
-  const filterRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
-      if (!filterRef.current?.contains(event.target as Node)) setFiltersOpen(false);
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setActiveMenuId(null);
-      }
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpenMenuId(null);
     };
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
@@ -79,9 +59,21 @@ export default function QuestionsPage() {
 
   const load = useCallback(async () => {
     if (!token) return;
-    const response = await fetch("/api/questions", { headers: { Authorization: `Bearer ${token}` } });
-    if (response.ok) {
-      setSets(await response.json());
+    const headers = { Authorization: `Bearer ${token}` };
+    const [questionsResponse, summaryResponse] = await Promise.all([
+      fetch("/api/questions", { headers }),
+      fetch("/api/dashboard/summary", { headers }),
+    ]);
+
+    const nextSets: QuestionSet[] = questionsResponse.ok ? await questionsResponse.json() : [];
+    if (questionsResponse.ok) setSets(nextSets);
+
+    if (summaryResponse.ok) {
+      const summary = await summaryResponse.json();
+      const nextSubjects: SubjectOption[] = summary.my_subjects ?? [];
+      setCourses(nextSubjects.length ? nextSubjects : derivedSubjects(nextSets));
+    } else {
+      setCourses(derivedSubjects(nextSets));
     }
   }, [token]);
 
@@ -92,89 +84,8 @@ export default function QuestionsPage() {
       router.replace("/login");
       return;
     }
-    void load().catch(() => setError("Gagal memuat paket ujian."));
+    void load().catch(() => setError("Gagal memuat mata kuliah."));
   }, [loading, user, token, router, load]);
-
-  const visibleSets = sets
-    .filter((item) =>
-      `${item.code} ${item.title} ${item.subject_name} ${item.topic_name || ""} ${item.is_active ? "aktif" : "nonaktif"}`
-        .toLowerCase()
-        .includes(search.toLowerCase()) &&
-      (!statusFilters.length || statusFilters.includes(item.is_active ? "ACTIVE" : "INACTIVE")) &&
-      (!subjectFilterIds.length || subjectFilterIds.includes(item.subject_name)) &&
-      (!topicFilterNames.length || (item.topic_name && topicFilterNames.includes(item.topic_name)))
-    )
-    .sort((a, b) => {
-      if (sortOrder === "TITLE_ASC") return a.title.localeCompare(b.title);
-      if (sortOrder === "TITLE_DESC") return b.title.localeCompare(a.title);
-      return a.code.localeCompare(b.code);
-    });
-
-  const subjects = [...new Set(sets.map((item) => item.subject_name).filter(Boolean))].sort();
-  const topics = [...new Set(sets.map((item) => item.topic_name).filter(Boolean) as string[])].sort();
-  const filterCount = statusFilters.length + subjectFilterIds.length + topicFilterNames.length;
-
-  const toggleFilter = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-    setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
-  };
-
-  async function exportPackage(item: QuestionSet) {
-    if (!token) return;
-    try {
-      const response = await fetch(`/api/questions/${item.id}/export`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Gagal mengekspor paket ke Excel.");
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${item.code}-export.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal mengekspor paket.");
-    }
-  }
-
-  async function publishSet(id: string) {
-    if (!token) return;
-    try {
-      const response = await fetch(`/api/questions/${id}/publish`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.detail || "Paket belum siap diterbitkan.");
-        return;
-      }
-      setMessage(data.message || "Paket berhasil diterbitkan.");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Gagal menerbitkan paket.");
-    }
-  }
-
-  async function toggleActiveSet(id: string) {
-    if (!token) return;
-    try {
-      const response = await fetch(`/api/questions/${id}/toggle-active`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || "Gagal mengubah status soal.");
-      }
-      setMessage(data.message || "Status berhasil diperbarui.");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Gagal mengubah status soal.");
-    }
-  }
 
   if (!mounted || loading) return null;
   if (!user) return null;
@@ -182,360 +93,70 @@ export default function QuestionsPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Manajemen Paket Ujian"
-        description="Kelola paket soal konseptual, pantau pengumpulan mahasiswa, dan verifikasi diagnosis miskonsepsi."
-        icon={ClipboardList}
+        title="Mata Kuliah"
+        description="Pilih mata kuliah untuk mengelola paket soal, memantau pengumpulan, dan memverifikasi diagnosis miskonsepsi."
+        icon={BookOpen}
       />
 
       {error && (
-        <div
-          role="alert"
-          className="mt-5 flex gap-2 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"
-        >
+        <div role="alert" className="mt-5 flex gap-2 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container">
           <TriangleAlert size={18} />
           {error}
         </div>
       )}
 
-      {message && (
-        <div
-          role="status"
-          className="mt-5 flex gap-2 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-4 text-sm text-primary"
-        >
-          <CircleCheck size={18} />
-          {message}
+      {courses.length === 0 ? (
+        <div className="glass-panel mt-8 rounded-xl border border-outline-variant/40 p-8 text-center text-sm text-on-surface-variant">
+          Belum ada mata kuliah yang dapat Anda kelola.
         </div>
-      )}
-
-      <div className="mt-6">
-        <ListToolbar
-          addLabel="Buat paket ujian"
-          onAdd={() => {
-            setActiveImportTab(false);
-            setShowCreateModal(true);
-          }}
-          searchValue={search}
-          onSearchChange={setSearch}
-          searchPlaceholder="Cari kode, judul, atau mata kuliah..."
-          filters={
-            <div ref={filterRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setFiltersOpen((open) => !open)}
-                className={`list-toolbar-icon gap-1 px-2.5 ${filtersOpen || filterCount ? "!border-primary !text-primary bg-primary/10" : ""}`}
-                aria-label={`Filter paket ujian${filterCount ? `, ${filterCount} dipilih` : ""}`}
+      ) : (
+        <div ref={menuRef} className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {courses.map((course, index) => {
+            const count = sets.filter((item) => item.subject_id === course.id).length;
+            const menuOpen = openMenuId === course.id;
+            return (
+              <article
+                key={course.id}
+                className="group relative overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest shadow-sm transition-colors hover:border-primary/50"
               >
-                <Filter size={17} aria-hidden="true" />
-                {filtersOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
-              {filtersOpen && (
-                <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] overflow-hidden rounded-xl border border-outline-variant/60 bg-surface-container-lowest p-3 shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-outline-variant/40 pb-2">
-                    <p className="text-xs font-bold uppercase tracking-wide text-on-surface">Filter ({filterCount} dipilih)</p>
-                    <button
-                      type="button"
-                      onClick={() => { setStatusFilters([]); setSubjectFilterIds([]); setTopicFilterNames([]); }}
-                      disabled={!filterCount}
-                      className="text-xs font-semibold text-primary disabled:cursor-not-allowed disabled:text-on-surface-variant"
-                    >
-                      Reset
-                    </button>
+                <Link href={`/questions/subject/${course.id}`} className="block no-underline">
+                  <div className="h-24 w-full" style={{ backgroundImage: COURSE_BANNERS[index % COURSE_BANNERS.length] }} aria-hidden="true" />
+                  <div className="p-4">
+                    <h2 className="font-semibold leading-snug text-on-surface transition-colors group-hover:text-primary">
+                      {course.name}
+                    </h2>
+                    <p className="mt-1 text-xs text-on-surface-variant">{count} paket soal</p>
                   </div>
-                  <fieldset className="mt-3">
-                    <legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Status Paket</legend>
-                    <div className="mt-2 space-y-1">
-                      {[{ value: "ACTIVE", label: "Aktif" }, { value: "INACTIVE", label: "Nonaktif" }].map((option) => (
-                        <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container">
-                          <input type="checkbox" checked={statusFilters.includes(option.value)} onChange={() => toggleFilter(option.value, statusFilters, setStatusFilters)} className="h-4 w-4 rounded accent-primary" />
-                          {option.label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <fieldset className="mt-3 border-t border-outline-variant/40 pt-3">
-                    <legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Mata Kuliah</legend>
-                    <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
-                      {subjects.map((subj) => (
-                        <label key={subj} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container">
-                          <input type="checkbox" checked={subjectFilterIds.includes(subj)} onChange={() => toggleFilter(subj, subjectFilterIds, setSubjectFilterIds)} className="h-4 w-4 rounded accent-primary" />
-                          {subj}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                  {topics.length > 0 && (
-                    <fieldset className="mt-3 border-t border-outline-variant/40 pt-3">
-                      <legend className="rounded-md bg-primary/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-primary">Topik</legend>
-                      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
-                        {topics.map((top) => (
-                          <label key={top} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-on-surface hover:bg-surface-container">
-                            <input type="checkbox" checked={topicFilterNames.includes(top)} onChange={() => toggleFilter(top, topicFilterNames, setTopicFilterNames)} className="h-4 w-4 rounded accent-primary" />
-                            {top}
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                  )}
-                </div>
-              )}
-            </div>
-          }
-          sortOptions={[
-            { value: "CODE_ASC", label: "Kode A-Z", direction: "asc" },
-            { value: "TITLE_ASC", label: "Judul A-Z", direction: "asc" },
-            { value: "TITLE_DESC", label: "Judul Z-A", direction: "desc" },
-          ]}
-          currentSort={sortOrder}
-          onSortChange={setSortOrder}
-        />
-      </div>
+                </Link>
 
-      <div className="mt-6 rounded-xl border border-outline-variant/40 bg-surface-container-lowest shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm border-collapse">
-            <thead className="border-b border-outline-variant/40 bg-surface-container-low text-on-surface-variant font-semibold text-xs uppercase">
-              <tr>
-                <th className="px-5 py-3.5 whitespace-nowrap">Kode</th>
-                <th className="px-5 py-3.5 whitespace-nowrap">Topik</th>
-                <th className="px-5 py-3.5">Judul Paket</th>
-                <th className="px-5 py-3.5 whitespace-nowrap">Mata Kuliah</th>
-                <th className="px-5 py-3.5 whitespace-nowrap">Status</th>
-                <th className="px-5 py-3.5 whitespace-nowrap">Pengumpulan &amp; Validasi</th>
-                <th className="pl-10 pr-5 py-3.5 text-right whitespace-nowrap">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/30">
-              {visibleSets.map((item) => {
-                const published = item.latest_versions?.length > 0 && item.latest_versions.every((v) => v.is_published);
-                const totalSubs = item.total_submissions_count ?? 0;
-                const students = item.distinct_students_count ?? 0;
-                const isMenuOpen = activeMenuId === item.id;
+                <button
+                  type="button"
+                  onClick={() => setOpenMenuId(menuOpen ? null : course.id)}
+                  className="absolute right-2 top-[104px] inline-flex size-8 cursor-pointer items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-on-surface-variant hover:border-primary hover:text-primary"
+                  title="Opsi mata kuliah"
+                  aria-label={`Opsi ${course.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                >
+                  <MoreVertical size={16} />
+                </button>
 
-                return (
-                  <tr
-                    key={item.id}
-                    onClick={() => router.push(`/questions/${item.id}`)}
-                    className="hover:bg-primary-fixed/5 transition-colors cursor-pointer"
-                  >
-                    <td className="px-5 py-4 align-middle whitespace-nowrap">
-                      <span className="font-mono-ui font-bold text-xs text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
-                        {item.code}
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-4 align-middle whitespace-nowrap">
-                      {item.topic_name ? (
-                        <span className="text-xs text-tertiary-container bg-tertiary-container/10 px-2 py-0.5 rounded border border-tertiary-container/30 font-medium">
-                          {item.topic_name}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-on-surface-variant/70 italic">—</span>
-                      )}
-                    </td>
-
-                    <td className="px-5 py-4 align-middle">
-                      <p className="font-semibold text-on-surface text-sm leading-snug">
-                        {item.title}
-                      </p>
-                    </td>
-
-                    <td className="px-5 py-4 align-middle text-on-surface-variant font-medium whitespace-nowrap">
-                      {item.subject_name}
-                    </td>
-
-                    <td className="px-5 py-4 align-middle whitespace-nowrap">
-                      <span className={`badge w-fit ${!published ? "badge-draft" : item.is_active ? "badge-active" : "badge-inactive"}`}>
-                        {!published ? "Draft" : item.is_active ? "Aktif" : "Nonaktif"}
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-4 align-middle whitespace-nowrap">
-                      <span className="text-xs text-on-surface font-medium inline-flex items-center gap-1.5">
-                        <Users size={13} className="text-on-surface-variant" />
-                        <strong>{students}</strong> mahasiswa ({totalSubs} respons)
-                      </span>
-                    </td>
-                    <td
-                      className="pl-10 pr-5 py-4 align-middle text-right whitespace-nowrap"
-                      onClick={(event) => event.stopPropagation()}
+                {menuOpen && (
+                  <div role="menu" className="absolute right-2 top-[140px] z-30 w-44 overflow-hidden rounded-lg border border-outline-variant/50 bg-surface-container-lowest py-1 shadow-2xl">
+                    <Link
+                      href={`/questions/subject/${course.id}`}
+                      role="menuitem"
+                      className="block px-3 py-2 text-sm text-on-surface no-underline hover:bg-surface-container"
                     >
-                      <div className="flex items-center justify-end gap-1.5">
-                        {/* Tinjau Pengumpulan */}
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/questions/${item.id}`)}
-                          className="btn-primary table-action-button !size-8 cursor-pointer"
-                          title="Tinjau Pengumpulan"
-                          aria-label="Tinjau Pengumpulan"
-                        >
-                          <GraduationCap size={15} />
-                        </button>
-
-                        {/* Pratinjau Soal */}
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/questions/${item.id}/view`)}
-                          className="btn-secondary table-action-button !size-8 cursor-pointer"
-                          title="Pratinjau Soal"
-                          aria-label="Pratinjau Soal"
-                        >
-                          <Eye size={15} className="text-primary" />
-                        </button>
-
-                        {/* Edit Paket */}
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/questions/${item.id}/edit`)}
-                          className="btn-secondary table-action-button !size-8 cursor-pointer"
-                          title="Edit Paket"
-                          aria-label="Edit Paket"
-                        >
-                          <Pencil size={15} className="text-primary" />
-                        </button>
-
-                        {/* Ekspor ke Excel */}
-                        <button
-                          type="button"
-                          onClick={() => void exportPackage(item)}
-                          className="btn-secondary table-action-button !size-8 cursor-pointer"
-                          title="Ekspor ke Excel"
-                          aria-label="Ekspor ke Excel"
-                        >
-                          <Download size={15} className="text-primary" />
-                        </button>
-
-                        {/* Tombol Terbitkan (Hanya muncul jika draft) */}
-                        {!published && (
-                          <button
-                            type="button"
-                            onClick={() => void publishSet(item.id)}
-                            className="btn-secondary table-action-button !size-8 !border-primary/50 text-primary cursor-pointer"
-                            title="Terbitkan Paket"
-                            aria-label="Terbitkan Paket"
-                          >
-                            <Send size={13} />
-                          </button>
-                        )}
-
-                        {/* Toggle Aktif / Nonaktif */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (item.is_active) {
-                              setPendingDeactivate(item);
-                            } else {
-                              void toggleActiveSet(item.id);
-                            }
-                          }}
-                          className={`table-action-button !size-8 inline-flex items-center justify-center cursor-pointer rounded-[5px] border font-medium transition-colors ${
-                            item.is_active
-                              ? "!border-rose-500/60 bg-rose-500/10 text-rose-500 hover:!border-rose-500 hover:!bg-rose-500 hover:!text-white"
-                              : "!border-emerald-500/60 bg-emerald-500/10 text-emerald-500 hover:!border-emerald-500 hover:!bg-emerald-500 hover:!text-white"
-                          }`}
-                          title={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
-                          aria-label={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
-                        >
-                          {item.is_active ? <CircleStop size={15} /> : <CircleCheck size={15} />}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {!visibleSets.length && (
-          <p className="p-8 text-center text-sm text-on-surface-variant">
-            Belum ada paket ujian yang cocok dengan kriteria filter.
-          </p>
-        )}
-      </div>
-
-      {showCreateModal && (
-        <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/60 p-4">
-          <div className="my-8 w-full max-w-2xl rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-4">
-              <div>
-                <h2 className="font-display text-xl font-bold text-on-surface">
-                  {activeImportTab ? "Import Bank Soal" : "Kelola Paket Ujian"}
-                </h2>
-                <p className="mt-1 text-xs text-on-surface-variant">
-                  Pilih metode pembuatan paket soal atau gunakan format template Excel.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateModal(false)}
-                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {!activeImportTab ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    router.push("/questions/create");
-                  }}
-                  className="glass-card flex flex-col items-start p-5 text-left transition-colors hover:border-primary cursor-pointer"
-                >
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-primary-fixed text-primary">
-                    <Plus size={22} />
-                  </span>
-                  <h3 className="mt-4 font-display text-base font-bold text-on-surface">Buat Manual</h3>
-                  <p className="mt-1 text-sm text-on-surface-variant">
-                    Buka formulir editor khusus dengan rubrik indikator konsep dan acuan kebenaran.
-                  </p>
-                  <span className="mt-4 text-xs font-bold text-primary">Mulai Buat Soal →</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveImportTab(true)}
-                  className="glass-card flex flex-col items-start p-5 text-left transition-colors hover:border-primary cursor-pointer"
-                >
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-primary-fixed text-primary">
-                    <FileUp size={22} />
-                  </span>
-                  <h3 className="mt-4 font-display text-base font-bold text-on-surface">Import dari Excel</h3>
-                  <p className="mt-1 text-sm text-on-surface-variant">
-                    Unggah soal dan jawaban referensi secara bulk via file template .xlsx.
-                  </p>
-                  <span className="mt-4 text-xs font-bold text-primary">Buka Form Import →</span>
-                </button>
-              </div>
-            ) : (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setActiveImportTab(false)}
-                  className="mb-4 text-xs font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  ← Kembali ke pilihan metode
-                </button>
-                {token && <QuestionBankImport token={token} />}
-              </div>
-            )}
-          </div>
+                      Kelola paket soal
+                    </Link>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
-
-      <ConfirmDialog
-        open={!!pendingDeactivate}
-        title="Nonaktifkan paket ujian?"
-        description={`Paket "${pendingDeactivate?.title ?? ""}" tidak dapat diakses mahasiswa sampai diaktifkan kembali.`}
-        confirmLabel="Nonaktifkan"
-        onCancel={() => setPendingDeactivate(null)}
-        onConfirm={() => {
-          if (pendingDeactivate) void toggleActiveSet(pendingDeactivate.id);
-          setPendingDeactivate(null);
-        }}
-      />
     </PageContainer>
   );
 }
