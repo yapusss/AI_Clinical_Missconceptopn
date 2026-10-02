@@ -32,7 +32,7 @@ POLL_INTERVAL_SECONDS = 5
 
 
 class Command(BaseCommand):
-    help = 'P4 analysis worker: pick up submissions and run rubric-only LLM grading.'
+    help = 'P4 analysis worker: pick up submissions and run four-tier LLM grading.'
 
     def add_arguments(self, parser):
         parser.add_argument('--loop', action='store_true', help='keep polling instead of one pass')

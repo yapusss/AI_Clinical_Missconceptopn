@@ -24,14 +24,6 @@ import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
 import { apiFetch } from "../../../../lib/api";
 
-type IndicatorScore = {
-  order_index: number;
-  label: string;
-  weight: string;
-  score: "PRESENT" | "PARTIAL" | "MISSING";
-  evidence: string;
-};
-
 type MisconceptionMatch = {
   misconception_id: string;
   label: string;
@@ -67,7 +59,6 @@ type AttemptItem = {
     four_tier_category?: string;
     risk_level?: string;
     concept_breakdown_json: {
-      indicators?: IndicatorScore[];
       misconception_matches?: MisconceptionMatch[];
       proposed_new_misconception?: string | null;
     };
@@ -88,13 +79,6 @@ type QuestionReviewItem = {
   prompt: string;
   model_answer: string;
   status: string;
-  indicators: {
-    id: string;
-    label: string;
-    description: string;
-    weight: string;
-    order_index: number;
-  }[];
   attempts: AttemptItem[];
 };
 
@@ -122,12 +106,6 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   ANALYSIS_FAILED: { label: "Analisis Gagal", cls: "badge-revoked" },
   SUBMITTED: { label: "Tersimpan", cls: "badge-review" },
   UNANSWERED: { label: "Belum Dijawab", cls: "badge-draft" },
-};
-
-const SCORE_BADGE: Record<string, { label: string; cls: string }> = {
-  PRESENT: { label: "Terpenuhi", cls: "badge-active" },
-  PARTIAL: { label: "Sebagian", cls: "badge-draft" },
-  MISSING: { label: "Tidak terpenuhi", cls: "badge-revoked" },
 };
 
 const CATEGORY_TO_LEVEL: Record<string, number> = {
@@ -716,45 +694,8 @@ export default function StudentPackageReviewPage() {
                   </header>
 
                   <div className="p-5 space-y-4 text-xs">
-                    {/* Rubric Breakdown */}
-                    <div>
-                      <h4 className="font-bold uppercase tracking-wider text-on-surface-variant mb-2">
-                        Evaluasi Indikator Rubrik:
-                      </h4>
-                      <div className="space-y-2">
-                        {(
-                          currentAttempt.analysis.concept_breakdown_json
-                            ?.indicators ?? []
-                        ).map((ind) => {
-                          const badge =
-                            SCORE_BADGE[ind.score] ?? SCORE_BADGE.MISSING;
-                          return (
-                            <div
-                              key={ind.order_index}
-                              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-semibold text-on-surface text-xs">
-                                  #{ind.order_index} {ind.label} (bobot{" "}
-                                  {ind.weight})
-                                </span>
-                                <span className={`badge ${badge.cls}`}>
-                                  {badge.label}
-                                </span>
-                              </div>
-                              {ind.evidence && (
-                                <p className="mt-1 text-[11px] italic text-on-surface-variant leading-relaxed">
-                                  Bukti: &ldquo;{ind.evidence}&rdquo;
-                                </p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
                     {/* Explanation */}
-                    <div className="border-t border-outline-variant/20 pt-3">
+                    <div>
                       <h4 className="font-bold uppercase tracking-wider text-on-surface-variant">
                         Penjelasan Klinis AI:
                       </h4>

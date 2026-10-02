@@ -16,7 +16,7 @@
 
 4. Deterministic Percentage Scoring (Option A):
    - Tier 1: Maksimal 30.00%
-   - Tier 3: Maksimal 70.00% (proporsional terhadap bobot indikator rubrik)
+    - Tier 3: 70.00% bila BENAR, 0.00% bila SALAH
 """
 
 import dataclasses
@@ -163,7 +163,6 @@ class FourTierContext:
     question_prompt: str
     model_answer: str
     set_title: str
-    indicators: list          # [{label, description, weight, order_index}]
     misconceptions: list      # [{id, label, description}]
     rejection_notes: str
     prior_explanation: str
@@ -189,21 +188,6 @@ def load_context(submission_id: str) -> FourTierContext:
         row = cur.fetchone()
         if not row:
             raise LlmAnalysisError(f'Submission {submission_id} not found')
-
-        cur.execute(
-            """
-            SELECT label, COALESCE(description, ''), weight, order_index
-            FROM concept_indicators
-            WHERE question_version_id = (
-                SELECT question_version_id FROM submissions WHERE id = %s)
-            ORDER BY order_index
-            """,
-            [submission_id],
-        )
-        indicators = [
-            {'label': r[0], 'description': r[1], 'weight': float(r[2]), 'order_index': r[3]}
-            for r in cur.fetchall()
-        ]
 
         cur.execute(
             """
@@ -247,7 +231,6 @@ def load_context(submission_id: str) -> FourTierContext:
         question_prompt=row[8],
         model_answer=row[9],
         set_title=row[10],
-        indicators=indicators,
         misconceptions=misconceptions,
         rejection_notes=(prior[0] or '')[:2000],
         prior_explanation=(prior[1] or '')[:2000],
@@ -331,19 +314,15 @@ def run_module_a(ctx: FourTierContext) -> tuple[str, str]:
     return score, str(data.get('reasoning', ''))
 
 
-def run_module_b(ctx: FourTierContext) -> tuple[str, list[dict], str]:
+def run_module_b(ctx: FourTierContext) -> tuple[str, str]:
     """Modul B — Penilai Alasan (Tier 3) dengan Pengakuan Penurunan Matematis."""
-    indicator_lines = '\n'.join(
-        f"- Indikator #{ind['order_index']}: {ind['label']} (bobot {ind['weight']}) — {ind['description']}"
-        for ind in ctx.indicators
-    )
     sys_prompt = (
         "Anda adalah Modul B: Penilai Alasan & Penalaran (Tier 3) untuk asesmen Four-Tier bidang Fisika.\n"
-        "Tugas: Nilai apakah penjelasan/alasan mahasiswa secara ilmiah BENAR atau SALAH berdasarkan rubrik.\n\n"
+        "Tugas: Nilai apakah penjelasan/alasan mahasiswa secara ilmiah BENAR atau SALAH berdasarkan pertanyaan dan jawaban model.\n\n"
         "PANDUAN EVALUASI ILMIAH & MATEMATIS (WAJIB DIPATUHI):\n"
         "1. PENALARAN ALJABAR/MATEMATIS: Mahasiswa DIPERBOLEHKAN menyajikan alasan dalam bentuk penurunan rumus matematis/aljabar langkah-demi-langkah "
         "(misalnya: substitusi langsung percepatan sistem a = F/2m ke dalam persamaan tegangan tali T = m(F/2m) = F/2). "
-        "Jika langkah penalaran matematis tersebut secara prinsip fisis BENAR, indikator terkait WAJIB dinilai 'PRESENT' (BENAR).\n"
+        "Jika langkah penalaran matematis tersebut secara prinsip fisis BENAR, nilai BENAR.\n"
         "2. TIDAK WAJIB MENULIS ULANG NARASI: Jangan menyalahkan mahasiswa hanya karena menuliskan penurunan rumus ringkas tanpa kalimat narasi panjang, "
         "selama alur penurunan fisisnya valid dan dapat dipertanggungjawabkan.\n"
         "3. HUBUNGAN DENGAN TIER 1: Mahasiswa tidak wajib mengulang kata atau angka yang sudah ditulis di Tier 1 jika penurunan rumus di Tier 3 "
@@ -353,14 +332,12 @@ def run_module_b(ctx: FourTierContext) -> tuple[str, list[dict], str]:
         "Kembalikan HANYA format JSON valid:\n"
         "{\n"
         '  "score": "BENAR" | "SALAH",\n'
-        '  "indicators": [{"order_index": 1, "status": "PRESENT"|"PARTIAL"|"MISSING", "evidence": "kutipan langkah/penalaran mahasiswa"}],\n'
         '  "reasoning": "penjelasan evaluasi penalaran mahasiswa dalam Bahasa Indonesia"\n'
         "}"
     )
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
         f"Jawaban Model (Acuan Kebenaran Fisika):\n{ctx.model_answer}\n\n"
-        f"Rubrik Indikator:\n{indicator_lines}\n\n"
         f"Kesimpulan Mahasiswa di Tier 1:\n\"{ctx.tier1_answer}\"\n\n"
         f"Alasan/Penalaran Mahasiswa di Tier 3:\n\"{ctx.tier3_reason}\""
     )
@@ -371,8 +348,7 @@ def run_module_b(ctx: FourTierContext) -> tuple[str, list[dict], str]:
     score = str(data.get('score', '')).upper()
     if score not in ('BENAR', 'SALAH'):
         score = 'SALAH'
-    indicators = data.get('indicators') if isinstance(data.get('indicators'), list) else []
-    return score, indicators, str(data.get('reasoning', ''))
+    return score, str(data.get('reasoning', ''))
 
 
 def run_module_c(ctx: FourTierContext) -> tuple[str, str, float, str]:
@@ -483,14 +459,6 @@ def analyze_submission(submission_id: str) -> str:
         if 't3_kosong' in flags:
             mod_a_score, mod_a_exp = run_module_a(ctx)
             mod_b_score = 'SALAH'
-            ind_breakdown = [
-                {
-                    'order_index': ind['order_index'],
-                    'status': 'MISSING',
-                    'evidence': 'Alasan kosong atau kurang dari 5 kata (penanda: t3_kosong)',
-                }
-                for ind in ctx.indicators
-            ]
             mod_b_exp = 'Alasan tidak diisi atau kurang dari 5 kata (t3_kosong). Diarahkan ke LK untuk penguatan materi dasar.'
             mod_c_code = None
             mod_c_label = None
@@ -508,7 +476,7 @@ def analyze_submission(submission_id: str) -> str:
                 eval_b_ctx = ctx
 
             mod_a_score, mod_a_exp = run_module_a(ctx)
-            mod_b_score, ind_breakdown, mod_b_exp = run_module_b(eval_b_ctx)
+            mod_b_score, mod_b_exp = run_module_b(eval_b_ctx)
 
             # Safeguard C: Validasi di Python
             t3_words = [w for w in ctx.tier3_reason.strip().split() if w]
@@ -517,25 +485,6 @@ def analyze_submission(submission_id: str) -> str:
             if mod_b_score == 'BENAR' and len(t3_words) <= 3 and not has_math_derivation:
                 mod_b_score = 'SALAH'
                 mod_b_exp = 'Teks alasan terlalu singkat untuk memuat penurunan konsep ilmiah yang valid.'
-                for ind in ind_breakdown:
-                    ind['status'] = 'MISSING'
-
-            if mod_b_score == 'BENAR' and ind_breakdown:
-                clean_student_text = (
-                    eval_b_ctx.tier3_reason.lower()
-                    if ('t1_berisi_alasan' in flags or 't3_redundan' in flags)
-                    else ctx.tier3_reason.lower()
-                )
-                unverified_count = 0
-                for ind in ind_breakdown:
-                    ev = ind.get('evidence', '').strip().lower()
-                    if ev and ev not in clean_student_text:
-                        ind['status'] = 'MISSING'
-                        unverified_count += 1
-
-                if unverified_count > 0 and all(ind.get('status') != 'PRESENT' for ind in ind_breakdown):
-                    mod_b_score = 'SALAH'
-                    mod_b_exp = 'Bukti penalaran ilmiah yang dikutip AI tidak ditemukan dalam teks asli mahasiswa.'
 
             # Modul C: Ambil code dan label_name
             mod_c_code = None
@@ -556,21 +505,7 @@ def analyze_submission(submission_id: str) -> str:
             Decimal('15.00') if mod_a_score == 'BENAR_SEBAGIAN' else Decimal('0.00')
         )
 
-        earned_b_ratio = Decimal('0.0')
-        if ind_breakdown and ctx.indicators:
-            for ind in ind_breakdown:
-                idx = ind.get('order_index')
-                matching_spec = next((item for item in ctx.indicators if item['order_index'] == idx), None)
-                w = Decimal(str(matching_spec['weight'])) if matching_spec else Decimal('0.0')
-                status = ind.get('status', 'MISSING')
-                factor = Decimal('1.0') if status == 'PRESENT' else (
-                    Decimal('0.5') if status == 'PARTIAL' else Decimal('0.0')
-                )
-                earned_b_ratio += w * factor
-        elif mod_b_score == 'BENAR':
-            earned_b_ratio = Decimal('1.0')
-
-        score_b = (earned_b_ratio * Decimal('70.00')).quantize(Decimal('0.01'))
+        score_b = Decimal('70.00') if mod_b_score == 'BENAR' else Decimal('0.00')
         percentage_correct = min(Decimal('100.00'), max(Decimal('0.00'), score_a + score_b))
 
         total_ms = int((time.monotonic() - started) * 1000)
@@ -613,7 +548,7 @@ def analyze_submission(submission_id: str) -> str:
 
         concept_breakdown = {
             'module_a': {'score': mod_a_score, 'reasoning': mod_a_exp, 'earned_points': float(score_a)},
-            'module_b': {'score': mod_b_score, 'indicators': ind_breakdown, 'reasoning': mod_b_exp, 'earned_points': float(score_b)},
+            'module_b': {'score': mod_b_score, 'reasoning': mod_b_exp, 'earned_points': float(score_b)},
             'module_c': {
                 'code': mod_c_code,
                 'label': mod_c_label,

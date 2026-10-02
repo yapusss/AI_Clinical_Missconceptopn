@@ -1,13 +1,3 @@
-export type RubricIndicatorResult = {
-  order_index: number;
-  label: string;
-  description: string;
-  max_weight_percent: number;
-  earned_points_percent: number;
-  status: "PRESENT" | "PARTIAL" | "MISSING";
-  evidence?: string;
-};
-
 export type ConfirmedMisconception = {
   label: string;
   reasoning: string;
@@ -21,7 +11,6 @@ export type StudentEvaluation = {
   tier_label: string;
   clinical_feedback: string;
   confirmed_misconceptions: ConfirmedMisconception[];
-  rubric_breakdown: RubricIndicatorResult[];
   suggested_materials?: string[];
   validator_name?: string;
   validated_at?: string;
@@ -153,7 +142,7 @@ export function getSemanticStatus(status: string): SemanticStatus {
       return {
         badgeLabel: "AI: Analyzing",
         badgeClass: "border-amber-500/40 bg-amber-500/10 text-amber-400",
-        description: "Model AI sedang mengidentifikasi indikator konsep dan pola penalaran.",
+        description: "Model AI sedang mengevaluasi pola penalaran.",
       };
     case "ANALYSIS_FAILED":
       return {
