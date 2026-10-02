@@ -295,11 +295,13 @@ export default function QuestionsPage() {
           <table className="w-full text-left text-sm border-collapse">
             <thead className="border-b border-outline-variant/40 bg-surface-container-low text-on-surface-variant font-semibold text-xs uppercase">
               <tr>
-                <th className="px-5 py-3.5">Kode &amp; Paket</th>
+                <th className="px-5 py-3.5 whitespace-nowrap">Kode</th>
+                <th className="px-5 py-3.5 whitespace-nowrap">Topik</th>
+                <th className="px-5 py-3.5">Judul Paket</th>
                 <th className="px-5 py-3.5 whitespace-nowrap">Mata Kuliah</th>
                 <th className="px-5 py-3.5 whitespace-nowrap">Status</th>
                 <th className="px-5 py-3.5 whitespace-nowrap">Pengumpulan &amp; Validasi</th>
-                <th className="px-5 py-3.5 text-right whitespace-nowrap min-w-[200px]">Aksi</th>
+                <th className="pl-10 pr-5 py-3.5 text-right whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/30">
@@ -311,22 +313,29 @@ export default function QuestionsPage() {
                 const isMenuOpen = activeMenuId === item.id;
 
                 return (
-                  <tr key={item.id} className="hover:bg-primary-fixed/5 transition-colors">
+                  <tr
+                    key={item.id}
+                    onClick={() => router.push(`/questions/${item.id}`)}
+                    className="hover:bg-primary-fixed/5 transition-colors cursor-pointer"
+                  >
+                    <td className="px-5 py-4 align-middle whitespace-nowrap">
+                      <span className="font-mono-ui font-bold text-xs text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
+                        {item.code}
+                      </span>
+                    </td>
+
+                    <td className="px-5 py-4 align-middle whitespace-nowrap">
+                      {item.topic_name ? (
+                        <span className="text-xs text-tertiary-container bg-tertiary-container/10 px-2 py-0.5 rounded border border-tertiary-container/30 font-medium">
+                          {item.topic_name}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-on-surface-variant/70 italic">—</span>
+                      )}
+                    </td>
+
                     <td className="px-5 py-4 align-middle">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono-ui font-bold text-xs text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
-                          {item.code}
-                        </span>
-                        {item.topic_name && (
-                          <span className="text-xs text-tertiary-container bg-tertiary-container/10 px-2 py-0.5 rounded border border-tertiary-container/30 font-medium">
-                            {item.topic_name}
-                          </span>
-                        )}
-                        <span className="text-xs text-on-surface-variant">
-                          {item.question_count} soal
-                        </span>
-                      </div>
-                      <p className="mt-1 font-semibold text-on-surface text-sm leading-snug">
+                      <p className="font-semibold text-on-surface text-sm leading-snug">
                         {item.title}
                       </p>
                     </td>
@@ -336,15 +345,9 @@ export default function QuestionsPage() {
                     </td>
 
                     <td className="px-5 py-4 align-middle whitespace-nowrap">
-                      <div className="flex flex-col gap-1">
-                        <span className={`badge w-fit ${published ? "badge-active" : "badge-draft"}`}>
-                          {published ? "Terbit" : "Draft"}
-                        </span>
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${item.is_active ? "text-emerald-500" : "text-rose-400"}`}>
-                          <span className={`size-1.5 rounded-full ${item.is_active ? "bg-emerald-500" : "bg-rose-400"}`} />
-                          {item.is_active ? "Aktif" : "Nonaktif"}
-                        </span>
-                      </div>
+                      <span className={`badge w-fit ${!published ? "badge-draft" : item.is_active ? "badge-active" : "badge-inactive"}`}>
+                        {!published ? "Draft" : item.is_active ? "Aktif" : "Nonaktif"}
+                      </span>
                     </td>
 
                     <td className="px-5 py-4 align-middle whitespace-nowrap">
@@ -370,92 +373,88 @@ export default function QuestionsPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-5 py-4 align-middle text-right min-w-[200px]">
-                      <div className="flex flex-col items-end gap-2">
-                        {/* 1. Tombol Utama di Atas: [Tinjau Pengumpulan] */}
+                    <td
+                      className="pl-10 pr-5 py-4 align-middle text-right whitespace-nowrap"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        {/* Tinjau Pengumpulan */}
                         <button
                           type="button"
                           onClick={() => router.push(`/questions/${item.id}`)}
-                          className="btn-primary !py-1.5 !px-3.5 text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm w-full sm:w-auto cursor-pointer"
+                          className="btn-primary table-action-button !size-8 cursor-pointer"
+                          title="Tinjau Pengumpulan"
+                          aria-label="Tinjau Pengumpulan"
                         >
                           <GraduationCap size={15} />
-                          <span>Tinjau Pengumpulan</span>
-                          {pending > 0 && (
-                            <span className="ml-1 inline-flex items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.2 text-[10px] font-extrabold text-slate-950">
-                              {pending}
-                            </span>
-                          )}
                         </button>
 
-                        {/* 2. Baris Ikon Kecil di Bawahnya: [Pratinjau] [Edit] [Ekspor] [Publish] [Aktif/Nonaktif] */}
-                        <div className="flex items-center gap-1.5 justify-end">
-                          {/* Pratinjau Soal */}
+                        {/* Pratinjau Soal */}
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/questions/${item.id}/view`)}
+                          className="btn-secondary table-action-button !size-8 cursor-pointer"
+                          title="Pratinjau Soal"
+                          aria-label="Pratinjau Soal"
+                        >
+                          <Eye size={15} className="text-primary" />
+                        </button>
+
+                        {/* Edit Paket */}
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/questions/${item.id}/edit`)}
+                          className="btn-secondary table-action-button !size-8 cursor-pointer"
+                          title="Edit Paket"
+                          aria-label="Edit Paket"
+                        >
+                          <Pencil size={15} className="text-primary" />
+                        </button>
+
+                        {/* Ekspor ke Excel */}
+                        <button
+                          type="button"
+                          onClick={() => void exportPackage(item)}
+                          className="btn-secondary table-action-button !size-8 cursor-pointer"
+                          title="Ekspor ke Excel"
+                          aria-label="Ekspor ke Excel"
+                        >
+                          <Download size={15} className="text-primary" />
+                        </button>
+
+                        {/* Tombol Terbitkan (Hanya muncul jika draft) */}
+                        {!published && (
                           <button
                             type="button"
-                            onClick={() => router.push(`/questions/${item.id}/view`)}
-                            className="btn-secondary table-action-button !size-8 cursor-pointer"
-                            title="Pratinjau Soal"
-                            aria-label="Pratinjau Soal"
+                            onClick={() => void publishSet(item.id)}
+                            className="btn-secondary table-action-button !size-8 !border-primary/50 text-primary cursor-pointer"
+                            title="Terbitkan Paket"
+                            aria-label="Terbitkan Paket"
                           >
-                            <Eye size={15} className="text-primary" />
+                            <Send size={13} />
                           </button>
+                        )}
 
-                          {/* Edit Paket */}
-                          <button
-                            type="button"
-                            onClick={() => router.push(`/questions/${item.id}/edit`)}
-                            className="btn-secondary table-action-button !size-8 cursor-pointer"
-                            title="Edit Paket"
-                            aria-label="Edit Paket"
-                          >
-                            <Pencil size={15} className="text-primary" />
-                          </button>
-
-                          {/* Ekspor ke Excel */}
-                          <button
-                            type="button"
-                            onClick={() => void exportPackage(item)}
-                            className="btn-secondary table-action-button !size-8 cursor-pointer"
-                            title="Ekspor ke Excel"
-                            aria-label="Ekspor ke Excel"
-                          >
-                            <Download size={15} className="text-primary" />
-                          </button>
-
-                          {/* Tombol Terbitkan (Hanya muncul jika draft) */}
-                          {!published && (
-                            <button
-                              type="button"
-                              onClick={() => void publishSet(item.id)}
-                              className="btn-secondary table-action-button !size-8 !border-primary/50 text-primary cursor-pointer"
-                              title="Terbitkan Paket"
-                              aria-label="Terbitkan Paket"
-                            >
-                              <Send size={13} />
-                            </button>
-                          )}
-
-                          {/* Toggle Aktif / Nonaktif */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (item.is_active) {
-                                setPendingDeactivate(item);
-                              } else {
-                                void toggleActiveSet(item.id);
-                              }
-                            }}
-                            className={`btn-secondary table-action-button !size-8 cursor-pointer ${
-                              item.is_active
-                                ? "text-rose-400 hover:!border-rose-500"
-                                : "text-emerald-400 hover:!border-emerald-500"
-                            }`}
-                            title={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
-                            aria-label={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
-                          >
-                            {item.is_active ? <CircleStop size={15} /> : <CircleCheck size={15} />}
-                          </button>
-                        </div>
+                        {/* Toggle Aktif / Nonaktif */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (item.is_active) {
+                              setPendingDeactivate(item);
+                            } else {
+                              void toggleActiveSet(item.id);
+                            }
+                          }}
+                          className={`table-action-button !size-8 inline-flex items-center justify-center cursor-pointer rounded-[5px] border font-medium transition-colors ${
+                            item.is_active
+                              ? "!border-rose-500/60 bg-rose-500/10 text-rose-500 hover:!border-rose-500 hover:!bg-rose-500 hover:!text-white"
+                              : "!border-emerald-500/60 bg-emerald-500/10 text-emerald-500 hover:!border-emerald-500 hover:!bg-emerald-500 hover:!text-white"
+                          }`}
+                          title={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
+                          aria-label={item.is_active ? "Nonaktifkan Paket" : "Aktifkan Paket"}
+                        >
+                          {item.is_active ? <CircleStop size={15} /> : <CircleCheck size={15} />}
+                        </button>
                       </div>
                     </td>
                   </tr>
