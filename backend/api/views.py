@@ -662,7 +662,7 @@ def is_lecturer_for_subject(user, subject_id):
     ).exists()
 
 
-IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'reference_answer'}
+IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'short_answer', 'alasan'}
 
 
 def _parse_import_indicators(raw_value):
@@ -754,11 +754,15 @@ def _read_xlsx_rows(upload, subject_name=None):
         'PERTANYAAN_KONSEPTUAL': 'prompt',
         'PERTANYAAN': 'prompt',
         'PROMPT': 'prompt',
-        'JAWABAN_REFERENSI': 'reference_answer',
-        'JAWABAN': 'reference_answer',
-        'REFERENCE_ANSWER': 'reference_answer',
-        'INDIKATOR_KONSEP': 'indicators',
-        'INDICATORS': 'indicators',
+        'JAWABAN_SINGKAT': 'short_answer',
+        'JAWABAN_SINGKAT_': 'short_answer',
+        'SHORT_ANSWER': 'short_answer',
+        'ALASAN_JAWABAN': 'alasan',
+        'ALASAN': 'alasan',
+        'REASON': 'alasan',
+        'JAWABAN_REFERENSI': 'alasan',
+        'JAWABAN': 'alasan',
+        'REFERENCE_ANSWER': 'alasan',
         'ANSWER_KEY': 'answer_key',
     }
 
@@ -774,8 +778,8 @@ def _read_xlsx_rows(upload, subject_name=None):
         rows.append(_normalize_import_row({
             'order_index': raw_dict.get('order_index', len(rows) + 1),
             'prompt': raw_dict.get('prompt', ''),
-            'reference_answer': raw_dict.get('reference_answer', ''),
-            'indicators': raw_dict.get('indicators', '') or 'Ketepatan konsep:1.0000',
+            'short_answer': raw_dict.get('short_answer', ''),
+            'alasan': raw_dict.get('alasan', ''),
             'answer_key': raw_dict.get('answer_key', f"Q-{len(rows)+1}"),
             'code': raw_dict.get('code', ''),
             'title': raw_dict.get('title', ''),
@@ -818,20 +822,16 @@ def _read_question_import(upload, subject_name=None):
         key = f"Q-{normalized.get('order_index', row_number - 5)}"
         if not normalized.get('prompt'):
             errors.append('prompt wajib diisi.')
-        if not normalized.get('reference_answer'):
-            errors.append('reference_answer wajib diisi.')
+        if not normalized.get('short_answer'):
+            errors.append('short_answer wajib diisi.')
+        if not normalized.get('alasan'):
+            errors.append('alasan wajib diisi.')
         try:
             order_index = int(float(normalized.get('order_index', '0')))
             if order_index < 1:
                 order_index = len(rows) + 1
         except (ValueError, TypeError):
             order_index = len(rows) + 1
-
-        try:
-            indicators = _parse_import_indicators(normalized.get('indicators', ''))
-        except ValueError as exc:
-            indicators = []
-            errors.append(str(exc))
 
         rows.append({
             'row_number': row_number,
@@ -840,7 +840,6 @@ def _read_question_import(upload, subject_name=None):
             'status': 'INVALID' if errors else 'VALID',
             'errors': errors,
             'order_index': order_index,
-            'indicators': indicators,
         })
 
     return rows, detected_sheet
@@ -921,15 +920,11 @@ class QuestionImportCreateView(APIView):
         questions_payload = []
         for r in parsed_rows:
             raw = r['raw_data']
-            if raw.get('prompt') and raw.get('reference_answer'):
+            if raw.get('prompt') and raw.get('short_answer'):
                 questions_payload.append({
                     'prompt': raw.get('prompt', ''),
-                    'model_answer': raw.get('reference_answer', ''),
-                    'indicators': [
-                        {'label': 'Akurasi', 'description': 'Ketepatan konsep ilmiah dan kesesuaian prinsip dasar fisika.', 'weight': 40, 'isCustom': False},
-                        {'label': 'Penjelasan', 'description': 'Kejelasan penalaran, alur argumen, dan langkah logika.', 'weight': 30, 'isCustom': False},
-                        {'label': 'Kelengkapan', 'description': 'Kelengkapan seluruh variabel, satuan, dan elemen jawaban.', 'weight': 30, 'isCustom': False},
-                    ]
+                    'short_answer': raw.get('short_answer', ''),
+                    'alasan': raw.get('alasan', ''),
                 })
 
         if not questions_payload:
@@ -992,12 +987,12 @@ class QuestionImportTemplateView(APIView):
 
         headers = [
             "NOMOR_SOAL",
-            "KODE_PAKET_UNIK",
             "JUDUL_UJIAN",
             "TOPIK",
             "DESKRIPSI_INSTRUKSI",
             "PERTANYAAN_KONSEPTUAL",
-            "JAWABAN_REFERENSI",
+            "JAWABAN_SINGKAT",
+            "ALASAN_JAWABAN",
         ]
 
         ws.merge_cells("A1:G4")
@@ -1005,7 +1000,7 @@ class QuestionImportTemplateView(APIView):
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
             f"Pastikan seluruh soal pada file ini diperuntukkan bagi mata kuliah {target_subject.name}.\n"
-            f"Isi kolom pertanyaan dan jawaban referensi mulai dari baris ke-6."
+            f"Isi kolom pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
         )
         banner_cell.fill = banner_fill
         banner_cell.font = banner_font
@@ -1023,25 +1018,24 @@ class QuestionImportTemplateView(APIView):
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-        sample_prefix = "FIS" if "phys" in target_subject.name.lower() else "BIO"
         sample_rows = [
             [
                 1,
-                f"{sample_prefix}-NEWT-01",
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
                 "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
-                "Karena gaya normal N = m(g - a), percepatan lift mengurangi gaya kontak kaki pada timbangan.",
+                "Berat semu menjadi lebih kecil.",
+                "Karena gaya normal N = m(g - a): percepatan lift ke bawah mengurangi gaya normal sehingga gaya kontak kaki pada timbangan berkurang.",
             ],
             [
                 2,
-                f"{sample_prefix}-NEWT-01",
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
                 "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
-                "Karena gaya normal dan gaya berat bekerja pada benda yang sama, sedangkan aksi-reaksi bekerja pada dua benda berbeda.",
+                "Karena keduanya bekerja pada benda yang sama.",
+                "Pasangan aksi-reaksi bekerja pada dua benda berbeda, sedangkan gaya berat dan gaya normal sama-sama bekerja pada balok.",
             ],
         ]
 
@@ -1052,7 +1046,7 @@ class QuestionImportTemplateView(APIView):
                 cell.font = data_font
                 cell.border = thin_border
                 cell.alignment = Alignment(
-                    horizontal="center" if col_idx in [1, 2] else "left",
+                    horizontal="center" if col_idx == 1 else "left",
                     vertical="center",
                     wrap_text=True,
                 )
@@ -1084,7 +1078,7 @@ class QuestionExportView(APIView):
 
     def get(self, request, pk):
         try:
-            q_set = QuestionSet.objects.select_related('subject').get(pk=pk)
+            q_set = QuestionSet.objects.select_related('subject', 'topic').get(pk=pk)
         except QuestionSet.DoesNotExist:
             return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1097,11 +1091,12 @@ class QuestionExportView(APIView):
 
         headers = [
             "NOMOR_SOAL",
-            "KODE_PAKET_UNIK",
             "JUDUL_UJIAN",
+            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
             "PERTANYAAN_KONSEPTUAL",
-            "JAWABAN_REFERENSI",
+            "JAWABAN_SINGKAT",
+            "ALASAN_JAWABAN",
         ]
 
         header_fill = PatternFill(start_color="00288E", end_color="00288E", fill_type="solid")
@@ -1118,11 +1113,12 @@ class QuestionExportView(APIView):
         for q in questions:
             v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
             ws.cell(row=row_idx, column=1, value=q.order_index)
-            ws.cell(row=row_idx, column=2, value=q_set.code)
-            ws.cell(row=row_idx, column=3, value=q_set.title)
+            ws.cell(row=row_idx, column=2, value=q_set.title)
+            ws.cell(row=row_idx, column=3, value=q_set.topic.name if q_set.topic else "")
             ws.cell(row=row_idx, column=4, value=q_set.description or "")
             ws.cell(row=row_idx, column=5, value=v.prompt if v else "")
-            ws.cell(row=row_idx, column=6, value=v.model_answer if v else "")
+            ws.cell(row=row_idx, column=6, value=(v.short_answer or "") if v else "")
+            ws.cell(row=row_idx, column=7, value=v.model_answer if v else "")
             row_idx += 1
 
         for col in ws.columns:
@@ -1184,20 +1180,17 @@ class QuestionImportCommitView(APIView):
                     id=uuid.uuid4(), question_set=q_set,
                     external_key=row.question_key, order_index=int(raw['order_index']),
                 )
+                short_answer = raw.get('short_answer', '')
+                alasan = raw.get('alasan', '')
                 version = QuestionVersion.objects.create(
                     id=uuid.uuid4(), question=question, version_number=1,
-                    prompt=raw['prompt'], model_answer=raw['reference_answer'],
+                    prompt=raw['prompt'], short_answer=short_answer, model_answer=alasan,
                     is_published=False, created_by=request.user,
                 )
-                indicators = _parse_import_indicators(raw.get('indicators', ''))
-                ConceptIndicator.objects.bulk_create([
-                    ConceptIndicator(id=uuid.uuid4(), question_version=version, label=item['label'], description=item['description'], weight=item['weight'], order_index=index)
-                    for index, item in enumerate(indicators, start=1)
-                ])
                 ReferenceAnswer.objects.create(
                     id=uuid.uuid4(), question_version=version,
                     answer_key=raw.get('answer_key') or row.question_key,
-                    answer_text=raw['reference_answer'], answer_type='CANONICAL', is_primary=True,
+                    answer_text=short_answer or alasan, answer_type='CANONICAL', is_primary=True,
                 )
             job.status = 'IMPORTED'
             job.completed_at = timezone.now()
@@ -1311,12 +1304,18 @@ class QuestionListCreateView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        code = data['code']
-        if QuestionSet.objects.filter(code__iexact=code).exists():
-            return Response(
-                {'code': ['Kode soal sudah digunakan. Gunakan kode unik lainnya.']},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        code = (data.get('code') or '').strip()
+        if code:
+            if QuestionSet.objects.filter(code__iexact=code).exists():
+                return Response(
+                    {'code': ['Kode soal sudah digunakan. Gunakan kode unik lainnya.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            while True:
+                code = f"SET-{uuid.uuid4().hex[:8].upper()}"
+                if not QuestionSet.objects.filter(code__iexact=code).exists():
+                    break
 
         with transaction.atomic():
             q_set = QuestionSet.objects.create(
@@ -1334,6 +1333,7 @@ class QuestionListCreateView(APIView):
             if not questions_list:
                 questions_list = [{
                     'prompt': data['prompt'],
+                    'short_answer': data.get('short_answer', ''),
                     'model_answer': data['model_answer'],
                     'indicators': data.get('indicators', []),
                 }]
@@ -1350,6 +1350,7 @@ class QuestionListCreateView(APIView):
                     question=q,
                     version_number=1,
                     prompt=q_item['prompt'],
+                    short_answer=q_item.get('short_answer', ''),
                     model_answer=q_item['model_answer'],
                     is_published=False,
                     created_by=request.user,
@@ -1359,7 +1360,7 @@ class QuestionListCreateView(APIView):
                     id=uuid.uuid4(),
                     question_version=qv,
                     answer_key=f"ANS-{q_idx:03d}",
-                    answer_text=q_item['model_answer'],
+                    answer_text=q_item.get('short_answer') or q_item['model_answer'],
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
@@ -1440,6 +1441,7 @@ class QuestionDetailView(APIView):
                     'id': str(version.id),
                     'version_number': version.version_number,
                     'prompt': version.prompt,
+                    'short_answer': version.short_answer or '',
                     'model_answer': version.model_answer,
                     'is_published': version.is_published,
                     'created_at': version.created_at,
@@ -1505,7 +1507,9 @@ class QuestionDetailView(APIView):
             latest_v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
 
             prompt = data.get('prompt', latest_v.prompt if latest_v else "")
+            short_answer = data.get('short_answer', (latest_v.short_answer if latest_v else "") or "")
             model_answer = data.get('model_answer', latest_v.model_answer if latest_v else "")
+            canonical_text = short_answer or model_answer
 
             if latest_v and latest_v.is_published:
                 new_v_id = uuid.uuid4()
@@ -1515,6 +1519,7 @@ class QuestionDetailView(APIView):
                     question=q,
                     version_number=next_version,
                     prompt=prompt,
+                    short_answer=short_answer,
                     model_answer=model_answer,
                     is_published=False,
                     created_by=request.user,
@@ -1523,25 +1528,26 @@ class QuestionDetailView(APIView):
                     id=uuid.uuid4(),
                     question_version=target_v,
                     answer_key='CANONICAL',
-                    answer_text=model_answer,
+                    answer_text=canonical_text,
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
             elif latest_v:
                 latest_v.prompt = prompt
+                latest_v.short_answer = short_answer
                 latest_v.model_answer = model_answer
                 latest_v.save()
                 target_v = latest_v
                 ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
                 if ref:
-                    ref.answer_text = model_answer
+                    ref.answer_text = canonical_text
                     ref.save(update_fields=['answer_text'])
                 else:
                     ReferenceAnswer.objects.create(
                         id=uuid.uuid4(),
                         question_version=target_v,
                         answer_key='CANONICAL',
-                        answer_text=model_answer,
+                        answer_text=canonical_text,
                         answer_type='CANONICAL',
                         is_primary=True,
                     )
@@ -1551,6 +1557,7 @@ class QuestionDetailView(APIView):
                     question=q,
                     version_number=1,
                     prompt=prompt,
+                    short_answer=short_answer,
                     model_answer=model_answer,
                     is_published=False,
                     created_by=request.user,
@@ -1559,7 +1566,7 @@ class QuestionDetailView(APIView):
                     id=uuid.uuid4(),
                     question_version=target_v,
                     answer_key='CANONICAL',
-                    answer_text=model_answer,
+                    answer_text=canonical_text,
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
@@ -1822,6 +1829,7 @@ class QuestionSetStudentReviewView(APIView):
                 'version_id': str(version.id),
                 'version_number': version.version_number,
                 'prompt': version.prompt,
+                'short_answer': version.short_answer or '',
                 'model_answer': version.model_answer,
                 'indicators': indicators_by_version.get(version.id, []),
                 'status': attempts_payload[0]['status'] if attempts_payload else 'UNANSWERED',
@@ -2534,6 +2542,7 @@ def _build_submission_set_groups(user):
                 'version_id': str(latest_version.id),
                 'version_number': latest_version.version_number,
                 'prompt': latest_version.prompt,
+                'short_answer': latest_version.short_answer or '',
                 'model_answer': latest_version.model_answer,
                 'answered': True,
                 'attempts': attempts,
@@ -2554,6 +2563,7 @@ def _build_submission_set_groups(user):
                 'version_id': str(v.id),
                 'version_number': v.version_number,
                 'prompt': v.prompt,
+                'short_answer': v.short_answer or '',
                 'model_answer': v.model_answer,
                 'answered': False,
                 'attempts': [],
@@ -2732,6 +2742,7 @@ class LecturerSubmissionDetailView(APIView):
                 'version_id': str(version.id),
                 'version_number': version.version_number,
                 'prompt': version.prompt,
+                'short_answer': version.short_answer or '',
                 'model_answer': version.model_answer,
                 'reference_answers': [
                     {'id': str(answer.id), 'answer_key': answer.answer_key, 'text': answer.answer_text}

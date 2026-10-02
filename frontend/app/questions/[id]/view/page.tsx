@@ -39,22 +39,19 @@ export default function ViewQuestionPage() {
       .then((data) => {
         const questionsList: ExamQuestion[] = (data.questions ?? []).map(
           (q: {
+            id?: string;
             versions?: {
               prompt?: string;
+              short_answer?: string;
               model_answer?: string;
-              indicators?: { label: string; description?: string; weight: string | number }[];
             }[];
           }) => {
             const v = q.versions?.[0];
             return {
+              id: q.id,
               prompt: v?.prompt ?? "",
-              model_answer: v?.model_answer ?? "",
-              indicators: (v?.indicators ?? []).map((ind) => ({
-                label: ind.label,
-                description: ind.description ?? "",
-                weight: Math.round(Number(ind.weight) * 100),
-                isCustom: !["Akurasi", "Penjelasan", "Kelengkapan"].includes(ind.label),
-              })),
+              short_answer: v?.short_answer ?? "",
+              alasan: v?.model_answer ?? "",
             };
           }
         );

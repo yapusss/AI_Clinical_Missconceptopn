@@ -1,6 +1,11 @@
 services:
   frontend:
     command: npm run dev -- -H 0.0.0.0
+    environment:
+      # Windows bind mounts do not emit file-change events into the container,
+      # so force polling to make hot reload work while developing on Windows.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
     volumes:
       - ./frontend:/app
       - /app/node_modules

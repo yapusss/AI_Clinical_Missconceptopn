@@ -84,6 +84,7 @@ class QuestionVersionSerializer(serializers.Serializer):
     id = serializers.UUIDField(read_only=True)
     version_number = serializers.IntegerField(read_only=True)
     prompt = serializers.CharField(required=False, default='')
+    short_answer = serializers.CharField(required=False, allow_blank=True, default='')
     model_answer = serializers.CharField(required=False, default='')
     is_published = serializers.BooleanField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
@@ -92,6 +93,7 @@ class QuestionVersionSerializer(serializers.Serializer):
 
 class QuestionItemCreateSerializer(serializers.Serializer):
     prompt = serializers.CharField()
+    short_answer = serializers.CharField(required=False, allow_blank=True, default='')
     model_answer = serializers.CharField()
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
 
@@ -99,17 +101,20 @@ class QuestionItemCreateSerializer(serializers.Serializer):
 class QuestionSetCreateSerializer(serializers.Serializer):
     subject_id = serializers.UUIDField()
     topic_id = serializers.UUIDField(required=True, allow_null=False)
-    code = serializers.CharField(max_length=64)
+    code = serializers.CharField(max_length=64, required=False, allow_blank=True, default='')
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, default="")
     
     prompt = serializers.CharField(required=False)
+    short_answer = serializers.CharField(required=False, allow_blank=True, default='')
     model_answer = serializers.CharField(required=False)
     indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
     questions = QuestionItemCreateSerializer(many=True, required=False, default=list)
     publish = serializers.BooleanField(default=False)
 
     def validate_code(self, value):
+        if not value:
+            return ''
         val = value.strip().upper()
         if not CODE_REGEX.match(val):
             raise serializers.ValidationError(
@@ -122,6 +127,7 @@ class QuestionSetCreateSerializer(serializers.Serializer):
         if questions:
             first_q = questions[0]
             attrs['prompt'] = first_q['prompt']
+            attrs['short_answer'] = first_q.get('short_answer', '')
             attrs['model_answer'] = first_q['model_answer']
             attrs['indicators'] = first_q.get('indicators', [])
         else:
@@ -139,10 +145,6 @@ class QuestionSetCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError({
                     'indicators': f"Total bobot indikator harus tepat 1.0000 untuk dapat dipublikasikan. Saat ini: {total_weight}"
                 })
-        elif publish:
-            raise serializers.ValidationError({
-                'indicators': "Minimal harus ada satu indikator konsep dengan bobot 1.0000 untuk mempublikasikan soal."
-            })
 
         return attrs
 
@@ -152,6 +154,7 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255, required=False)
     description = serializers.CharField(required=False, allow_blank=True)
     prompt = serializers.CharField(required=False)
+    short_answer = serializers.CharField(required=False, allow_blank=True)
     model_answer = serializers.CharField(required=False)
     indicators = ConceptIndicatorSerializer(many=True, required=False)
     publish = serializers.BooleanField(required=False)
@@ -159,7 +162,7 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
     def validate(self, attrs):
         indicators = attrs.get('indicators')
         publish = attrs.get('publish')
-        if indicators is not None and publish:
+        if indicators and publish:
             total_weight = sum(Decimal(str(i['weight'])) for i in indicators)
             if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
                 raise serializers.ValidationError({

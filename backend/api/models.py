@@ -218,6 +218,7 @@ class QuestionVersion(models.Model):
     question = models.ForeignKey(Question, on_delete=models.CASCADE, db_column='question_id', related_name='versions')
     version_number = models.IntegerField(default=1)
     prompt = models.TextField()
+    short_answer = models.TextField(null=True, blank=True)
     model_answer = models.TextField()
     is_published = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='created_by')

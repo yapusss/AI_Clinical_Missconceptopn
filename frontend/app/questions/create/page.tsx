@@ -23,7 +23,16 @@ export default function CreateQuestionPage() {
       try {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.questions && parsed.questions.length > 0) {
-          setImportedData(parsed);
+          setImportedData({
+            ...parsed,
+            questions: parsed.questions.map(
+              (q: { prompt?: string; short_answer?: string; alasan?: string; model_answer?: string }) => ({
+                prompt: q.prompt ?? "",
+                short_answer: q.short_answer ?? q.model_answer ?? "",
+                alasan: q.alasan ?? q.model_answer ?? "",
+              })
+            ),
+          });
         }
       } catch {}
     }

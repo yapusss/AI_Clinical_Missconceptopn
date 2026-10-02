@@ -22,11 +22,16 @@ type PendingPackage = {
 
 export default function QuestionBankImport({
   token,
+  subjectId,
+  subjectName,
 }: {
   token: string;
+  subjectId?: string;
+  subjectName?: string;
 }) {
+  const fixedSubject = Boolean(subjectId);
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [selectedSubjectId, setSelectedSubjectId] = useState("");
+  const [selectedSubjectId, setSelectedSubjectId] = useState(subjectId ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -36,6 +41,11 @@ export default function QuestionBankImport({
   const [pendingPackageData, setPendingPackageData] = useState<PendingPackage | null>(null);
 
   useEffect(() => {
+    if (subjectId) {
+      setSelectedSubjectId(subjectId);
+      return;
+    }
+    if (!token) return;
     fetch("/api/dashboard/summary", {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -44,7 +54,7 @@ export default function QuestionBankImport({
         setSubjects(data?.summary?.my_subjects ?? []);
       })
       .catch(() => {});
-  }, [token]);
+  }, [token, subjectId]);
 
   async function downloadTemplate() {
     setError("");
@@ -166,20 +176,27 @@ export default function QuestionBankImport({
         </div>
 
         <div className="flex items-center gap-2">
-          <AppSelect
-            value={selectedSubjectId}
-            onValueChange={(val) => {
-              setSelectedSubjectId(val);
-              setError("");
-            }}
-            className="w-48 text-xs"
-            ariaLabel="Pilih Mata Kuliah"
-            placeholder="Pilih Mata Kuliah"
-            options={[
-              { value: "", label: "Pilih Mata Kuliah" },
-              ...subjects.map((s) => ({ value: s.id, label: s.name })),
-            ]}
-          />
+          {fixedSubject ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/50 bg-surface-container-low px-3 py-2 text-xs">
+              <span className="text-on-surface-variant">Mata Kuliah:</span>
+              <span className="font-semibold text-on-surface">{subjectName ?? "Mata kuliah ini"}</span>
+            </span>
+          ) : (
+            <AppSelect
+              value={selectedSubjectId}
+              onValueChange={(val) => {
+                setSelectedSubjectId(val);
+                setError("");
+              }}
+              className="w-48 text-xs"
+              ariaLabel="Pilih Mata Kuliah"
+              placeholder="Pilih Mata Kuliah"
+              options={[
+                { value: "", label: "Pilih Mata Kuliah" },
+                ...subjects.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+            />
+          )}
 
           <button
             type="button"

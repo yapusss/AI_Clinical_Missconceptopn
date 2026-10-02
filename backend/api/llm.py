@@ -161,6 +161,7 @@ class FourTierContext:
     tier4_confidence: int
     heuristic_flags: list[str]
     question_prompt: str
+    short_answer: str
     model_answer: str
     set_title: str
     indicators: list          # [{label, description, weight, order_index}]
@@ -177,7 +178,7 @@ def load_context(submission_id: str) -> FourTierContext:
                    COALESCE(s.tier1_answer, ''), COALESCE(s.tier2_confidence, 1),
                    COALESCE(s.tier3_reason, s.answer_text), COALESCE(s.tier4_confidence, 1),
                    COALESCE(s.heuristic_flags, '[]'::jsonb),
-                   qv.prompt, qv.model_answer, qs.title
+                   qv.prompt, qv.model_answer, COALESCE(qv.short_answer, ''), qs.title
             FROM submissions s
             JOIN question_versions qv ON qv.id = s.question_version_id
             JOIN questions q ON q.id = qv.question_id
@@ -246,7 +247,8 @@ def load_context(submission_id: str) -> FourTierContext:
         heuristic_flags=flags,
         question_prompt=row[8],
         model_answer=row[9],
-        set_title=row[10],
+        short_answer=row[10],
+        set_title=row[11],
         indicators=indicators,
         misconceptions=misconceptions,
         rejection_notes=(prior[0] or '')[:2000],
@@ -318,7 +320,7 @@ def run_module_a(ctx: FourTierContext) -> tuple[str, str]:
     )
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
-        f"Jawaban Model (Acuan Kebenaran):\n{ctx.model_answer}\n\n"
+        f"Jawaban Singkat Acuan (Kunci):\n{ctx.short_answer or ctx.model_answer}\n\n"
         f"Jawaban Singkat Mahasiswa (Tier 1):\n{ctx.tier1_answer}"
     )
     if ctx.rejection_notes:
