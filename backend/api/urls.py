@@ -9,6 +9,8 @@ from .validation_views import (
 )
 from .views import (
     DashboardView,
+    ExamPackageListCreateView,
+    ExamPackageToggleActiveView,
     AdminManagedUserDetailView,
     AdminHelpArticleDetailView,
     AdminHelpArticleListView,
@@ -78,6 +80,8 @@ urlpatterns = [
     path('question-imports/<uuid:pk>', QuestionImportDetailView.as_view(), name='question-import-detail'),
     path('question-imports/<uuid:pk>/commit', QuestionImportCommitView.as_view(), name='question-import-commit'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
+    path('exam-packages', ExamPackageListCreateView.as_view(), name='exam-package-list-create'),
+    path('exam-packages/<uuid:pk>/toggle-active', ExamPackageToggleActiveView.as_view(), name='exam-package-toggle-active'),
 
     path('student/sets', StudentSetLookupView.as_view(), name='student-set-lookup'),
     path('student/sets/<uuid:pk>/submissions', StudentPackageSubmissionCreateView.as_view(), name='student-package-submission-create'),

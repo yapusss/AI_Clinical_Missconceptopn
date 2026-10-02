@@ -22,6 +22,8 @@ from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
     ConceptIndicator,
+    ExamPackage,
+    ExamPackageQuestion,
     HelpArticle,
     LlmAnalysis,
     Misconception,
@@ -43,6 +45,7 @@ from .models import (
 from .serializers import (
     AdminManagedUserSerializer,
     LoginSerializer,
+    ExamPackageCreateSerializer,
     QuestionSetCreateSerializer,
     QuestionSetUpdateSerializer,
     PackageSubmissionCreateSerializer,
@@ -1937,6 +1940,97 @@ class QuestionPublishView(APIView):
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+# EXAM PACKAGES
+# ============================================================================
+
+class ExamPackageListCreateView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        subject_id = request.query_params.get('subject_id')
+        if request.user.is_superuser:
+            packages = ExamPackage.objects.all()
+        else:
+            subject_ids = UserSubjectRole.objects.filter(
+                user=request.user, role=UserSubjectRole.Role.LECTURER,
+            ).values_list('subject_id', flat=True)
+            packages = ExamPackage.objects.filter(subject_id__in=subject_ids)
+        if subject_id:
+            packages = packages.filter(subject_id=subject_id)
+
+        packages = packages.select_related('subject').order_by('-created_at')
+        counts = {
+            row['exam_package_id']: row['count']
+            for row in ExamPackageQuestion.objects.filter(exam_package_id__in=packages.values('id'))
+            .values('exam_package_id').annotate(count=Count('id'))
+        }
+        return Response([
+            {
+                'id': str(item.id),
+                'code': item.code,
+                'title': item.title,
+                'description': item.description or '',
+                'subject_id': str(item.subject_id),
+                'subject_name': item.subject.name,
+                'is_active': item.is_active,
+                'question_count': counts.get(item.id, 0),
+                'created_at': item.created_at,
+            }
+            for item in packages
+        ])
+
+    def post(self, request):
+        serializer = ExamPackageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if not is_lecturer_for_subject(request.user, data['subject_id']):
+            return Response({'detail': 'Anda tidak berwenang membuat paket ujian pada mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
+        if ExamPackage.objects.filter(code__iexact=data['code']).exists():
+            return Response({'code': ['Kode paket ujian sudah digunakan.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        questions = list(Question.objects.select_related('question_set').filter(id__in=data['question_ids']))
+        if len(questions) != len(data['question_ids']) or any(question.question_set.subject_id != data['subject_id'] for question in questions):
+            return Response({'question_ids': ['Pilih hanya soal bank dari mata kuliah ini.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        latest_versions = {}
+        for version in QuestionVersion.objects.filter(question_id__in=data['question_ids'], is_published=True).order_by('question_id', '-version_number'):
+            latest_versions.setdefault(version.question_id, version)
+        if len(latest_versions) != len(data['question_ids']):
+            return Response({'question_ids': ['Semua soal yang dipilih harus sudah diterbitkan di bank soal.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            package = ExamPackage.objects.create(
+                id=uuid.uuid4(), subject_id=data['subject_id'], created_by=request.user,
+                code=data['code'], title=data['title'], description=data['description'], is_active=data['is_active'],
+            )
+            for order_index, question_id in enumerate(data['question_ids'], start=1):
+                ExamPackageQuestion.objects.create(
+                    id=uuid.uuid4(), exam_package=package, question_id=question_id,
+                    question_version=latest_versions[question_id], order_index=order_index,
+                )
+        return Response({
+            'id': str(package.id), 'code': package.code, 'title': package.title,
+            'question_count': len(data['question_ids']), 'is_active': package.is_active,
+        }, status=status.HTTP_201_CREATED)
+
+
+class ExamPackageToggleActiveView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            package = ExamPackage.objects.get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengubah paket ujian ini.'}, status=status.HTTP_403_FORBIDDEN)
+        package.is_active = not package.is_active
+        package.save(update_fields=['is_active', 'updated_at'])
+        return Response({'id': str(package.id), 'is_active': package.is_active})
+
+
 # SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
 # ============================================================================
 
@@ -1963,12 +2057,12 @@ class StudentSetLookupView(APIView):
             )
 
         try:
-            q_set = QuestionSet.objects.select_related('subject', 'created_by').get(
+            package = ExamPackage.objects.select_related('subject', 'created_by').get(
                 code__iexact=code, is_active=True
             )
-        except QuestionSet.DoesNotExist:
+        except ExamPackage.DoesNotExist:
             return Response(
-                {'detail': 'Kode soal tidak ditemukan.'},
+                {'detail': 'Kode paket ujian tidak ditemukan.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -1978,15 +2072,10 @@ class StudentSetLookupView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        questions = Question.objects.filter(question_set=q_set).order_by('order_index')
-
         items = []
-        for q in questions:
-            version = QuestionVersion.objects.filter(
-                question=q, is_published=True
-            ).order_by('-version_number').first()
-            if not version:
-                continue
+        for item in ExamPackageQuestion.objects.select_related('question', 'question_version').filter(exam_package=package).order_by('order_index'):
+            q = item.question
+            version = item.question_version
             latest_sub = Submission.objects.filter(
                 student=request.user, question_version_id=version.id
             ).order_by('-attempt_no').first()
@@ -2005,13 +2094,13 @@ class StudentSetLookupView(APIView):
             })
 
         return Response({
-            'id': str(q_set.id),
-            'code': q_set.code,
-            'title': q_set.title,
-            'description': q_set.description or '',
-            'subject_id': str(q_set.subject_id),
-            'subject_name': q_set.subject.name,
-            'is_active': q_set.is_active,
+            'id': str(package.id),
+            'code': package.code,
+            'title': package.title,
+            'description': package.description or '',
+            'subject_id': str(package.subject_id),
+            'subject_name': package.subject.name,
+            'is_active': package.is_active,
             'questions': items,
         })
 
@@ -2024,29 +2113,25 @@ class StudentSubmissionCreateView(APIView):
 
     def post(self, request, pk, qid):
         try:
-            q_set = QuestionSet.objects.get(pk=pk, is_active=True)
-        except QuestionSet.DoesNotExist:
+            package = ExamPackage.objects.get(pk=pk, is_active=True)
+        except ExamPackage.DoesNotExist:
             return Response(
                 {'detail': 'Soal tidak ditemukan.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            question = Question.objects.get(pk=qid, question_set=q_set)
-        except Question.DoesNotExist:
+            package_question = ExamPackageQuestion.objects.select_related('question', 'question_version').get(
+                exam_package=package, question_id=qid,
+            )
+        except ExamPackageQuestion.DoesNotExist:
             return Response(
                 {'detail': 'Pertanyaan tidak ditemukan.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        version = QuestionVersion.objects.filter(
-            question=question, is_published=True
-        ).order_by('-version_number').first()
-        if not version:
-            return Response(
-                {'detail': 'Versi soal belum dipublikasikan. Tidak dapat mengumpulkan jawaban.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        question = package_question.question
+        version = package_question.question_version
 
         if not is_active_student(request.user):
             return Response(
@@ -2145,8 +2230,8 @@ class StudentPackageSubmissionCreateView(APIView):
         try:
             with transaction.atomic():
                 try:
-                    q_set = QuestionSet.objects.select_for_update().get(pk=pk, is_active=True)
-                except QuestionSet.DoesNotExist:
+                    package = ExamPackage.objects.select_for_update().get(pk=pk, is_active=True)
+                except ExamPackage.DoesNotExist:
                     return Response(
                         {'detail': 'Soal tidak ditemukan.'},
                         status=status.HTTP_404_NOT_FOUND,
@@ -2158,24 +2243,17 @@ class StudentPackageSubmissionCreateView(APIView):
                         status=status.HTTP_403_FORBIDDEN,
                     )
 
-                questions = list(
-                    Question.objects.select_for_update().filter(question_set=q_set).order_by('order_index')
-                )
-                published = []
-                for question in questions:
-                    version = (
-                        QuestionVersion.objects.select_for_update()
-                        .filter(question=question, is_published=True)
-                        .order_by('-version_number')
-                        .first()
-                    )
-                    if version:
-                        published.append((question, version))
+                published = [
+                    (item.question, item.question_version)
+                    for item in ExamPackageQuestion.objects.select_for_update()
+                    .select_related('question', 'question_version')
+                    .filter(exam_package=package).order_by('order_index')
+                ]
 
                 published_question_ids = {question.id for question, _ in published}
                 if not published:
                     return Response(
-                        {'detail': 'Belum ada pertanyaan yang dipublikasikan pada bank soal ini.'},
+                        {'detail': 'Paket ujian belum memiliki soal.'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 if set(answers_by_question) != published_question_ids:
@@ -2220,7 +2298,7 @@ class StudentPackageSubmissionCreateView(APIView):
             )
         }
         return Response({
-            'set_id': str(q_set.id),
+            'set_id': str(package.id),
             'submissions': [
                 {
                     'submission_id': submission_id,

@@ -173,6 +173,22 @@ class QuestionSet(models.Model):
         return f'[{self.code}] {self.title}'
 
 
+class ExamPackage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    created_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='created_by')
+    code = models.CharField(max_length=64)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'exam_packages'
+        managed = False
+
+
 class Question(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     question_set = models.ForeignKey(QuestionSet, on_delete=models.CASCADE, db_column='question_set_id', related_name='questions')
@@ -182,6 +198,18 @@ class Question(models.Model):
 
     class Meta:
         db_table = 'questions'
+        managed = False
+
+
+class ExamPackageQuestion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    exam_package = models.ForeignKey(ExamPackage, on_delete=models.CASCADE, db_column='exam_package_id', related_name='items')
+    question = models.ForeignKey(Question, on_delete=models.RESTRICT, db_column='question_id')
+    question_version = models.ForeignKey('QuestionVersion', on_delete=models.RESTRICT, db_column='question_version_id')
+    order_index = models.IntegerField(default=1)
+
+    class Meta:
+        db_table = 'exam_package_questions'
         managed = False
 
 

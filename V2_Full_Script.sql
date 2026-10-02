@@ -142,6 +142,27 @@ CREATE TRIGGER set_question_sets_updated_at
 BEFORE UPDATE ON question_sets
 FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 
+CREATE TABLE exam_packages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    code VARCHAR(64) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_exam_package_code_format
+        CHECK (code ~ '^[A-Z0-9][A-Z0-9\-]{1,62}[A-Z0-9]$')
+);
+
+CREATE UNIQUE INDEX idx_exam_packages_code_upper ON exam_packages (UPPER(code));
+CREATE INDEX idx_exam_packages_subject ON exam_packages (subject_id);
+
+CREATE TRIGGER set_exam_packages_updated_at
+BEFORE UPDATE ON exam_packages
+FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+
 CREATE TABLE questions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     question_set_id UUID NOT NULL REFERENCES question_sets(id) ON DELETE CASCADE,
@@ -216,6 +237,16 @@ CREATE TABLE question_versions (
 
 CREATE INDEX idx_question_versions_question
     ON question_versions (question_id, version_number DESC);
+
+CREATE TABLE exam_package_questions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    exam_package_id UUID NOT NULL REFERENCES exam_packages(id) ON DELETE CASCADE,
+    question_id UUID NOT NULL REFERENCES questions(id) ON DELETE RESTRICT,
+    question_version_id UUID NOT NULL REFERENCES question_versions(id) ON DELETE RESTRICT,
+    order_index INT NOT NULL,
+    CONSTRAINT uq_exam_package_question UNIQUE (exam_package_id, question_id),
+    CONSTRAINT uq_exam_package_question_order UNIQUE (exam_package_id, order_index)
+);
 
 CREATE TABLE concept_indicators (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

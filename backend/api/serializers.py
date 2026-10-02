@@ -167,6 +167,28 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
                 })
         return attrs
 
+class ExamPackageCreateSerializer(serializers.Serializer):
+    subject_id = serializers.UUIDField()
+    code = serializers.CharField(max_length=64)
+    title = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+    question_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+    is_active = serializers.BooleanField(default=False)
+
+    def validate_code(self, value):
+        val = value.strip().upper()
+        if not CODE_REGEX.match(val):
+            raise serializers.ValidationError(
+                'Format kode paket harus huruf besar, angka, atau tanda hubung (-), minimal 3 karakter, dan tidak boleh diawali/diakhiri tanda hubung.'
+            )
+        return val
+
+    def validate_question_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('Setiap soal hanya boleh dipilih satu kali.')
+        return value
+
+
 class FourTierSubmissionItemSerializer(serializers.Serializer):
     question_id = serializers.UUIDField()
     tier1_answer = serializers.CharField(max_length=120, allow_blank=False)
