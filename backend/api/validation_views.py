@@ -25,7 +25,6 @@ from rest_framework.views import APIView
 
 from .authentication import TokenAuthentication
 from .models import (
-    ConceptIndicator,
     LlmAnalysis,
     Question,
     QuestionSet,
@@ -164,7 +163,7 @@ class ValidationQueueView(APIView):
 
 
 class ValidationDetailView(APIView):
-    """Detail satu analisis untuk ditinjau: jawaban, rubrik, keluaran LLM, miskonsepsi advisory."""
+    """Detail satu analisis untuk ditinjau: jawaban, keluaran LLM, miskonsepsi advisory."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -182,10 +181,6 @@ class ValidationDetailView(APIView):
         v = QuestionVersion.objects.get(pk=sub.question_version_id)
         q = Question.objects.get(pk=v.question_id)
         q_set = QuestionSet.objects.get(pk=q.question_set_id)
-        indicators = list(
-            ConceptIndicator.objects.filter(question_version=v).order_by('order_index')
-        )
-
         breakdown = a.concept_breakdown_json or {}
         matches = breakdown.get('misconception_matches') or []
 
@@ -214,15 +209,6 @@ class ValidationDetailView(APIView):
                 'version_number': v.version_number,
                 'prompt': v.prompt,
                 'model_answer': v.model_answer,
-                'indicators': [
-                    {
-                        'order_index': i.order_index,
-                        'label': i.label,
-                        'description': i.description or '',
-                        'weight': str(i.weight),
-                    }
-                    for i in indicators
-                ],
             },
             'answer': {
                 'text': sub.answer_text,
@@ -247,7 +233,6 @@ class ValidationDetailView(APIView):
                 'tier_label': f"[{getattr(a, 'four_tier_category', None)}]" if getattr(a, 'four_tier_category', None) else a.tier_label_snapshot,
                 'confidence': str(a.confidence),
                 'explanation': a.explanation,
-                'indicator_scores': breakdown.get('indicators') or [],
                 'misconception_matches': matches,
                 'proposed_new_misconception': breakdown.get('proposed_new_misconception'),
                 'execution_time_ms': a.execution_time_ms,

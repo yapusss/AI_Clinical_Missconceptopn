@@ -42,19 +42,12 @@ export default function ViewQuestionPage() {
             versions?: {
               prompt?: string;
               model_answer?: string;
-              indicators?: { label: string; description?: string; weight: string | number }[];
             }[];
           }) => {
             const v = q.versions?.[0];
             return {
               prompt: v?.prompt ?? "",
               model_answer: v?.model_answer ?? "",
-              indicators: (v?.indicators ?? []).map((ind) => ({
-                label: ind.label,
-                description: ind.description ?? "",
-                weight: Math.round(Number(ind.weight) * 100),
-                isCustom: !["Akurasi", "Penjelasan", "Kelengkapan"].includes(ind.label),
-              })),
             };
           }
         );

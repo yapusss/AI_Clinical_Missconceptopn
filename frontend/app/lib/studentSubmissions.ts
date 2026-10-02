@@ -142,7 +142,7 @@ export function getSemanticStatus(status: string): SemanticStatus {
       return {
         badgeLabel: "AI: Analyzing",
         badgeClass: "border-amber-500/40 bg-amber-500/10 text-amber-400",
-        description: "Model AI sedang mengidentifikasi konsep dan pola penalaran fisis.",
+        description: "Model AI sedang mengevaluasi pola penalaran.",
       };
     case "ANALYSIS_FAILED":
       return {

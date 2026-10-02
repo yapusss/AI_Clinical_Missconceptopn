@@ -366,7 +366,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(body['questions'][0]['submission']['id'], str(submission.id))
         self.assertEqual(body['questions'][0]['submission']['answer_text'], 'Jawaban paket.')
         self.assertEqual(body['questions'][0]['model_answer'], self.version.model_answer)
-        self.assertEqual(body['questions'][0]['indicators'][0]['label'], 'Ketepatan Konsep')
+        self.assertNotIn('indicators', body['questions'][0])
         self.assertIsNone(body['questions'][0]['analysis'])
         self.assertEqual(body['questions'][1]['status'], 'UNANSWERED')
         self.assertIsNone(body['questions'][1]['submission'])
@@ -402,7 +402,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(body['answer_text'], 'Jawaban tanpa analisis.')
         self.assertEqual(body['question']['prompt'], self.version.prompt)
         self.assertEqual(body['question']['model_answer'], self.version.model_answer)
-        self.assertEqual(body['question']['indicators'][0]['label'], 'Ketepatan Konsep')
+        self.assertNotIn('indicators', body['question'])
         self.assertEqual(body['current_analysis'], None)
 
     def test_lecturer_submission_detail_is_scoped_to_assigned_subject(self):

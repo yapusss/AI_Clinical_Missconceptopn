@@ -22,14 +22,6 @@ import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import { apiFetch } from "../../lib/api";
 
-type IndicatorScore = {
-  order_index: number;
-  label: string;
-  weight: string;
-  score: "PRESENT" | "PARTIAL" | "MISSING";
-  evidence: string;
-};
-
 type MisconceptionMatch = {
   misconception_id: string;
   label: string;
@@ -52,12 +44,6 @@ type Detail = {
     version_number: number;
     prompt: string;
     model_answer: string;
-    indicators: {
-      order_index: number;
-      label: string;
-      description: string;
-      weight: string;
-    }[];
   };
   answer: {
     text: string;
@@ -83,7 +69,6 @@ type Detail = {
     four_tier_category?: string;
     risk_level?: string;
     concept_breakdown_json: {
-      indicators?: IndicatorScore[];
       misconception_matches?: MisconceptionMatch[];
       module_c?: {
         code: string;
@@ -135,12 +120,6 @@ const CATEGORY_META: Record<
     desc: "Paham konsep secara utuh dan konsisten.",
     cardCls: "diag-card-sc",
   },
-};
-
-const SCORE_BADGE: Record<string, { label: string; cls: string }> = {
-  PRESENT: { label: "Terpenuhi", cls: "badge-active" },
-  PARTIAL: { label: "Sebagian", cls: "badge-draft" },
-  MISSING: { label: "Tidak Terpenuhi", cls: "badge-revoked" },
 };
 
 export default function ValidationDetailPage() {
@@ -510,43 +489,7 @@ export default function ValidationDetailPage() {
                 </header>
 
                 <div className="p-5 space-y-4 text-xs">
-                  {/* Rubric Breakdown */}
                   <div>
-                    <h4 className="font-bold uppercase tracking-wider text-on-surface-variant mb-2">
-                      Evaluasi Indikator Rubrik:
-                    </h4>
-                    <div className="space-y-2">
-                      {(data.llm.concept_breakdown_json?.indicators ?? []).map(
-                        (ind) => {
-                          const badge =
-                            SCORE_BADGE[ind.score] ?? SCORE_BADGE.MISSING;
-                          return (
-                            <div
-                              key={ind.order_index}
-                              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-semibold text-on-surface text-xs">
-                                  #{ind.order_index} {ind.label} (bobot{" "}
-                                  {ind.weight})
-                                </span>
-                                <span className={`badge ${badge.cls}`}>
-                                  {badge.label}
-                                </span>
-                              </div>
-                              {ind.evidence && (
-                                <p className="mt-1 text-[11px] italic text-on-surface-variant leading-relaxed">
-                                  Bukti: &ldquo;{ind.evidence}&rdquo;
-                                </p>
-                              )}
-                            </div>
-                          );
-                        },
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="border-t border-outline-variant/20 pt-3">
                     <h4 className="font-bold uppercase tracking-wider text-on-surface-variant">
                       Penjelasan Klinis AI:
                     </h4>

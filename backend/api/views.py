@@ -2,10 +2,9 @@ import csv
 import io
 import json
 import uuid
-from decimal import Decimal
 from django.utils.text import slugify
 from django.db import connection, transaction
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from django.http import HttpResponse
 from openpyxl import Workbook, load_workbook
@@ -21,7 +20,6 @@ from .serializers import FourTierPackageSubmissionSerializer
 from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
-    ConceptIndicator,
     ExamPackage,
     ExamPackageQuestion,
     HelpArticle,
@@ -672,26 +670,6 @@ def is_lecturer_for_subject(user, subject_id):
 IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'reference_answer'}
 
 
-def _parse_import_indicators(raw_value):
-    if not raw_value.strip():
-        return [{'label': 'Konsep utama', 'description': '', 'weight': Decimal('1.0000')}]
-    indicators = []
-    for item in raw_value.split('|'):
-        label, separator, weight = item.partition(':')
-        if not separator:
-            raise ValueError('Format indikator harus label:bobot|label:bobot.')
-        try:
-            parsed_weight = Decimal(weight.strip())
-        except Exception as exc:
-            raise ValueError(f'Bobot indikator tidak valid: {weight}.') from exc
-        if not label.strip() or parsed_weight <= 0 or parsed_weight > 1:
-            raise ValueError('Label indikator wajib diisi dan bobot harus antara 0 dan 1.')
-        indicators.append({'label': label.strip(), 'description': '', 'weight': parsed_weight})
-    if abs(sum(item['weight'] for item in indicators) - Decimal('1.0000')) > Decimal('0.0001'):
-        raise ValueError('Total bobot indikator harus tepat 1.0000.')
-    return indicators
-
-
 def _normalize_import_row(raw):
     return {
         str(key).strip(): str(value).strip() if value is not None else ''
@@ -764,8 +742,6 @@ def _read_xlsx_rows(upload, subject_name=None):
         'JAWABAN_REFERENSI': 'reference_answer',
         'JAWABAN': 'reference_answer',
         'REFERENCE_ANSWER': 'reference_answer',
-        'INDIKATOR_KONSEP': 'indicators',
-        'INDICATORS': 'indicators',
         'ANSWER_KEY': 'answer_key',
     }
 
@@ -782,7 +758,6 @@ def _read_xlsx_rows(upload, subject_name=None):
             'order_index': raw_dict.get('order_index', len(rows) + 1),
             'prompt': raw_dict.get('prompt', ''),
             'reference_answer': raw_dict.get('reference_answer', ''),
-            'indicators': raw_dict.get('indicators', '') or 'Ketepatan konsep:1.0000',
             'answer_key': raw_dict.get('answer_key', f"Q-{len(rows)+1}"),
             'code': raw_dict.get('code', ''),
             'title': raw_dict.get('title', ''),
@@ -834,12 +809,6 @@ def _read_question_import(upload, subject_name=None):
         except (ValueError, TypeError):
             order_index = len(rows) + 1
 
-        try:
-            indicators = _parse_import_indicators(normalized.get('indicators', ''))
-        except ValueError as exc:
-            indicators = []
-            errors.append(str(exc))
-
         rows.append({
             'row_number': row_number,
             'question_key': key,
@@ -847,7 +816,6 @@ def _read_question_import(upload, subject_name=None):
             'status': 'INVALID' if errors else 'VALID',
             'errors': errors,
             'order_index': order_index,
-            'indicators': indicators,
         })
 
     return rows, detected_sheet
@@ -932,11 +900,6 @@ class QuestionImportCreateView(APIView):
                 questions_payload.append({
                     'prompt': raw.get('prompt', ''),
                     'model_answer': raw.get('reference_answer', ''),
-                    'indicators': [
-                        {'label': 'Akurasi', 'description': 'Ketepatan konsep ilmiah dan kesesuaian prinsip dasar fisika.', 'weight': 40, 'isCustom': False},
-                        {'label': 'Penjelasan', 'description': 'Kejelasan penalaran, alur argumen, dan langkah logika.', 'weight': 30, 'isCustom': False},
-                        {'label': 'Kelengkapan', 'description': 'Kelengkapan seluruh variabel, satuan, dan elemen jawaban.', 'weight': 30, 'isCustom': False},
-                    ]
                 })
 
         if not questions_payload:
@@ -1196,11 +1159,6 @@ class QuestionImportCommitView(APIView):
                     prompt=raw['prompt'], model_answer=raw['reference_answer'],
                     is_published=False, created_by=request.user,
                 )
-                indicators = _parse_import_indicators(raw.get('indicators', ''))
-                ConceptIndicator.objects.bulk_create([
-                    ConceptIndicator(id=uuid.uuid4(), question_version=version, label=item['label'], description=item['description'], weight=item['weight'], order_index=index)
-                    for index, item in enumerate(indicators, start=1)
-                ])
                 ReferenceAnswer.objects.create(
                     id=uuid.uuid4(), question_version=version,
                     answer_key=raw.get('answer_key') or row.question_key,
@@ -1342,7 +1300,6 @@ class QuestionListCreateView(APIView):
                 questions_list = [{
                     'prompt': data['prompt'],
                     'model_answer': data['model_answer'],
-                    'indicators': data.get('indicators', []),
                 }]
 
             for q_idx, q_item in enumerate(questions_list, start=1):
@@ -1370,17 +1327,6 @@ class QuestionListCreateView(APIView):
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
-
-                indicators_data = q_item.get('indicators', [])
-                for idx, ind in enumerate(indicators_data, start=1):
-                    ConceptIndicator.objects.create(
-                        id=uuid.uuid4(),
-                        question_version=qv,
-                        label=ind['label'],
-                        description=ind.get('description', ''),
-                        weight=ind['weight'],
-                        order_index=idx,
-                    )
 
                 if data.get('publish', False):
                     with connection.cursor() as cursor:
@@ -1415,8 +1361,6 @@ class QuestionDetailView(APIView):
         for question in Question.objects.filter(question_set=q_set).order_by('order_index'):
             versions = []
             for version in QuestionVersion.objects.filter(question=question).order_by('-version_number'):
-                indicators = ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
-
                 refs = list(
                     ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
                 )
@@ -1451,16 +1395,6 @@ class QuestionDetailView(APIView):
                     'is_published': version.is_published,
                     'created_at': version.created_at,
                     'reference_answers': ref_answers,
-                    'indicators': [
-                        {
-                            'id': str(indicator.id),
-                            'label': indicator.label,
-                            'description': indicator.description or '',
-                            'weight': str(indicator.weight),
-                            'order_index': indicator.order_index,
-                        }
-                        for indicator in indicators
-                    ],
                 })
             questions.append({
                 'id': str(question.id),
@@ -1570,18 +1504,6 @@ class QuestionDetailView(APIView):
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
-
-            if 'indicators' in data:
-                ConceptIndicator.objects.filter(question_version=target_v).delete()
-                for idx, ind in enumerate(data['indicators'], start=1):
-                    ConceptIndicator.objects.create(
-                        id=uuid.uuid4(),
-                        question_version=target_v,
-                        label=ind['label'],
-                        description=ind.get('description', ''),
-                        weight=ind['weight'],
-                        order_index=idx,
-                    )
 
             if data.get('publish', False) and not target_v.is_published:
                 with connection.cursor() as cursor:
@@ -1757,16 +1679,6 @@ class QuestionSetStudentReviewView(APIView):
             ).select_related('lecturer')
         }
 
-        indicators_by_version = {}
-        for indicator in ConceptIndicator.objects.filter(
-            question_version_id__in=[v.id for v in version_by_question.values()]
-        ).order_by('order_index'):
-            indicators_by_version.setdefault(indicator.question_version_id, []).append({
-                'id': str(indicator.id), 'label': indicator.label,
-                'description': indicator.description or '', 'weight': str(indicator.weight),
-                'order_index': indicator.order_index,
-            })
-
         rows = []
         for question in questions:
             version = version_by_question.get(question.id)
@@ -1828,7 +1740,6 @@ class QuestionSetStudentReviewView(APIView):
                 'version_number': version.version_number,
                 'prompt': version.prompt,
                 'model_answer': version.model_answer,
-                'indicators': indicators_by_version.get(version.id, []),
                 'status': attempts_payload[0]['status'] if attempts_payload else 'UNANSWERED',
                 'attempts': attempts_payload,
             })
@@ -1934,9 +1845,6 @@ class QuestionSetPublishView(APIView):
             version = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
             if not version:
                 return Response({'detail': f'Pertanyaan ke-{question.order_index} belum memiliki versi.'}, status=status.HTTP_400_BAD_REQUEST)
-            total_weight = ConceptIndicator.objects.filter(question_version=version).aggregate(total=Sum('weight'))['total'] or Decimal('0')
-            if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
-                return Response({'detail': f'Bobot indikator pertanyaan ke-{question.order_index} harus tepat 1.0000.'}, status=status.HTTP_400_BAD_REQUEST)
             versions.append(version)
 
         try:
@@ -2782,15 +2690,6 @@ class LecturerSubmissionDetailView(APIView):
                 'reference_answers': [
                     {'id': str(answer.id), 'answer_key': answer.answer_key, 'text': answer.answer_text}
                     for answer in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
-                ],
-                'indicators': [
-                    {
-                        'order_index': indicator.order_index,
-                        'label': indicator.label,
-                        'description': indicator.description or '',
-                        'weight': str(indicator.weight),
-                    }
-                    for indicator in ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
                 ],
             },
             'answer_text': submission.answer_text,
