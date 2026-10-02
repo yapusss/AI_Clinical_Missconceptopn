@@ -10,13 +10,14 @@ from .models import User, UserRole
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'is_active', 'is_superuser', 'created_at']
+        fields = ['id', 'email', 'full_name', 'nim', 'is_active', 'is_superuser', 'created_at']
         read_only_fields = fields
 
 
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
+    nim = serializers.CharField(max_length=32)
     password = serializers.CharField(write_only=True, min_length=8)
 
     def validate_email(self, value):
@@ -24,10 +25,17 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError('Email sudah terdaftar.')
         return value
 
+    def validate_nim(self, value):
+        nim = value.strip().upper()
+        if User.objects.filter(nim__iexact=nim).exists():
+            raise serializers.ValidationError('NIM sudah terdaftar.')
+        return nim
+
     def create(self, validated_data):
         user = User.objects.create(
             email=validated_data['email'].lower(),
             full_name=validated_data['full_name'],
+            nim=validated_data['nim'].strip().upper(),
             password_hash=make_password(validated_data['password']),
         )
         UserRole.objects.create(user=user, role=UserRole.Role.STUDENT)
@@ -55,6 +63,7 @@ class LoginSerializer(serializers.Serializer):
 class AdminManagedUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
+    nim = serializers.CharField(max_length=32, required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     is_active = serializers.BooleanField(required=False, default=True)
     subject_ids = serializers.ListField(child=serializers.UUIDField(), required=False)

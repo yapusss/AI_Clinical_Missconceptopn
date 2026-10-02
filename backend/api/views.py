@@ -415,6 +415,10 @@ class AdminManagedUserListView(APIView):
         data = serializer.validated_data
         if User.objects.filter(email__iexact=data['email']).exists():
             return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
+        if managed_role == UserRole.Role.STUDENT and not data.get('nim', '').strip():
+            return Response({'nim': ['NIM wajib diisi untuk mahasiswa.']}, status=status.HTTP_400_BAD_REQUEST)
+        if data.get('nim') and User.objects.filter(nim__iexact=data['nim'].strip()).exists():
+            return Response({'nim': ['NIM sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
         subject_ids = data.get('subject_ids', []) if managed_role == UserRole.Role.LECTURER else []
         valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
         if len(valid_subjects) != len(set(subject_ids)):
@@ -423,7 +427,7 @@ class AdminManagedUserListView(APIView):
             return Response({'password': ['Password wajib diisi saat membuat akun.']}, status=status.HTTP_400_BAD_REQUEST)
         from django.contrib.auth.hashers import make_password
         user = User.objects.create(
-            id=uuid.uuid4(), email=data['email'].lower(), full_name=data['full_name'],
+            id=uuid.uuid4(), email=data['email'].lower(), full_name=data['full_name'], nim=data.get('nim', '').strip().upper() or None,
             password_hash=make_password(data['password']), is_active=data.get('is_active', True),
         )
         UserRole.objects.create(user=user, role=managed_role)
@@ -439,7 +443,7 @@ class AdminManagedUserListView(APIView):
             user=user, role=UserSubjectRole.Role.LECTURER,
         ).select_related('subject') if role == UserRole.Role.LECTURER else []
         return {
-            'id': str(user.id), 'email': user.email, 'full_name': user.full_name,
+            'id': str(user.id), 'email': user.email, 'full_name': user.full_name, 'nim': user.nim,
             'is_active': user.is_active, 'created_at': user.created_at,
             'role': role, 'subjects': [
                 {'id': str(item.subject_id), 'name': item.subject.name, 'slug': item.subject.slug}
@@ -468,6 +472,8 @@ class AdminManagedUserDetailView(APIView):
         data = serializer.validated_data
         if 'email' in data and User.objects.exclude(pk=user.pk).filter(email__iexact=data['email']).exists():
             return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
+        if 'nim' in data and data['nim'] and User.objects.exclude(pk=user.pk).filter(nim__iexact=data['nim'].strip()).exists():
+            return Response({'nim': ['NIM sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
         if managed_role == UserRole.Role.LECTURER and 'subject_ids' in data:
             subject_ids = data['subject_ids']
             valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
@@ -475,6 +481,7 @@ class AdminManagedUserDetailView(APIView):
                 return Response({'subject_ids': ['Ada mata kuliah yang tidak ditemukan.']}, status=status.HTTP_400_BAD_REQUEST)
         if 'email' in data: user.email = data['email'].lower()
         if 'full_name' in data: user.full_name = data['full_name']
+        if 'nim' in data: user.nim = data['nim'].strip().upper() or None
         if 'is_active' in data: user.is_active = data['is_active']
         if data.get('password'):
             from django.contrib.auth.hashers import make_password

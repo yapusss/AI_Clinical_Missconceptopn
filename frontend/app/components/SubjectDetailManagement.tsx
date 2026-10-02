@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, BookOpen, ChevronDown, ChevronRight, ClipboardList, FileText, Pencil, Plus, Tags, Trash2 } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
@@ -16,6 +17,7 @@ const blankTopic = { name: "", description: "" };
 const blankPackage = { code: "", title: "", description: "", question_ids: [] as string[] };
 
 export default function SubjectDetailManagement({ token, subjectId, lecturerView = false }: { token: string; subjectId: string; lecturerView?: boolean }) {
+  const router = useRouter();
   const [subject, setSubject] = useState<Subject | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [bankSets, setBankSets] = useState<BankSet[]>([]);
@@ -27,8 +29,6 @@ export default function SubjectDetailManagement({ token, subjectId, lecturerView
   const [editing, setEditing] = useState<Topic | null>(null);
   const [deleting, setDeleting] = useState<Topic | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [showPackageForm, setShowPackageForm] = useState(false);
-  const [packageForm, setPackageForm] = useState(blankPackage);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
@@ -51,16 +51,16 @@ export default function SubjectDetailManagement({ token, subjectId, lecturerView
   const openTopicForm = (topic?: Topic) => { setEditing(topic ?? null); setForm(topic ? { name: topic.name, description: topic.description } : blankTopic); setShowForm(true); setError(""); };
   const saveTopic = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const response = await fetch(editing ? `/api/admin/topics/${editing.id}` : `/api/admin/subjects/${subjectId}/topics`, { method: editing ? "PATCH" : "POST", headers, body: JSON.stringify(form) }); if (!response.ok) throw new Error(await message(response)); setShowForm(false); await load(); } catch (caught) { setError(caught instanceof Error ? caught.message : "Gagal menyimpan topik."); } finally { setBusy(false); } };
   const removeTopic = async (topic: Topic) => { const response = await fetch(`/api/admin/topics/${topic.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); if (!response.ok) { setError(await message(response)); return; } setDeleting(null); await load(); };
-  const savePackage = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const response = await fetch("/api/exam-packages", { method: "POST", headers, body: JSON.stringify({ subject_id: subjectId, ...packageForm, is_active: true }) }); if (!response.ok) throw new Error(await message(response)); setShowPackageForm(false); setPackageForm(blankPackage); await load(); } catch (caught) { setError(caught instanceof Error ? caught.message : "Gagal membuat paket ujian."); } finally { setBusy(false); } };
   const togglePackage = async (id: string) => { const response = await fetch(`/api/exam-packages/${id}/toggle-active`, { method: "PATCH", headers }); if (!response.ok) { setError(await message(response)); return; } await load(); };
 
   return <PageContainer>
+    <style jsx global>{`section.mt-7 > div.mt-6 > div.flex > button.btn-primary { display: none; }`}</style>
     <Link href="/admin/subjects" className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-primary"><ArrowLeft size={16} /> Kembali ke mata kuliah</Link>
     {error && <div role="alert" className="mb-5 rounded-lg border border-error/40 bg-error-container p-3 text-sm text-on-error-container">{error}</div>}
     {subject && <><PageHeader title={subject.name} description={subject.slug} icon={BookOpen} eyebrow={<span className="text-xs font-bold uppercase tracking-wider text-primary">Mata Kuliah</span>} action={<span className={`badge ${subject.is_active ? "badge-active" : "badge-revoked"}`}>{subject.is_active ? "Aktif" : "Nonaktif"}</span>} />{subject.description && <p className="mt-3 max-w-3xl text-sm leading-6 text-on-surface-variant">{subject.description}</p>}</>}
-    {lecturerView ? <LecturerWorkspace subjectId={subjectId} topics={topics} bankSets={bankSets} packages={packages} activeTab={activeTab} setActiveTab={setActiveTab} expandedTopics={expandedTopics} setExpandedTopics={setExpandedTopics} onAddTopic={() => openTopicForm()} onCreatePackage={() => { setPackageForm(blankPackage); setShowPackageForm(true); }} onTogglePackage={togglePackage} /> : <AdminTopics topics={topics} search={search} setSearch={setSearch} openForm={openTopicForm} setDeleting={setDeleting} />}
+    {lecturerView ? <LecturerWorkspace subjectId={subjectId} topics={topics} bankSets={bankSets} packages={packages} activeTab={activeTab} setActiveTab={setActiveTab} expandedTopics={expandedTopics} setExpandedTopics={setExpandedTopics} onAddTopic={() => openTopicForm()} onCreatePackage={() => router.push(`/exam-packages/create?subject_id=${subjectId}`)} onTogglePackage={togglePackage} /> : <AdminTopics topics={topics} search={search} setSearch={setSearch} openForm={openTopicForm} setDeleting={setDeleting} />}
+    {lecturerView && activeTab === "PACKAGES" && packages.length > 0 && <div className="mt-5 flex justify-end"><Link href={`/exam-packages/create?subject_id=${subjectId}`} className="btn-primary no-underline"><Plus size={17} /> Buat Paket Ujian</Link></div>}
     {showForm && <FormModal title={editing ? "Edit topik" : "Tambah topik"} subtitle="Perbarui nama dan deskripsi topik." icon={Tags} onClose={() => setShowForm(false)} onSubmit={saveTopic} footer={<><button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Batal</button><button type="submit" disabled={busy} className="btn-primary">{busy ? "Menyimpan..." : "Simpan"}</button></>}><div className="space-y-4"><div><label htmlFor="topic-name" className="mb-1.5 block text-sm font-medium text-on-surface-variant">Nama topik</label><input id="topic-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required className="form-input" /></div><div><label htmlFor="topic-description" className="mb-1.5 block text-sm font-medium text-on-surface-variant">Deskripsi</label><textarea id="topic-description" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} rows={3} className="form-input" /></div></div></FormModal>}
-    {showPackageForm && <ExamPackageForm bankSets={bankSets} form={packageForm} setForm={setPackageForm} busy={busy} onClose={() => setShowPackageForm(false)} onSubmit={savePackage} />}
     <ConfirmDialog open={!!deleting} title="Hapus topik?" description={`Topik "${deleting?.name ?? ""}" akan dihapus.`} confirmLabel="Hapus topik" onCancel={() => setDeleting(null)} onConfirm={() => { if (deleting) void removeTopic(deleting); }} />
   </PageContainer>;
 }
