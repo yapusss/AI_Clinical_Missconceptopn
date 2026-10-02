@@ -73,6 +73,7 @@ export default function ProfilePage() {
           <div style={{ minWidth: 0 }}>
             <h2 style={{ fontSize: "1.35rem", fontWeight: 800, margin: 0 }}>{user.full_name}</h2>
             <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "0.2rem 0 0.6rem" }}>{user.email}</p>
+            {user.nim && <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: 0 }}>NIM: {user.nim}</p>}
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
               {user.is_superuser && <span className="badge badge-role">Administrator</span>}
               {uniqueRoles.map((r) => (

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import QuestionForm, { ExamQuestion } from "../../components/QuestionForm";
 
 export default function CreateQuestionPage() {
+  const searchParams = useSearchParams();
   const [ready, setReady] = useState(false);
   const [importedData, setImportedData] = useState<{
     code: string;
@@ -36,5 +38,8 @@ export default function CreateQuestionPage() {
     );
   }
 
-  return <QuestionForm isEditing={false} initialData={importedData ?? undefined} />;
+  const topicId = searchParams.get("topic_id") ?? undefined;
+  const subjectId = searchParams.get("subject_id") ?? undefined;
+  const topicPrefill = subjectId ? { code: "", title: "", description: "", subject_id: subjectId, topic_id: topicId, questions: [] } : undefined;
+  return <QuestionForm isEditing={false} initialData={importedData ?? topicPrefill} />;
 }

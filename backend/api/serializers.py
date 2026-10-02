@@ -10,13 +10,14 @@ from .models import User, UserRole
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'is_active', 'is_superuser', 'created_at']
+        fields = ['id', 'email', 'full_name', 'nim', 'is_active', 'is_superuser', 'created_at']
         read_only_fields = fields
 
 
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
+    nim = serializers.CharField(max_length=32)
     password = serializers.CharField(write_only=True, min_length=8)
 
     def validate_email(self, value):
@@ -24,10 +25,17 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError('Email sudah terdaftar.')
         return value
 
+    def validate_nim(self, value):
+        nim = value.strip().upper()
+        if User.objects.filter(nim__iexact=nim).exists():
+            raise serializers.ValidationError('NIM sudah terdaftar.')
+        return nim
+
     def create(self, validated_data):
         user = User.objects.create(
             email=validated_data['email'].lower(),
             full_name=validated_data['full_name'],
+            nim=validated_data['nim'].strip().upper(),
             password_hash=make_password(validated_data['password']),
         )
         UserRole.objects.create(user=user, role=UserRole.Role.STUDENT)
@@ -55,6 +63,7 @@ class LoginSerializer(serializers.Serializer):
 class AdminManagedUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
+    nim = serializers.CharField(max_length=32, required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     is_active = serializers.BooleanField(required=False, default=True)
     subject_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
@@ -166,6 +175,28 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
                     'indicators': f"Total bobot indikator harus tepat 1.0000 untuk dipublikasikan. Saat ini: {total_weight}"
                 })
         return attrs
+
+class ExamPackageCreateSerializer(serializers.Serializer):
+    subject_id = serializers.UUIDField()
+    code = serializers.CharField(max_length=64)
+    title = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+    question_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+    is_active = serializers.BooleanField(default=False)
+
+    def validate_code(self, value):
+        val = value.strip().upper()
+        if not CODE_REGEX.match(val):
+            raise serializers.ValidationError(
+                'Format kode paket harus huruf besar, angka, atau tanda hubung (-), minimal 3 karakter, dan tidak boleh diawali/diakhiri tanda hubung.'
+            )
+        return val
+
+    def validate_question_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('Setiap soal hanya boleh dipilih satu kali.')
+        return value
+
 
 class FourTierSubmissionItemSerializer(serializers.Serializer):
     question_id = serializers.UUIDField()
