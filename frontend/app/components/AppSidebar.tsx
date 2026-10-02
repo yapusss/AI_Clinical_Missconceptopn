@@ -42,7 +42,7 @@ const ROLE_LABEL: Record<AppRole, string> = {
 const MENU_ITEMS: MenuItem[] = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "LECTURER", "STUDENT", "GENERAL"] },
   { label: "Soal", path: "/code", icon: ClipboardList, roles: ["STUDENT"] },
-  { label: "Kelola Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN", "LECTURER"] },
+  { label: "Kelola Soal", path: "/questions", icon: FileSearch, roles: ["ADMIN"] },
   { label: "Kelola Dosen", path: "/admin/lecturers", icon: UserRound, roles: ["ADMIN"] },
   { label: "Kelola Mahasiswa", path: "/admin/students", icon: GraduationCap, roles: ["ADMIN"] },
   { label: "Kelola Mata Kuliah", path: "/admin/subjects", icon: BookOpen, roles: ["ADMIN", "LECTURER"] },

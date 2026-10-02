@@ -47,6 +47,13 @@ export default function AdminSubjectManagement({ token, canManageCourses }: { to
   const toggle = async (subject: Subject) => { const response = await fetch(`/api/admin/subjects/${subject.id}`, { method: "PATCH", headers, body: JSON.stringify({ is_active: !subject.is_active }) }); if (!response.ok) { setError(await responseMessage(response)); return; } await load(); };
   const visibleSubjects = subjects.filter((subject) => `${subject.name} ${subject.slug}`.toLowerCase().includes(search.toLowerCase()) && (statusFilter === "ALL" || (statusFilter === "ACTIVE" ? subject.is_active : !subject.is_active))).sort((a, b) => sortOrder === "NAME_DESC" ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name));
 
+  if (!canManageCourses) return <PageContainer>
+    <PageHeader title="Kelola Mata Kuliah" description="Pilih mata kuliah untuk melihat topik dan paket soal yang Anda ampu." icon={BookOpen} />
+    {error && <div role="alert" className="mt-5 rounded-lg border border-error/40 bg-error-container p-3 text-sm text-on-error-container">{error}</div>}
+    <div className="mt-6"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari mata kuliah atau kode..." className="form-input max-w-md" /></div>
+    <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleSubjects.map((subject, index) => <Link key={subject.id} href={`/admin/subjects/${subject.id}`} className="group overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest no-underline shadow-sm transition-colors hover:border-primary/50"><div className="h-24 bg-gradient-to-br from-primary to-secondary opacity-90" style={{ backgroundImage: index % 2 ? "radial-gradient(circle at 80% 25%, rgba(255,255,255,.2), transparent 30%), linear-gradient(135deg, #0ea5e9, #1e40af)" : "repeating-linear-gradient(90deg, rgba(255,255,255,.12) 0 2px, transparent 2px 38px), linear-gradient(135deg, #2563eb, #312e81)" }} /><div className="p-4"><p className="font-semibold text-on-surface transition-colors group-hover:text-primary">{subject.name}</p><p className="mt-1 font-mono-ui text-xs text-on-surface-variant">{subject.slug} · {subject.topic_count} topik</p></div></Link>)}</div>
+  </PageContainer>;
+
   return <PageContainer className={canManageCourses ? "" : "course-read-only"}>
     <PageHeader title={canManageCourses ? "Kelola Mata Kuliah" : "Mata Kuliah"} description={canManageCourses ? "Atur mata kuliah dan dosen pengampu. Topik dikelola dari halaman detail mata kuliah." : "Lihat mata kuliah yang Anda ampu dan kelola topiknya dari halaman detail."} icon={BookOpen} />
     {error && <div role="alert" className="mt-5 rounded-lg border border-error/40 bg-error-container p-3 text-sm text-on-error-container">{error}</div>}
