@@ -2319,6 +2319,8 @@ class StudentSubmissionCreateView(APIView):
                         )
                         fallback = cursor.fetchone()
                         submission_id = str(fallback[0]) if fallback else None
+                if submission_id:
+                    Submission.objects.filter(pk=submission_id).update(exam_package=package)
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2340,7 +2342,7 @@ class StudentSubmissionCreateView(APIView):
 
 
 class StudentPackageSubmissionCreateView(APIView):
-    """Submit every published question in a set as one atomic 4-tier package."""
+    """Submit every question selected in an exam package as one atomic attempt."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -2411,8 +2413,9 @@ class StudentPackageSubmissionCreateView(APIView):
                         )
                         row = cursor.fetchone()
                         submission_id = str(row[0]) if row and row[0] else None
-                        if not submission_id:
-                            raise RuntimeError('Gagal menyimpan salah satu jawaban.')
+                    if not submission_id:
+                        raise RuntimeError('Gagal menyimpan salah satu jawaban.')
+                    Submission.objects.filter(pk=submission_id).update(exam_package=package)
                     submission_ids.append((question, version, submission_id))
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2424,7 +2427,7 @@ class StudentPackageSubmissionCreateView(APIView):
             )
         }
         return Response({
-            'set_id': str(package.id),
+            'package_id': str(package.id),
             'submissions': [
                 {
                     'submission_id': submission_id,
@@ -2489,34 +2492,30 @@ class StudentSubmissionListView(APIView):
 
 
 # ============================================================================
-# SPRINT 4: STUDENT SUBMISSION GROUPING BY QUESTION SET
+# SPRINT 4: STUDENT SUBMISSION GROUPING BY EXAM PACKAGE
 # ============================================================================
 
 
-def _build_submission_set_groups(user):
-    """Group a student's submissions per question set with comprehensive pedagogical diagnostics.
-
-    Exposes structured student feedback (poin tepat, letak kekeliruan, konsep seharusnya),
-    binary question grading, and whole-package aggregated score.
-    """
+def _build_submission_package_groups(user):
+    """Group student submissions by their assigned exam package and exact versions."""
     submissions = list(
-        Submission.objects.filter(student=user).order_by('submitted_at')
+        Submission.objects.filter(student=user, exam_package_id__isnull=False)
+        .order_by('submitted_at')
     )
     if not submissions:
         return []
 
-    version_ids = {s.question_version_id for s in submissions}
-    versions = {
-        v.id: v
-        for v in QuestionVersion.objects.filter(id__in=version_ids).select_related('question')
-    }
-    question_ids = {v.question_id for v in versions.values()}
-    questions = {q.id: q for q in Question.objects.filter(id__in=question_ids)}
-    set_ids = {q.question_set_id for q in questions.values()}
-    sets_map = {
-        s.id: s
-        for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject', 'topic')
-    }
+    package_ids = {s.exam_package_id for s in submissions}
+    package_items = list(
+        ExamPackageQuestion.objects.filter(exam_package_id__in=package_ids)
+        .select_related('exam_package__subject', 'question', 'question_version')
+        .order_by('exam_package_id', 'order_index')
+    )
+    items_by_package = {}
+    item_versions = set()
+    for item in package_items:
+        items_by_package.setdefault(item.exam_package_id, []).append(item)
+        item_versions.add((item.exam_package_id, item.question_version_id))
 
     # Fetch current analyses and validations for every attempt
     sub_ids = [s.id for s in submissions]
@@ -2531,38 +2530,29 @@ def _build_submission_set_groups(user):
         ).select_related('lecturer')
     }
 
-    published_rows = (
-        QuestionVersion.objects.filter(
-            is_published=True, question__question_set_id__in=set_ids
-        )
-        .values_list('question_id', 'question__question_set_id')
-        .distinct()
-    )
-    published_count = {}
-    for _qid, _sid in published_rows:
-        published_count[_sid] = published_count.get(_sid, 0) + 1
-
     grouped = {}
     for s in submissions:
-        v = versions.get(s.question_version_id)
-        q = questions.get(v.question_id) if v else None
-        if not q:
+        # The package FK and version must both match an assigned item. This is
+        # deliberately stricter than version-only lookup to prevent cross-package answers.
+        if (s.exam_package_id, s.question_version_id) not in item_versions:
             continue
-        grouped.setdefault(q.question_set_id, {}).setdefault(q.id, []).append(s)
+        grouped.setdefault(s.exam_package_id, {}).setdefault(s.question_version_id, []).append(s)
 
     results = []
-    for set_id, question_map in grouped.items():
-        q_set = sets_map.get(set_id)
-        if not q_set:
+    for package_id, attempts_by_version in grouped.items():
+        items = items_by_package.get(package_id, [])
+        if not items:
             continue
+        package = items[0].exam_package
 
         status_counts = {}
         max_attempt = 0
         last_submitted = None
         questions_payload = []
 
-        for qid, subs in question_map.items():
-            q = questions[qid]
+        for item in items:
+            subs = attempts_by_version.get(item.question_version_id, [])
+            version = item.question_version
             attempts = []
             for s in sorted(subs, key=lambda x: x.attempt_no):
                 status_counts[s.status] = status_counts.get(s.status, 0) + 1
@@ -2590,7 +2580,7 @@ def _build_submission_set_groups(user):
                             else (analysis.module_b_score if analysis else 'Terdapat ketidaksinkronan konsep atau penalaran.')
                         ),
                         'konsep_seharusnya': raw_student_fb.get('konsep_seharusnya') or (
-                            versions.get(s.question_version_id).model_answer if s.question_version_id in versions else ''
+                            version.model_answer
                         ),
                     }
 
@@ -2634,45 +2624,23 @@ def _build_submission_set_groups(user):
                     'evaluation': evaluation_payload,
                 })
 
-            latest_version = versions[sorted(subs, key=lambda x: x.attempt_no)[-1].question_version_id]
             questions_payload.append({
-                'question_id': str(qid),
-                'order_index': q.order_index,
-                'version_id': str(latest_version.id),
-                'version_number': latest_version.version_number,
-                'prompt': latest_version.prompt,
-                'short_answer': latest_version.short_answer or '',
-                'model_answer': latest_version.model_answer,
-                'answered': True,
+                'question_id': str(item.question_id),
+                'order_index': item.order_index,
+                'version_id': str(version.id),
+                'version_number': version.version_number,
+                'prompt': version.prompt,
+                'short_answer': version.short_answer or '',
+                'model_answer': version.model_answer,
+                'answered': bool(subs),
                 'attempts': attempts,
-            })
-
-        unanswered = Question.objects.filter(question_set_id=set_id).exclude(
-            id__in=list(question_map.keys())
-        ).order_by('order_index')
-        for q in unanswered:
-            v = QuestionVersion.objects.filter(
-                question=q, is_published=True
-            ).order_by('-version_number').first()
-            if not v:
-                continue
-            questions_payload.append({
-                'question_id': str(q.id),
-                'order_index': q.order_index,
-                'version_id': str(v.id),
-                'version_number': v.version_number,
-                'prompt': v.prompt,
-                'short_answer': v.short_answer or '',
-                'model_answer': v.model_answer,
-                'answered': False,
-                'attempts': [],
             })
 
         questions_payload.sort(key=lambda item: item['order_index'])
         status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
 
         # Target 3: Kalkulasi Nilai Keseluruhan Paket Soal
-        total_questions = published_count.get(set_id, 0) or len(questions_payload)
+        total_questions = len(questions_payload)
         validated_questions_count = 0
         correct_questions_count = 0
 
@@ -2693,13 +2661,11 @@ def _build_submission_set_groups(user):
         )
 
         results.append({
-            'set_id': str(q_set.id),
-            'code': q_set.code,
-            'title': q_set.title,
-            'subject_id': str(q_set.subject_id),
-            'subject_name': q_set.subject.name,
-            'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
-            'topic_name': q_set.topic.name if q_set.topic else None,
+            'package_id': str(package.id),
+            'code': package.code,
+            'title': package.title,
+            'subject_id': str(package.subject_id),
+            'subject_name': package.subject.name,
             'question_count': total_questions,
             'answered_count': sum(1 for item in questions_payload if item['answered']),
             'total_attempts': sum(status_counts.values()),
@@ -2717,28 +2683,28 @@ def _build_submission_set_groups(user):
     results.sort(key=lambda item: item['last_submitted_at'], reverse=True)
     return results
 
-class StudentSubmissionSetListView(APIView):
-    """Daftar pengumpulan mahasiswa dikelompokkan per bank soal (UC-01)."""
+class StudentSubmissionPackageListView(APIView):
+    """Daftar pengumpulan mahasiswa dikelompokkan per paket ujian."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(_build_submission_set_groups(request.user))
+        return Response(_build_submission_package_groups(request.user))
 
 
-class StudentSubmissionSetDetailView(APIView):
-    """Rincian satu bank soal: seluruh pertanyaan, jawaban, dan evaluasi."""
+class StudentSubmissionPackageDetailView(APIView):
+    """Rincian satu paket ujian milik mahasiswa yang sedang masuk."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        for group in _build_submission_set_groups(request.user):
-            if group['set_id'] == str(pk):
+        for group in _build_submission_package_groups(request.user):
+            if group['package_id'] == str(pk):
                 return Response(group)
         return Response(
-            {'detail': 'Pengumpulan untuk bank soal ini tidak ditemukan.'},
+            {'detail': 'Pengumpulan untuk paket ujian ini tidak ditemukan.'},
             status=status.HTTP_404_NOT_FOUND,
         )
 

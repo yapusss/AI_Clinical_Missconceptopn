@@ -45,8 +45,8 @@ from .views import (
     StudentPackageSubmissionCreateView,
     StudentSubmissionCreateView,
     StudentSubmissionListView,
-    StudentSubmissionSetDetailView,
-    StudentSubmissionSetListView,
+    StudentSubmissionPackageDetailView,
+    StudentSubmissionPackageListView,
     WebsiteSectionListView,
 )
 
@@ -91,8 +91,8 @@ urlpatterns = [
     path('student/sets/<uuid:pk>/submissions', StudentPackageSubmissionCreateView.as_view(), name='student-package-submission-create'),
     path('student/sets/<uuid:pk>/questions/<uuid:qid>/submissions', StudentSubmissionCreateView.as_view(), name='student-submission-create'),
     path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
-    path('student/submission-sets', StudentSubmissionSetListView.as_view(), name='student-submission-set-list'),
-    path('student/submission-sets/<uuid:pk>', StudentSubmissionSetDetailView.as_view(), name='student-submission-set-detail'),
+    path('student/submission-packages', StudentSubmissionPackageListView.as_view(), name='student-submission-package-list'),
+    path('student/submission-packages/<uuid:pk>', StudentSubmissionPackageDetailView.as_view(), name='student-submission-package-detail'),
 
     path('validations/queue', ValidationQueueView.as_view(), name='validation-queue'),
     path('validations/tiers', ValidationTiersView.as_view(), name='validation-tiers'),

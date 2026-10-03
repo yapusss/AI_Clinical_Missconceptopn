@@ -311,6 +311,13 @@ class Submission(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     student = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='student_id', related_name='submissions')
     question_version_id = models.UUIDField()
+    exam_package = models.ForeignKey(
+        ExamPackage,
+        on_delete=models.RESTRICT,
+        db_column='exam_package_id',
+        null=True,
+        blank=True,
+    )
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
     answer_text = models.TextField()
     tier1_answer = models.CharField(max_length=255, null=True, blank=True)

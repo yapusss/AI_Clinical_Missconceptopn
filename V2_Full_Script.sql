@@ -365,6 +365,7 @@ CREATE TABLE submissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     question_version_id UUID NOT NULL REFERENCES question_versions(id) ON DELETE RESTRICT,
+    exam_package_id UUID REFERENCES exam_packages(id) ON DELETE RESTRICT,
     subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
     answer_text TEXT NOT NULL,
     attempt_no INT NOT NULL DEFAULT 1 CHECK (attempt_no > 0),
@@ -398,6 +399,10 @@ FOR EACH ROW EXECUTE FUNCTION trg_set_submission_subject_id();
 -- [OPTIMIZATION] idx_submissions_status dropped — covered by partial queue index
 CREATE INDEX idx_submissions_subject
     ON submissions (subject_id, submitted_at DESC);
+
+CREATE INDEX idx_submissions_student_exam_package
+    ON submissions (student_id, exam_package_id, submitted_at DESC)
+    WHERE exam_package_id IS NOT NULL;
 
 CREATE INDEX idx_submissions_active_queue
     ON submissions (status, submitted_at)

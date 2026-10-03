@@ -141,7 +141,7 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
       {error && <div role="alert" className="mt-6 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"><TriangleAlert size={20} />{error}</div>}
       {fetching ? <p className="mt-8 text-sm text-on-surface-variant">Memuat progres mahasiswa...</p> : data && (
         <div className="mt-8 space-y-4">
-          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-1.5">
+          <div className="flex border-b border-outline-variant/40">
             {VALIDATION_TABS.map((tab) => {
               const active = activeTab === tab.id;
               return (
@@ -150,10 +150,10 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
                   aria-pressed={active}
-                  className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors sm:flex-none ${active ? "bg-primary text-white shadow-sm" : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"}`}
+                  className={`inline-flex cursor-pointer items-center justify-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${active ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
                 >
                   {tab.label}
-                  <span className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold ${active ? "bg-white/20 text-white" : "bg-surface-container text-on-surface-variant"}`}>
+                  <span className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold ${active ? "bg-primary/10 text-primary" : "bg-surface-container text-on-surface-variant"}`}>
                     {tabCount[tab.id]}
                   </span>
                 </button>

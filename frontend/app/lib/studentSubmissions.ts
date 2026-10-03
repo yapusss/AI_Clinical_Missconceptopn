@@ -55,14 +55,12 @@ export type StudentQuestionGroup = {
   attempts: StudentAttempt[];
 };
 
-export type StudentSetGroup = {
-  set_id: string;
+export type StudentPackageGroup = {
+  package_id: string;
   code: string;
   title: string;
   subject_id: string;
   subject_name: string;
-  topic_id?: string | null;
-  topic_name?: string | null;
   question_count: number;
   answered_count: number;
   total_attempts: number;
