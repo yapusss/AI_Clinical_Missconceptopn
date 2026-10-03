@@ -30,6 +30,7 @@ export default function SoalPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -56,12 +57,13 @@ export default function SoalPage() {
     setError("");
     setSubmitting(true);
     try {
-      const data = await apiFetch<StudentSet>(`/student/sets?code=${encodeURIComponent(value)}`);
+      const data = await apiFetch<StudentSet>(`/student/sets?code=${encodeURIComponent(value)}&password=${encodeURIComponent(password)}`);
       if (!data.questions || data.questions.length === 0) {
         setError("Soal belum dipublikasikan oleh dosen. Hubungi dosen pengampu Anda.");
         return;
       }
       setShowModal(false);
+      if (password) sessionStorage.setItem(`exam_package_password_${data.id}`, password);
       router.push(`/sets/${data.id}?code=${encodeURIComponent(data.code)}`);
     } catch (err) {
       setError(errMsg(err));
@@ -72,6 +74,7 @@ export default function SoalPage() {
 
   const openModal = () => {
     setCode("");
+    setPassword("");
     setError("");
     setShowModal(true);
   };
@@ -153,9 +156,13 @@ export default function SoalPage() {
                   autoFocus
                   className="w-full rounded-xl border border-outline-variant/60 bg-surface-container-low px-3.5 py-2.5 font-mono-ui text-sm text-on-surface uppercase placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
-                <p className="mt-1.5 text-[11px] text-on-surface-variant">
+               <p className="mt-1.5 text-[11px] text-on-surface-variant">
                   Kode paket bersifat unik untuk setiap evaluasi konseptual.
-                </p>
+               </p>
+               </div>
+              <div className="mt-4">
+                <label htmlFor="modal-input-password" className="block text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-1.5">Password paket (jika ada)</label>
+                <input id="modal-input-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-xl border border-outline-variant/60 bg-surface-container-low px-3.5 py-2.5 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </div>
           </section>
         </FormModal>

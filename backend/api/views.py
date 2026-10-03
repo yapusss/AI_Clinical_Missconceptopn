@@ -5,6 +5,8 @@ import os
 import uuid
 from django.conf import settings
 from django.core.files.storage import default_storage
+from datetime import timedelta
+from django.contrib.auth.hashers import check_password, make_password
 from django.utils.text import slugify
 from django.utils.html import strip_tags
 from django.db import connection, transaction
@@ -25,6 +27,7 @@ from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
     ExamPackage,
+    ExamPackageAttempt,
     ExamPackageQuestion,
     HelpArticle,
     LlmAnalysis,
@@ -2033,6 +2036,81 @@ class QuestionPublishView(APIView):
 # EXAM PACKAGES
 # ============================================================================
 
+def exam_package_payload(package, question_count=0, question_ids=None):
+    payload = {
+        'id': str(package.id), 'code': package.code, 'title': package.title,
+        'subject_id': str(package.subject_id), 'subject_name': package.subject.name,
+        'is_active': package.is_active, 'question_count': question_count,
+        'opens_at': package.opens_at, 'closes_at': package.closes_at,
+        'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
+        'password_required': bool(package.password_hash), 'created_at': package.created_at,
+    }
+    if question_ids is not None:
+        payload['question_ids'] = [str(question_id) for question_id in question_ids]
+    return payload
+
+
+def duplicate_exam_package_code(package):
+    """Generate a valid, case-insensitively unique code within the DB limit."""
+    base = f'{package.code}-COPY'
+    candidate = base[:64]
+    suffix = 2
+    while ExamPackage.objects.filter(code__iexact=candidate).exists():
+        suffix_value = f'-{suffix}'
+        candidate = f'{base[:64 - len(suffix_value)]}{suffix_value}'
+        suffix += 1
+    return candidate
+
+
+def validate_exam_package_questions(subject_id, question_ids):
+    questions = list(Question.objects.select_related('question_set').filter(id__in=question_ids))
+    if len(questions) != len(question_ids) or any(question.question_set.subject_id != subject_id for question in questions):
+        return None, Response({'question_ids': ['Pilih hanya soal bank dari mata kuliah ini.']}, status=status.HTTP_400_BAD_REQUEST)
+    latest_versions = {}
+    for version in QuestionVersion.objects.filter(question_id__in=question_ids, is_published=True).order_by('question_id', '-version_number'):
+        latest_versions.setdefault(version.question_id, version)
+    if len(latest_versions) != len(question_ids):
+        return None, Response({'question_ids': ['Semua soal yang dipilih harus sudah diterbitkan di bank soal.']}, status=status.HTTP_400_BAD_REQUEST)
+    return latest_versions, None
+
+
+def package_is_open(package):
+    now = timezone.now()
+    return package.is_active and (not package.opens_at or now >= package.opens_at) and (not package.closes_at or now <= package.closes_at)
+
+
+def package_access_error(package):
+    if not package.is_active:
+        return 'Paket ujian belum aktif.'
+    now = timezone.now()
+    if package.opens_at and now < package.opens_at:
+        return 'Paket ujian belum dibuka.'
+    if package.closes_at and now > package.closes_at:
+        return 'Paket ujian sudah ditutup.'
+    return None
+
+
+def start_or_get_package_attempt(package, student, password=None):
+    """Start one resumable package attempt only after its access checks succeed."""
+    error = package_access_error(package)
+    if error:
+        return None, error
+    if package.password_hash and not check_password(password or '', package.password_hash):
+        return None, 'Password paket ujian tidak valid.'
+    attempt = ExamPackageAttempt.objects.filter(
+        exam_package=package, student=student, submitted_at__isnull=True,
+    ).order_by('-attempt_number').first()
+    if attempt:
+        if package.duration_minutes and timezone.now() > attempt.started_at + timedelta(minutes=package.duration_minutes):
+            return None, 'Batas waktu pengerjaan telah berakhir.'
+        return attempt, None
+    completed = ExamPackageAttempt.objects.filter(exam_package=package, student=student, submitted_at__isnull=False).count()
+    if package.max_attempts and completed >= package.max_attempts:
+        return None, 'Batas maksimal percobaan telah tercapai.'
+    return ExamPackageAttempt.objects.create(
+        id=uuid.uuid4(), exam_package=package, student=student, attempt_number=completed + 1,
+    ), None
+
 class ExamPackageListCreateView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -2060,12 +2138,7 @@ class ExamPackageListCreateView(APIView):
                 'id': str(item.id),
                 'code': item.code,
                 'title': item.title,
-                'description': item.description or '',
-                'subject_id': str(item.subject_id),
-                'subject_name': item.subject.name,
-                'is_active': item.is_active,
-                'question_count': counts.get(item.id, 0),
-                'created_at': item.created_at,
+                **exam_package_payload(item, counts.get(item.id, 0)),
             }
             for item in packages
         ])
@@ -2079,20 +2152,19 @@ class ExamPackageListCreateView(APIView):
         if ExamPackage.objects.filter(code__iexact=data['code']).exists():
             return Response({'code': ['Kode paket ujian sudah digunakan.']}, status=status.HTTP_400_BAD_REQUEST)
 
-        questions = list(Question.objects.select_related('question_set').filter(id__in=data['question_ids']))
-        if len(questions) != len(data['question_ids']) or any(question.question_set.subject_id != data['subject_id'] for question in questions):
-            return Response({'question_ids': ['Pilih hanya soal bank dari mata kuliah ini.']}, status=status.HTTP_400_BAD_REQUEST)
-
-        latest_versions = {}
-        for version in QuestionVersion.objects.filter(question_id__in=data['question_ids'], is_published=True).order_by('question_id', '-version_number'):
-            latest_versions.setdefault(version.question_id, version)
-        if len(latest_versions) != len(data['question_ids']):
-            return Response({'question_ids': ['Semua soal yang dipilih harus sudah diterbitkan di bank soal.']}, status=status.HTTP_400_BAD_REQUEST)
+        latest_versions, error = validate_exam_package_questions(data['subject_id'], data['question_ids'])
+        if error:
+            return error
+        if data['is_active'] and not data['question_ids']:
+            return Response({'question_ids': ['Paket aktif harus memiliki minimal satu soal.']}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             package = ExamPackage.objects.create(
                 id=uuid.uuid4(), subject_id=data['subject_id'], created_by=request.user,
-                code=data['code'], title=data['title'], description=data['description'], is_active=data['is_active'],
+                code=data['code'], title=data['title'], is_active=data['is_active'],
+                opens_at=data.get('opens_at'), closes_at=data.get('closes_at'),
+                duration_minutes=data.get('duration_minutes'), max_attempts=data.get('max_attempts'),
+                password_hash=make_password(data['password']) if data.get('password') else None,
             )
             for order_index, question_id in enumerate(data['question_ids'], start=1):
                 ExamPackageQuestion.objects.create(
@@ -2101,8 +2173,77 @@ class ExamPackageListCreateView(APIView):
                 )
         return Response({
             'id': str(package.id), 'code': package.code, 'title': package.title,
-            'question_count': len(data['question_ids']), 'is_active': package.is_active,
+            **exam_package_payload(package, len(data['question_ids'])),
         }, status=status.HTTP_201_CREATED)
+
+
+class ExamPackageDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get_package(self, request, pk):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return None, Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return None, Response({'detail': 'Anda tidak berwenang mengubah paket ujian ini.'}, status=status.HTTP_403_FORBIDDEN)
+        return package, None
+
+    def get(self, request, pk):
+        package, error = self.get_package(request, pk)
+        if error:
+            return error
+        items = ExamPackageQuestion.objects.filter(exam_package=package).order_by('order_index')
+        return Response(exam_package_payload(package, items.count(), items.values_list('question_id', flat=True)))
+
+    def patch(self, request, pk):
+        package, error = self.get_package(request, pk)
+        if error:
+            return error
+        merged = {
+            'subject_id': package.subject_id, 'code': package.code, 'title': package.title,
+            'question_ids': list(ExamPackageQuestion.objects.filter(exam_package=package).order_by('order_index').values_list('question_id', flat=True)),
+            'is_active': package.is_active, 'opens_at': package.opens_at, 'closes_at': package.closes_at,
+            'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
+        }
+        merged.update(request.data)
+        serializer = ExamPackageCreateSerializer(data=merged)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if data['subject_id'] != package.subject_id:
+            return Response({'subject_id': ['Mata kuliah paket tidak dapat diubah.']}, status=status.HTTP_400_BAD_REQUEST)
+        if data['code'] != package.code and ExamPackage.objects.filter(code__iexact=data['code']).exclude(pk=package.pk).exists():
+            return Response({'code': ['Kode paket ujian sudah digunakan.']}, status=status.HTTP_400_BAD_REQUEST)
+        latest_versions, error = validate_exam_package_questions(package.subject_id, data['question_ids'])
+        if error:
+            return error
+        if data['is_active'] and not data['question_ids']:
+            return Response({'question_ids': ['Paket aktif harus memiliki minimal satu soal.']}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            package.code = data['code']
+            package.title = data['title']
+            package.is_active = data['is_active']
+            package.opens_at = data.get('opens_at')
+            package.closes_at = data.get('closes_at')
+            package.duration_minutes = data.get('duration_minutes')
+            package.max_attempts = data.get('max_attempts')
+            if 'password' in request.data:
+                package.password_hash = make_password(data['password']) if data.get('password') else None
+            package.save()
+            ExamPackageQuestion.objects.filter(exam_package=package).delete()
+            for order_index, question_id in enumerate(data['question_ids'], start=1):
+                ExamPackageQuestion.objects.create(id=uuid.uuid4(), exam_package=package, question_id=question_id, question_version=latest_versions[question_id], order_index=order_index)
+        return Response(exam_package_payload(package, len(data['question_ids'])))
+
+    def delete(self, request, pk):
+        package, error = self.get_package(request, pk)
+        if error:
+            return error
+        if Submission.objects.filter(exam_package=package).exists():
+            return Response({'detail': 'Paket dengan pengumpulan mahasiswa tidak dapat dihapus.'}, status=status.HTTP_409_CONFLICT)
+        package.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ExamPackageToggleActiveView(APIView):
@@ -2116,9 +2257,53 @@ class ExamPackageToggleActiveView(APIView):
             return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
         if not is_lecturer_for_subject(request.user, package.subject_id):
             return Response({'detail': 'Anda tidak berwenang mengubah paket ujian ini.'}, status=status.HTTP_403_FORBIDDEN)
+        if not package.is_active and not ExamPackageQuestion.objects.filter(exam_package=package).exists():
+            return Response({'detail': 'Paket aktif harus memiliki minimal satu soal.'}, status=status.HTTP_400_BAD_REQUEST)
         package.is_active = not package.is_active
         package.save(update_fields=['is_active', 'updated_at'])
         return Response({'id': str(package.id), 'is_active': package.is_active})
+
+
+class ExamPackageDuplicateView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang menduplikasi paket ujian ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            duplicate = ExamPackage.objects.create(
+                id=uuid.uuid4(),
+                subject=package.subject,
+                created_by=request.user,
+                code=duplicate_exam_package_code(package),
+                title=package.title,
+                description=package.description,
+                is_active=False,
+                opens_at=package.opens_at,
+                closes_at=package.closes_at,
+                duration_minutes=package.duration_minutes,
+                max_attempts=package.max_attempts,
+                # Copy the existing one-way hash; never expose it in the response.
+                password_hash=package.password_hash,
+            )
+            items = ExamPackageQuestion.objects.filter(exam_package=package).order_by('order_index')
+            ExamPackageQuestion.objects.bulk_create([
+                ExamPackageQuestion(
+                    id=uuid.uuid4(),
+                    exam_package=duplicate,
+                    question_id=item.question_id,
+                    question_version_id=item.question_version_id,
+                    order_index=item.order_index,
+                )
+                for item in items
+            ])
+        return Response(exam_package_payload(duplicate, duplicate.items.count()), status=status.HTTP_201_CREATED)
 
 
 class ExamPackageReviewView(APIView):
@@ -2137,7 +2322,7 @@ class ExamPackageReviewView(APIView):
 
         items = list(ExamPackageQuestion.objects.filter(exam_package=package).select_related('question_version').order_by('order_index'))
         version_ids = [item.question_version_id for item in items]
-        submissions = list(Submission.objects.filter(question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        submissions = list(Submission.objects.filter(exam_package=package, question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
         students = list(User.objects.filter(
             id__in={submission.student_id for submission in submissions}, is_active=True,
             userrole__role=UserRole.Role.STUDENT,
@@ -2203,12 +2388,13 @@ class ExamPackageStudentReviewView(APIView):
         try:
             student = User.objects.filter(
                 pk=student_id, is_active=True, userrole__role=UserRole.Role.STUDENT,
+                submissions__exam_package=package,
                 submissions__question_version_id__in=version_ids,
             ).distinct().get()
         except User.DoesNotExist:
             return Response({'detail': 'Mahasiswa belum mengumpulkan paket ini.'}, status=status.HTTP_404_NOT_FOUND)
 
-        submissions = list(Submission.objects.filter(student=student, question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        submissions = list(Submission.objects.filter(student=student, exam_package=package, question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
         analyses = {
             analysis.submission_id: analysis
             for analysis in LlmAnalysis.objects.filter(submission_id__in=[submission.id for submission in submissions], is_current=True)
@@ -2290,9 +2476,7 @@ class StudentSetLookupView(APIView):
             )
 
         try:
-            package = ExamPackage.objects.select_related('subject', 'created_by').get(
-                code__iexact=code, is_active=True
-            )
+            package = ExamPackage.objects.select_related('subject', 'created_by').get(code__iexact=code)
         except ExamPackage.DoesNotExist:
             return Response(
                 {'detail': 'Kode paket ujian tidak ditemukan.'},
@@ -2305,12 +2489,25 @@ class StudentSetLookupView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        attempt, access_error = start_or_get_package_attempt(
+            package, request.user, request.query_params.get('password'),
+        )
+        if access_error:
+            return Response({'detail': access_error}, status=status.HTTP_403_FORBIDDEN)
+
+        # Opening an active package enrolls the authenticated student in its subject.
+        UserSubjectRole.objects.get_or_create(
+            user=request.user,
+            subject_id=package.subject_id,
+            role=UserSubjectRole.Role.STUDENT,
+        )
+
         items = []
         for item in ExamPackageQuestion.objects.select_related('question', 'question_version').filter(exam_package=package).order_by('order_index'):
             q = item.question
             version = item.question_version
             latest_sub = Submission.objects.filter(
-                student=request.user, question_version_id=version.id
+                student=request.user, exam_package=package, question_version_id=version.id
             ).order_by('-attempt_no').first()
             items.append({
                 'question_id': str(q.id),
@@ -2330,10 +2527,14 @@ class StudentSetLookupView(APIView):
             'id': str(package.id),
             'code': package.code,
             'title': package.title,
-            'description': package.description or '',
             'subject_id': str(package.subject_id),
             'subject_name': package.subject.name,
             'is_active': package.is_active,
+            'opens_at': package.opens_at,
+            'closes_at': package.closes_at,
+            'duration_minutes': package.duration_minutes,
+            'max_attempts': package.max_attempts,
+            'attempt_number': attempt.attempt_number,
             'questions': items,
         })
 
@@ -2346,7 +2547,7 @@ class StudentSubmissionCreateView(APIView):
 
     def post(self, request, pk, qid):
         try:
-            package = ExamPackage.objects.get(pk=pk, is_active=True)
+            package = ExamPackage.objects.get(pk=pk)
         except ExamPackage.DoesNotExist:
             return Response(
                 {'detail': 'Soal tidak ditemukan.'},
@@ -2371,6 +2572,18 @@ class StudentSubmissionCreateView(APIView):
                 {'detail': 'Akun mahasiswa aktif diperlukan.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        _, access_error = start_or_get_package_attempt(package, request.user, request.data.get('password'))
+        if access_error:
+            return Response({'detail': access_error}, status=status.HTTP_403_FORBIDDEN)
+
+        # A valid active package grants its student access to the package subject.
+        # The stored procedure still enforces this enrollment before inserting.
+        UserSubjectRole.objects.get_or_create(
+            user=request.user,
+            subject_id=package.subject_id,
+            role=UserSubjectRole.Role.STUDENT,
+        )
 
         # Support both 4-tier structured payload and single legacy answer_text
         t1_answer = str(request.data.get('tier1_answer') or '').strip()
@@ -2465,7 +2678,7 @@ class StudentPackageSubmissionCreateView(APIView):
         try:
             with transaction.atomic():
                 try:
-                    package = ExamPackage.objects.select_for_update().get(pk=pk, is_active=True)
+                    package = ExamPackage.objects.select_for_update().get(pk=pk)
                 except ExamPackage.DoesNotExist:
                     return Response(
                         {'detail': 'Soal tidak ditemukan.'},
@@ -2477,6 +2690,12 @@ class StudentPackageSubmissionCreateView(APIView):
                         {'detail': 'Akun mahasiswa aktif diperlukan.'},
                         status=status.HTTP_403_FORBIDDEN,
                     )
+
+                attempt, access_error = start_or_get_package_attempt(
+                    package, request.user, request.data.get('password'),
+                )
+                if access_error:
+                    return Response({'detail': access_error}, status=status.HTTP_403_FORBIDDEN)
 
                 published = [
                     (item.question, item.question_version)
@@ -2524,6 +2743,8 @@ class StudentPackageSubmissionCreateView(APIView):
                         raise RuntimeError('Gagal menyimpan salah satu jawaban.')
                     Submission.objects.filter(pk=submission_id).update(exam_package=package)
                     submission_ids.append((question, version, submission_id))
+                attempt.submitted_at = timezone.now()
+                attempt.save(update_fields=['submitted_at'])
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 

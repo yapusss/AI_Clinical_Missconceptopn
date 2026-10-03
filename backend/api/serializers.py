@@ -145,9 +145,13 @@ class ExamPackageCreateSerializer(serializers.Serializer):
     subject_id = serializers.UUIDField()
     code = serializers.CharField(max_length=64)
     title = serializers.CharField(max_length=255)
-    description = serializers.CharField(required=False, allow_blank=True, default='')
-    question_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+    question_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=True, required=False, default=list)
     is_active = serializers.BooleanField(default=False)
+    opens_at = serializers.DateTimeField(required=False, allow_null=True)
+    closes_at = serializers.DateTimeField(required=False, allow_null=True)
+    duration_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    max_attempts = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    password = serializers.CharField(required=False, allow_blank=True, write_only=True, max_length=255)
 
     def validate_code(self, value):
         val = value.strip().upper()
@@ -161,6 +165,13 @@ class ExamPackageCreateSerializer(serializers.Serializer):
         if len(value) != len(set(value)):
             raise serializers.ValidationError('Setiap soal hanya boleh dipilih satu kali.')
         return value
+
+    def validate(self, attrs):
+        opens_at = attrs.get('opens_at')
+        closes_at = attrs.get('closes_at')
+        if opens_at and closes_at and opens_at >= closes_at:
+            raise serializers.ValidationError({'closes_at': ['Waktu tutup harus setelah waktu buka.']})
+        return attrs
 
 
 class FourTierSubmissionItemSerializer(serializers.Serializer):

@@ -152,10 +152,16 @@ CREATE TABLE exam_packages (
     title VARCHAR(255) NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT FALSE,
+    opens_at TIMESTAMPTZ,
+    closes_at TIMESTAMPTZ,
+    duration_minutes INTEGER CHECK (duration_minutes IS NULL OR duration_minutes > 0),
+    max_attempts INTEGER CHECK (max_attempts IS NULL OR max_attempts > 0),
+    password_hash VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_exam_package_code_format
-        CHECK (code ~ '^[A-Z0-9][A-Z0-9\-]{1,62}[A-Z0-9]$')
+        CHECK (code ~ '^[A-Z0-9][A-Z0-9\-]{1,62}[A-Z0-9]$'),
+    CONSTRAINT chk_exam_package_schedule CHECK (opens_at IS NULL OR closes_at IS NULL OR opens_at < closes_at)
 );
 
 CREATE UNIQUE INDEX idx_exam_packages_code_upper ON exam_packages (UPPER(code));
@@ -164,6 +170,18 @@ CREATE INDEX idx_exam_packages_subject ON exam_packages (subject_id);
 CREATE TRIGGER set_exam_packages_updated_at
 BEFORE UPDATE ON exam_packages
 FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+
+CREATE TABLE exam_package_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    exam_package_id UUID NOT NULL REFERENCES exam_packages(id) ON DELETE RESTRICT,
+    student_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    submitted_at TIMESTAMPTZ,
+    CONSTRAINT uq_exam_package_attempt_number UNIQUE (exam_package_id, student_id, attempt_number)
+);
+
+CREATE INDEX idx_exam_package_attempts_student_package ON exam_package_attempts (student_id, exam_package_id, attempt_number DESC);
 
 CREATE TABLE questions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
