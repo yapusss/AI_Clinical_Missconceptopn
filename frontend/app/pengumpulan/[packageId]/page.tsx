@@ -22,6 +22,7 @@ import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
+import RichTextContent from "../../components/RichTextContent";
 import { apiFetch } from "../../lib/api";
 import {
   fmtDate,
@@ -265,9 +266,7 @@ function SubmissionPackageDetailPageContent() {
                   <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                     Pertanyaan Konseptual
                   </h3>
-                  <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-on-surface font-medium">
-                    {activeQuestion.prompt}
-                  </p>
+                  <RichTextContent html={activeQuestion.prompt} className="mt-1.5 text-sm leading-relaxed font-medium" />
                 </div>
 
                 {!currentAttempt ? (
@@ -450,10 +449,13 @@ function SubmissionPackageDetailPageContent() {
                                     Konsep Seharusnya
                                   </h4>
                                 </div>
-                                <p className="mt-2 text-xs leading-relaxed text-on-surface whitespace-pre-wrap">
-                                  {currentAttempt.evaluation.student_feedback?.konsep_seharusnya ||
-                                    activeQuestion.model_answer}
-                                </p>
+                                {currentAttempt.evaluation.student_feedback?.konsep_seharusnya ? (
+                                  <p className="mt-2 text-xs leading-relaxed text-on-surface whitespace-pre-wrap">
+                                    {currentAttempt.evaluation.student_feedback.konsep_seharusnya}
+                                  </p>
+                                ) : (
+                                  <RichTextContent html={activeQuestion.model_answer} className="mt-2 text-xs leading-relaxed" />
+                                )}
                               </div>
                             </div>
                           </div>

@@ -1,10 +1,15 @@
 import csv
 import io
 import json
+import os
 import uuid
+from django.conf import settings
+from django.core.files.storage import default_storage
 from django.utils.text import slugify
-from django.db import connection, transaction
+from django.utils.html import strip_tags
+from django.db import connection, transaction, IntegrityError
 from django.db.models import Avg, Count, Q
+from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from django.http import HttpResponse
 from openpyxl import Workbook, load_workbook
@@ -125,6 +130,7 @@ class DashboardView(APIView):
                     'id': str(r.subject.id),
                     'slug': r.subject.slug,
                     'name': r.subject.name,
+                    'image_url': r.subject.image_url or '',
                 }
                 for r in role_rows
             ],
@@ -258,6 +264,12 @@ class DashboardView(APIView):
 
 def require_admin(request):
     return request.user.is_superuser
+
+
+def plain_text_preview(value, length):
+    """Collapse rich-text HTML into a single-line plain-text preview."""
+    text = ' '.join(strip_tags(str(value or '')).split())
+    return text[:length] + ('...' if len(text) > length else '')
 
 
 HELP_ROLES = {choice for choice, _ in HelpArticle.Role.choices}
@@ -553,7 +565,8 @@ def serialize_admin_subject(subject):
     ).select_related('user').order_by('user__full_name')
     return {
         'id': str(subject.id), 'name': subject.name, 'slug': subject.slug,
-        'description': subject.description or '', 'is_active': subject.is_active,
+        'description': subject.description or '', 'image_url': subject.image_url or '',
+        'is_active': subject.is_active,
         'lecturers': [{'id': str(role.user_id), 'full_name': role.user.full_name, 'email': role.user.email} for role in lecturer_roles],
         'topic_count': Topic.objects.filter(subject=subject).count(),
     }
@@ -572,19 +585,20 @@ class AdminSubjectDetailView(APIView):
         return Response(serialize_admin_subject(subject))
 
     def patch(self, request, pk):
-        if not require_admin(request):
-            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             subject = Subject.objects.get(pk=pk)
         except Subject.DoesNotExist:
             return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        is_admin = require_admin(request)
+        if not is_admin and not is_lecturer_for_subject(request.user, subject.id):
+            return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
         name = str(request.data.get('name', subject.name)).strip()
         slug = slugify(str(request.data.get('slug', subject.slug)).strip() or name)
         if not name or not slug:
             return Response({'detail': 'Nama dan kode mata kuliah wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
         if Subject.objects.exclude(pk=subject.pk).filter(name__iexact=name).exists() or Subject.objects.exclude(pk=subject.pk).filter(slug=slug).exists():
             return Response({'detail': 'Nama atau kode mata kuliah sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
-        if 'lecturer_ids' in request.data:
+        if is_admin and 'lecturer_ids' in request.data:
             lecturer_ids, error = valid_lecturer_ids(request.data['lecturer_ids'])
             if error:
                 return Response({'lecturer_ids': [error]}, status=status.HTTP_400_BAD_REQUEST)
@@ -593,7 +607,9 @@ class AdminSubjectDetailView(APIView):
         subject.slug = slug
         if 'description' in request.data:
             subject.description = str(request.data['description']).strip() or None
-        if 'is_active' in request.data:
+        if 'image_url' in request.data:
+            subject.image_url = str(request.data['image_url']).strip() or None
+        if is_admin and 'is_active' in request.data:
             subject.is_active = bool(request.data['is_active'])
         subject.save()
         return Response(serialize_admin_subject(subject))
@@ -609,7 +625,7 @@ class AdminTopicListView(APIView):
     def get(self, request, subject_id):
         if not require_admin(request) and not is_lecturer_for_subject(request.user, subject_id):
             return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
-        return Response([serialize_admin_topic(topic) for topic in Topic.objects.filter(subject_id=subject_id).order_by('name')])
+        return Response([serialize_admin_topic(topic) for topic in Topic.objects.filter(subject_id=subject_id).order_by('created_at')])
 
     def post(self, request, subject_id):
         try:
@@ -1212,6 +1228,9 @@ class QuestionListCreateView(APIView):
             qs = qs.filter(subject_id=subject_id)
         if topic_id:
             qs = qs.filter(topic_id=topic_id)
+        include_inactive = str(request.query_params.get('include_inactive', '')).lower() in ('1', 'true', 'yes')
+        if not include_inactive:
+            qs = qs.filter(is_active=True)
 
         qs = qs.select_related('subject', 'topic', 'created_by').order_by('-created_at')
         set_ids = [item.id for item in qs]
@@ -1253,7 +1272,7 @@ class QuestionListCreateView(APIView):
                         'question_id': str(question.id),
                         'order_index': question.order_index,
                         'version_number': v.version_number,
-                        'prompt_preview': v.prompt[:160] + ('...' if len(v.prompt) > 160 else ''),
+                        'prompt_preview': plain_text_preview(v.prompt, 160),
                         'is_published': v.is_published,
                     })
 
@@ -1373,6 +1392,48 @@ class QuestionListCreateView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+def _upsert_question_version(question, prompt, short_answer, model_answer, user):
+    """Create a new version when the latest is published, otherwise update it in place."""
+    canonical_text = short_answer or model_answer
+    latest_v = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
+    if latest_v and latest_v.is_published:
+        target_v = QuestionVersion.objects.create(
+            id=uuid.uuid4(), question=question, version_number=latest_v.version_number + 1,
+            prompt=prompt, short_answer=short_answer, model_answer=model_answer,
+            is_published=False, created_by=user,
+        )
+        ReferenceAnswer.objects.create(
+            id=uuid.uuid4(), question_version=target_v, answer_key='CANONICAL',
+            answer_text=canonical_text, answer_type='CANONICAL', is_primary=True,
+        )
+    elif latest_v:
+        latest_v.prompt = prompt
+        latest_v.short_answer = short_answer
+        latest_v.model_answer = model_answer
+        latest_v.save()
+        target_v = latest_v
+        ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
+        if ref:
+            ref.answer_text = canonical_text
+            ref.save(update_fields=['answer_text'])
+        else:
+            ReferenceAnswer.objects.create(
+                id=uuid.uuid4(), question_version=target_v, answer_key='CANONICAL',
+                answer_text=canonical_text, answer_type='CANONICAL', is_primary=True,
+            )
+    else:
+        target_v = QuestionVersion.objects.create(
+            id=uuid.uuid4(), question=question, version_number=1,
+            prompt=prompt, short_answer=short_answer, model_answer=model_answer,
+            is_published=False, created_by=user,
+        )
+        ReferenceAnswer.objects.create(
+            id=uuid.uuid4(), question_version=target_v, answer_key='CANONICAL',
+            answer_text=canonical_text, answer_type='CANONICAL', is_primary=True,
+        )
+    return target_v
+
+
 class QuestionDetailView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1469,85 +1530,68 @@ class QuestionDetailView(APIView):
                 q_set.topic_id = data['topic_id']
             q_set.save()
 
-            q = Question.objects.filter(question_set=q_set).order_by('order_index').first()
-            if not q:
-                q = Question.objects.create(id=uuid.uuid4(), question_set=q_set, order_index=1)
+            questions_payload = data.get('questions') or []
+            versions_to_publish = []
 
-            latest_v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
-
-            prompt = data.get('prompt', latest_v.prompt if latest_v else "")
-            short_answer = data.get('short_answer', (latest_v.short_answer if latest_v else "") or "")
-            model_answer = data.get('model_answer', latest_v.model_answer if latest_v else "")
-            canonical_text = short_answer or model_answer
-
-            if latest_v and latest_v.is_published:
-                new_v_id = uuid.uuid4()
-                next_version = latest_v.version_number + 1
-                target_v = QuestionVersion.objects.create(
-                    id=new_v_id,
-                    question=q,
-                    version_number=next_version,
-                    prompt=prompt,
-                    short_answer=short_answer,
-                    model_answer=model_answer,
-                    is_published=False,
-                    created_by=request.user,
+            if questions_payload:
+                existing_questions = list(
+                    Question.objects.filter(question_set=q_set).order_by('order_index')
                 )
-                ReferenceAnswer.objects.create(
-                    id=uuid.uuid4(),
-                    question_version=target_v,
-                    answer_key='CANONICAL',
-                    answer_text=canonical_text,
-                    answer_type='CANONICAL',
-                    is_primary=True,
-                )
-            elif latest_v:
-                latest_v.prompt = prompt
-                latest_v.short_answer = short_answer
-                latest_v.model_answer = model_answer
-                latest_v.save()
-                target_v = latest_v
-                ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
-                if ref:
-                    ref.answer_text = canonical_text
-                    ref.save(update_fields=['answer_text'])
-                else:
-                    ReferenceAnswer.objects.create(
-                        id=uuid.uuid4(),
-                        question_version=target_v,
-                        answer_key='CANONICAL',
-                        answer_text=canonical_text,
-                        answer_type='CANONICAL',
-                        is_primary=True,
-                    )
+                for index, item in enumerate(questions_payload):
+                    if index < len(existing_questions):
+                        question = existing_questions[index]
+                    else:
+                        question = Question.objects.create(
+                            id=uuid.uuid4(), question_set=q_set, order_index=index + 1
+                        )
+                    versions_to_publish.append(_upsert_question_version(
+                        question,
+                        item['prompt'],
+                        item.get('short_answer', ''),
+                        item['model_answer'],
+                        request.user,
+                    ))
             else:
-                target_v = QuestionVersion.objects.create(
-                    id=uuid.uuid4(),
-                    question=q,
-                    version_number=1,
-                    prompt=prompt,
-                    short_answer=short_answer,
-                    model_answer=model_answer,
-                    is_published=False,
-                    created_by=request.user,
-                )
-                ReferenceAnswer.objects.create(
-                    id=uuid.uuid4(),
-                    question_version=target_v,
-                    answer_key='CANONICAL',
-                    answer_text=canonical_text,
-                    answer_type='CANONICAL',
-                    is_primary=True,
-                )
+                q = Question.objects.filter(question_set=q_set).order_by('order_index').first()
+                if not q:
+                    q = Question.objects.create(id=uuid.uuid4(), question_set=q_set, order_index=1)
+                latest_v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
+                prompt = data.get('prompt', latest_v.prompt if latest_v else "")
+                short_answer = data.get('short_answer', (latest_v.short_answer if latest_v else "") or "")
+                model_answer = data.get('model_answer', latest_v.model_answer if latest_v else "")
+                versions_to_publish.append(_upsert_question_version(
+                    q, prompt, short_answer, model_answer, request.user
+                ))
 
-            if data.get('publish', False) and not target_v.is_published:
-                with connection.cursor() as cursor:
-                    cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(target_v.id), str(request.user.id)])
-                target_v.refresh_from_db()
+            if data.get('publish', False):
+                for target_v in versions_to_publish:
+                    if target_v.is_published:
+                        continue
+                    with connection.cursor() as cursor:
+                        cursor.execute("CALL sp_publish_question_version(%s, %s);", [str(target_v.id), str(request.user.id)])
+                    target_v.refresh_from_db()
 
         return Response({'detail': 'Soal berhasil diperbarui.'})
 
+    def delete(self, request, pk):
+        try:
+            q_set = QuestionSet.objects.get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Soal tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
 
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang menghapus soal ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            with transaction.atomic():
+                q_set.delete()
+        except (ProtectedError, IntegrityError):
+            # Already used by a published exam package or has student answers:
+            # keep every row intact so those records never change, and simply
+            # hide the set from the active bank.
+            q_set.is_active = False
+            q_set.save(update_fields=['is_active'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class QuestionSetReviewView(APIView):
@@ -1620,7 +1664,7 @@ class QuestionSetReviewView(APIView):
                 all_submissions_payload.append({
                     'question_id': str(version.question_id),
                     'order_index': q.order_index if q else 1,
-                    'question_prompt_preview': (version.prompt[:160] + ('...' if len(version.prompt) > 160 else '')),
+                    'question_prompt_preview': plain_text_preview(version.prompt, 160),
                     'submission_id': str(s.id),
                     'attempt_no': s.attempt_no,
                     'status': s.status,
@@ -2057,7 +2101,7 @@ class ExamPackageReviewView(APIView):
                 validation = validations.get(analysis.id) if analysis else None
                 all_submissions.append({
                     'question_id': str(item.question_id), 'order_index': item.order_index,
-                    'question_prompt_preview': item.question_version.prompt[:160] + ('...' if len(item.question_version.prompt) > 160 else ''),
+                    'question_prompt_preview': plain_text_preview(item.question_version.prompt, 160),
                     'submission_id': str(submission.id), 'attempt_no': submission.attempt_no,
                     'status': submission.status, 'submitted_at': submission.submitted_at,
                     'analysis_id': str(analysis.id) if analysis else None,
@@ -2775,7 +2819,7 @@ class LecturerSubmissionsView(APIView):
                 'question_code': qset.code if qset else None,
                 'question_title': qset.title if qset else None,
                 'version_number': version.version_number if version else None,
-                'prompt_preview': (version.prompt[:240] + '…') if version and version.prompt else '',
+                'prompt_preview': plain_text_preview(version.prompt, 240) if version else '',
                 'answer': s.answer_text,
                 'status': s.status,
                 'submitted_at': s.submitted_at.isoformat() if s.submitted_at else None,
@@ -2861,3 +2905,36 @@ class LecturerSubmissionDetailView(APIView):
                 } if validation else None,
             } if analysis else None,
         })
+
+
+ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+class MediaUploadView(APIView):
+    """Generic authenticated image upload used by the rich text editor and subject cards."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({'detail': 'File tidak ditemukan.'}, status=status.HTTP_400_BAD_REQUEST)
+        if upload.size > MAX_UPLOAD_BYTES:
+            return Response({'detail': 'Ukuran file maksimal 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        extension = os.path.splitext(upload.name or '')[1].lower()
+        content_type = (upload.content_type or '').lower()
+        if extension not in ALLOWED_IMAGE_EXTENSIONS:
+            return Response(
+                {'detail': 'Hanya file gambar (PNG, JPG, GIF, WEBP) yang diizinkan.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if content_type and not content_type.startswith('image/') and content_type != 'application/octet-stream':
+            return Response(
+                {'detail': 'Hanya file gambar (PNG, JPG, GIF, WEBP) yang diizinkan.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        saved_path = default_storage.save(f'uploads/{uuid.uuid4().hex}{extension}', upload)
+        return Response({'url': f'{settings.MEDIA_URL}{saved_path}'}, status=status.HTTP_201_CREATED)

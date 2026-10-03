@@ -63,6 +63,7 @@ CREATE TABLE subjects (
     name VARCHAR(150) NOT NULL UNIQUE,
     slug VARCHAR(150) NOT NULL UNIQUE,
     description TEXT,
+    image_url VARCHAR(1000),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     archived_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

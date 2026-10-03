@@ -32,8 +32,9 @@ type Crumb = { label: string; href?: string };
 
 function questionLeafLabel(path: string): string {
   if (/^\/questions\/[^/]+\/students\/[^/]+$/.test(path)) return "Review Mahasiswa";
-  if (/^\/questions\/[^/]+\/view$/.test(path)) return "Pratinjau Paket";
-  if (/^\/questions\/[^/]+\/edit$/.test(path)) return "Edit Paket";
+  if (/^\/questions\/[^/]+\/view$/.test(path)) return "Pratinjau Bank Soal";
+  if (/^\/questions\/[^/]+\/edit$/.test(path)) return "Edit Bank Soal";
+  if (/^\/questions\/create$/.test(path)) return "Buat Bank Soal";
   return "Detail";
 }
 
@@ -41,13 +42,12 @@ function buildCrumbs(pathname: string, subjectId: string | null): Crumb[] {
   const parts = pathname.split("/").filter(Boolean);
   if (!parts.length) return [];
 
-  // The lecturer "Mata Kuliah" section lives under /questions. Mirror the admin
-  // trail (Administrasi > Mata Kuliah > ...) and hide raw route segments.
+  // The lecturer "Mata Kuliah" section lives under /questions, but the current
+  // subject page is /admin/subjects/[id]. Link the crumb back there (or to the
+  // Kelola Mata Kuliah list) instead of the legacy /questions listing.
   if (parts[0] === "questions") {
-    const crumbs: Crumb[] = [
-      { label: "Administrasi", href: "/questions" },
-      { label: "Mata Kuliah", href: "/questions" },
-    ];
+    const subjectHref = subjectId ? `/admin/subjects/${subjectId}` : "/admin/subjects";
+    const crumbs: Crumb[] = [{ label: "Mata Kuliah", href: subjectHref }];
     if (parts.length > 1) {
       crumbs.push({ label: questionLeafLabel(`/${parts.join("/")}`) });
     }

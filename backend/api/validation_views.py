@@ -33,7 +33,7 @@ from .models import (
     Validation,
 )
 from .serializers import ValidationSubmitSerializer
-from .views import is_lecturer_for_subject
+from .views import is_lecturer_for_subject, plain_text_preview
 
 
 def _lecturer_subject_ids(user):
@@ -147,7 +147,7 @@ class ValidationQueueView(APIView):
                 'student_name': a.submission.student.full_name,
                 'set_title': q_set.title if q_set else None,
                 'set_code': q_set.code if q_set else None,
-                'question_prompt_preview': (v.prompt[:140] + ('...' if len(v.prompt) > 140 else '')) if v else '',
+                'question_prompt_preview': plain_text_preview(v.prompt, 140) if v else '',
                 'subject_name': a.subject.name,
                 'percentage_correct': str(a.percentage_correct),
                 'four_tier_category': category,

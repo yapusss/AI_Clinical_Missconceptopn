@@ -137,6 +137,7 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
     prompt = serializers.CharField(required=False)
     short_answer = serializers.CharField(required=False, allow_blank=True)
     model_answer = serializers.CharField(required=False)
+    questions = QuestionItemCreateSerializer(many=True, required=False)
     publish = serializers.BooleanField(required=False)
 
 
