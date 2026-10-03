@@ -1,6 +1,8 @@
 services:
   frontend:
-    command: npm run dev -- -H 0.0.0.0
+    # Clear any stale .next (the anonymous volume is seeded from the production
+    # image) so the dev server always compiles the mounted source fresh.
+    command: sh -c "rm -rf /app/.next/* /app/.next/.[!.]* 2>/dev/null; npm run dev -- -H 0.0.0.0"
     environment:
       # Windows bind mounts do not emit file-change events into the container,
       # so force polling to make hot reload work while developing on Windows.

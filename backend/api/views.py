@@ -867,35 +867,48 @@ class QuestionImportCreateView(APIView):
         if not subject:
             return Response({'detail': 'Mata kuliah tidak ditemukan atau Anda belum memiliki akses ke mata kuliah terkait.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validasi Topik dari Sheet
-        distinct_topics = {
-            r['raw_data'].get('topic', '').strip()
-            for r in parsed_rows
-            if r['raw_data'].get('topic', '').strip()
-        }
+        # Topik dapat dipaksa dari konteks (lecturer mengimpor dari sebuah topik).
+        forced_topic = None
+        forced_topic_id = request.data.get('topic_id')
+        if forced_topic_id:
+            forced_topic = Topic.objects.filter(pk=forced_topic_id, subject=subject).first()
+            if not forced_topic:
+                return Response({'detail': 'Topik tidak ditemukan pada mata kuliah ini.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if len(distinct_topics) > 1:
-            return Response({
-                'detail': f"File impor hanya boleh berisi satu topik per paket ujian. Ditemukan beberapa topik: {', '.join(sorted(distinct_topics))}."
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        detected_topic_name = next(iter(distinct_topics)) if distinct_topics else ""
-        if not detected_topic_name:
-            return Response({
-                'detail': "Kolom TOPIK wajib diisi untuk semua baris soal di dalam file Excel."
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        matched_topic = Topic.objects.filter(subject=subject, name__iexact=detected_topic_name).first()
-        new_topic_detected = matched_topic is None
-
-        if new_topic_detected and request.data.get('create_topic') in [True, 'true', '1']:
-            matched_topic = Topic.objects.create(
-                id=uuid.uuid4(),
-                subject=subject,
-                name=detected_topic_name,
-                description=f"Dibuat otomatis dari impor bank soal.",
-            )
+        if forced_topic:
+            matched_topic = forced_topic
             new_topic_detected = False
+            detected_topic_name = forced_topic.name
+        else:
+            # Validasi Topik dari Sheet
+            distinct_topics = {
+                r['raw_data'].get('topic', '').strip()
+                for r in parsed_rows
+                if r['raw_data'].get('topic', '').strip()
+            }
+
+            if len(distinct_topics) > 1:
+                return Response({
+                    'detail': f"File impor hanya boleh berisi satu topik per paket ujian. Ditemukan beberapa topik: {', '.join(sorted(distinct_topics))}."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            detected_topic_name = next(iter(distinct_topics)) if distinct_topics else ""
+            if not detected_topic_name:
+                return Response({
+                    'detail': "Kolom TOPIK wajib diisi untuk semua baris soal di dalam file Excel."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            matched_topic = Topic.objects.filter(subject=subject, name__iexact=detected_topic_name).first()
+            new_topic_detected = matched_topic is None
+
+            if new_topic_detected and request.data.get('create_topic') in [True, 'true', '1']:
+                matched_topic = Topic.objects.create(
+                    id=uuid.uuid4(),
+                    subject=subject,
+                    name=detected_topic_name,
+                    description=f"Dibuat otomatis dari impor bank soal.",
+                )
+                new_topic_detected = False
 
         first_data = parsed_rows[0]['raw_data'] if parsed_rows else {}
         code = (request.data.get('code') or first_data.get('code') or f"IMP-{uuid.uuid4().hex[:6].upper()}").strip().upper()
@@ -973,26 +986,25 @@ class QuestionImportTemplateView(APIView):
         headers = [
             "NOMOR_SOAL",
             "JUDUL_UJIAN",
-            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
-            "PERTANYAAN_KONSEPTUAL",
+            "PERTANYAAN",
             "JAWABAN_SINGKAT",
             "ALASAN_JAWABAN",
         ]
 
-        ws.merge_cells("A1:G4")
+        ws.merge_cells("A1:F4")
         banner_cell = ws["A1"]
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
             f"Pastikan seluruh soal pada file ini diperuntukkan bagi mata kuliah {target_subject.name}.\n"
-            f"Isi kolom pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
+            f"Isi judul ujian, instruksi, pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
         )
         banner_cell.fill = banner_fill
         banner_cell.font = banner_font
         banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for r in range(1, 5):
-            for c in range(1, 8):
+            for c in range(1, 7):
                 ws.cell(row=r, column=c).border = banner_border
             ws.row_dimensions[r].height = 18
 
@@ -1007,7 +1019,6 @@ class QuestionImportTemplateView(APIView):
             [
                 1,
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
-                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
                 "Berat semu menjadi lebih kecil.",
@@ -1016,7 +1027,6 @@ class QuestionImportTemplateView(APIView):
             [
                 2,
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
-                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
                 "Karena keduanya bekerja pada benda yang sama.",
@@ -1077,9 +1087,8 @@ class QuestionExportView(APIView):
         headers = [
             "NOMOR_SOAL",
             "JUDUL_UJIAN",
-            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
-            "PERTANYAAN_KONSEPTUAL",
+            "PERTANYAAN",
             "JAWABAN_SINGKAT",
             "ALASAN_JAWABAN",
         ]
@@ -1099,11 +1108,10 @@ class QuestionExportView(APIView):
             v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
             ws.cell(row=row_idx, column=1, value=q.order_index)
             ws.cell(row=row_idx, column=2, value=q_set.title)
-            ws.cell(row=row_idx, column=3, value=q_set.topic.name if q_set.topic else "")
-            ws.cell(row=row_idx, column=4, value=q_set.description or "")
-            ws.cell(row=row_idx, column=5, value=v.prompt if v else "")
-            ws.cell(row=row_idx, column=6, value=(v.short_answer or "") if v else "")
-            ws.cell(row=row_idx, column=7, value=v.model_answer if v else "")
+            ws.cell(row=row_idx, column=3, value=q_set.description or "")
+            ws.cell(row=row_idx, column=4, value=v.prompt if v else "")
+            ws.cell(row=row_idx, column=5, value=(v.short_answer or "") if v else "")
+            ws.cell(row=row_idx, column=6, value=v.model_answer if v else "")
             row_idx += 1
 
         for col in ws.columns:

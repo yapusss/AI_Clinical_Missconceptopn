@@ -24,10 +24,14 @@ export default function QuestionBankImport({
   token,
   subjectId,
   subjectName,
+  topicId,
+  topicName,
 }: {
   token: string;
   subjectId?: string;
   subjectName?: string;
+  topicId?: string;
+  topicName?: string;
 }) {
   const fixedSubject = Boolean(subjectId);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -133,6 +137,9 @@ export default function QuestionBankImport({
     if (selectedSubjectId) {
       body.append("subject_id", selectedSubjectId);
     }
+    if (topicId) {
+      body.append("topic_id", topicId);
+    }
 
     try {
       const response = await fetch("/api/question-imports", {
@@ -175,7 +182,7 @@ export default function QuestionBankImport({
           <h3 className="font-semibold text-sm">Impor Bank Soal Excel</h3>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {fixedSubject ? (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/50 bg-surface-container-low px-3 py-2 text-xs">
               <span className="text-on-surface-variant">Mata Kuliah:</span>
@@ -196,6 +203,13 @@ export default function QuestionBankImport({
                 ...subjects.map((s) => ({ value: s.id, label: s.name })),
               ]}
             />
+          )}
+
+          {topicName && (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/50 bg-surface-container-low px-3 py-2 text-xs">
+              <span className="text-on-surface-variant">Topik:</span>
+              <span className="font-semibold text-on-surface">{topicName}</span>
+            </span>
           )}
 
           <button
