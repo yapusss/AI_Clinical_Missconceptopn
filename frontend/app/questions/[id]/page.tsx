@@ -39,6 +39,7 @@ type QuestionSetReview = {
   code: string;
   title: string;
   description: string;
+  subject_id: string;
   subject_name: string;
   is_active: boolean;
   published_question_count: number;
@@ -122,8 +123,8 @@ export default function QuestionSetReviewPage() {
 
   return (
     <PageContainer>
-      <Link href="/questions" className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline">
-        <ArrowLeft size={16} /> Kembali ke paket ujian
+      <Link href={data ? `/questions/subject/${data.subject_id}` : "/questions"} className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline">
+        <ArrowLeft size={16} /> Kembali ke topik mata kuliah
       </Link>
 
       {data && (
