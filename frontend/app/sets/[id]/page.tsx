@@ -345,11 +345,11 @@ function AnswerSetContent() {
         <button
           type="button"
           onClick={() => setShowExitWarningModal(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
         >
-          <LogOut size={14} /> Keluar dari Lembar Soal
+          <LogOut size={15} /> Keluar dari Lembar Soal
         </button>
-        <span className="text-xs font-mono-ui font-semibold text-primary">
+        <span className="text-sm font-mono-ui font-semibold text-primary">
           Soal Selesai: {completedQuestionsCount} /{" "}
           {data?.questions.length ?? 0}
         </span>
@@ -366,26 +366,26 @@ function AnswerSetContent() {
       )}
 
       {activeQuestion && currentAnswer && (
-        <div className="space-y-5">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+        <div className="min-w-0 flex-1 space-y-5">
           {/* Teks Pertanyaan Konseptual */}
-          <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40 p-6 space-y-3">
-            <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
+          <section className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6 space-y-2">
+            <span className="font-mono-ui text-sm font-bold uppercase tracking-wider text-primary">
               Soal Nomor {activeQuestion.order_index} dari{" "}
               {data?.questions.length}
             </span>
-            <RichTextContent html={activeQuestion.prompt} className="text-base font-semibold leading-relaxed" />
+            <RichTextContent html={activeQuestion.prompt} className="text-xl font-semibold leading-relaxed text-on-surface" />
           </section>
 
           {/* 1. Kesimpulan / Jawaban Singkat */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
+                <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                   1. Kesimpulan / Jawaban Singkat
                 </h3>
-                <p className="text-[11px] text-on-surface-variant mt-0.5">
-                  Tuliskan kesimpulan langsung saja tanpa penjelasan panjang
-                  (maksimal 120 karakter).
+                <p className="text-xs text-on-surface-variant mt-0.5">
+                  Maksimal 120 karakter.
                 </p>
               </div>
               <span
@@ -401,11 +401,11 @@ function AnswerSetContent() {
               value={currentAnswer.t1_answer}
               onChange={(e) => updateCurrent({ t1_answer: e.target.value })}
               placeholder="Contoh: Resultan gayanya nol."
-              className="form-input text-xs w-full"
+              className="form-input text-sm w-full"
             />
 
             {t1HasReasonKeyword && (
-              <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] text-amber-500">
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-500">
                 <AlertTriangle size={15} className="shrink-0" />
                 <span>
                   Catatan: Terdeteksi kata sebab (&ldquo;karena/sebab&rdquo;).
@@ -419,12 +419,11 @@ function AnswerSetContent() {
           {/* 2. Tingkat Keyakinan pada Jawaban */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div>
-              <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                 2. Tingkat Keyakinan pada Jawaban
               </h3>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">
-                Seberapa yakin Anda dengan kesimpulan jawaban di atas? (Skala
-                1–3: Tidak Yakin, 4–6: Yakin)
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                Skala 1–3: Tidak Yakin, 4–6: Yakin.
               </p>
             </div>
 
@@ -434,7 +433,7 @@ function AnswerSetContent() {
                 return (
                   <label
                     key={lvl.val}
-                    className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center cursor-pointer transition-all ${
+                    className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
                       isSelected
                         ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
                         : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
@@ -448,10 +447,7 @@ function AnswerSetContent() {
                       onChange={() => updateCurrent({ t2_confidence: lvl.val })}
                       className="hidden"
                     />
-                    <span className="font-mono-ui text-lg">{lvl.val}</span>
-                    <span className="text-[10px] mt-0.5">
-                      {lvl.type === "TY" ? "Tidak Yakin" : "Yakin"}
-                    </span>
+                    <span className="font-mono-ui text-base">{lvl.val}</span>
                   </label>
                 );
               })}
@@ -461,13 +457,9 @@ function AnswerSetContent() {
           {/* 3. Alasan / Penalaran Ilmiah */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div>
-              <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                 3. Alasan / Penalaran Ilmiah
               </h3>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">
-                Jelaskan mengapa Anda menjawab demikian secara ilmiah. Tuliskan
-                dasar logika dan hukum fisika Anda.
-              </p>
             </div>
 
             <textarea
@@ -475,19 +467,18 @@ function AnswerSetContent() {
               value={currentAnswer.t3_reason}
               onChange={(e) => updateCurrent({ t3_reason: e.target.value })}
               placeholder="Uraikan penalaran ilmiah dan dasar konsep Anda di sini..."
-              className="form-input text-xs w-full"
+              className="form-input text-sm w-full"
             />
           </section>
 
           {/* 4. Tingkat Keyakinan pada Alasan */}
           <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
             <div>
-              <h3 className="font-bold text-xs uppercase tracking-wider text-on-surface">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                 4. Tingkat Keyakinan pada Alasan
               </h3>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">
-                Seberapa yakin Anda dengan kebenaran penalaran ilmiah yang Anda
-                berikan? (Skala 1–3: Tidak Yakin, 4–6: Yakin)
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                Skala 1–3: Tidak Yakin, 4–6: Yakin.
               </p>
             </div>
 
@@ -497,7 +488,7 @@ function AnswerSetContent() {
                 return (
                   <label
                     key={lvl.val}
-                    className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center cursor-pointer transition-all ${
+                    className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
                       isSelected
                         ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
                         : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
@@ -511,10 +502,7 @@ function AnswerSetContent() {
                       onChange={() => updateCurrent({ t4_confidence: lvl.val })}
                       className="hidden"
                     />
-                    <span className="font-mono-ui text-lg">{lvl.val}</span>
-                    <span className="text-[10px] mt-0.5">
-                      {lvl.type === "TY" ? "Tidak Yakin" : "Yakin"}
-                    </span>
+                    <span className="font-mono-ui text-base">{lvl.val}</span>
                   </label>
                 );
               })}
@@ -530,19 +518,19 @@ function AnswerSetContent() {
                 setError("");
                 setActiveIndex((idx) => Math.max(0, idx - 1));
               }}
-              className="btn-secondary text-xs !py-2 !px-4 disabled:opacity-30 cursor-pointer"
+              className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-30 cursor-pointer"
             >
               ← Soal Sebelumnya
             </button>
 
-            <span className="text-xs font-mono-ui text-on-surface-variant">
+            <span className="text-sm font-mono-ui text-on-surface-variant">
               Soal {activeIndex + 1} dari {data.questions.length}
             </span>
 
             <button
               type="button"
               onClick={handleNextOrFinish}
-              className="btn-primary text-xs !py-2.5 !px-6 cursor-pointer"
+              className="btn-primary text-sm !py-2.5 !px-6 cursor-pointer"
             >
               {activeIndex === data.questions.length - 1 ? (
                 <>
@@ -554,43 +542,65 @@ function AnswerSetContent() {
             </button>
           </div>
         </div>
-      )}
 
-      {/* Pill Nomor Soal untuk Pindah Cepat */}
-      {data && data.questions.length > 1 && (
-        <nav
-          className="mt-6 flex flex-wrap gap-2"
-          aria-label="Navigasi nomor soal"
-        >
-          {data.questions.map((q, idx) => {
-            const isDone = isQuestionComplete(q.question_id);
-            const isCurrent = idx === activeIndex;
+        {/* SIDEBAR KANAN: DAFTAR SOAL (sama seperti view lain) */}
+        <aside className="w-full shrink-0 space-y-3 lg:sticky lg:top-6 lg:w-52">
+          <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
+            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
+              <h3 className="font-bold text-sm uppercase tracking-wide text-on-surface">
+                Daftar Soal
+              </h3>
+              <span className="font-mono-ui text-xs text-on-surface-variant">
+                {data.questions.length} Soal
+              </span>
+            </div>
 
-            let pillStyle =
-              "border-outline-variant/50 text-on-surface bg-surface-container-low";
-            if (isCurrent) {
-              pillStyle =
-                "border-primary bg-primary text-white shadow-sm ring-2 ring-primary/40 font-bold";
-            } else if (isDone) {
-              pillStyle =
-                "border-emerald-500/50 bg-emerald-500/15 text-emerald-400 font-semibold";
-            }
+            <div className="flex flex-wrap items-center gap-2 py-3">
+              {data.questions.map((q, idx) => {
+                const isDone = isQuestionComplete(q.question_id);
+                const isCurrent = idx === activeIndex;
+                const boxCls = isDone
+                  ? "border-emerald-500/60 bg-emerald-500/15 font-bold text-emerald-600 dark:text-emerald-400"
+                  : "border-outline-variant/50 bg-surface-container text-on-surface-variant";
+                return (
+                  <button
+                    key={q.question_id}
+                    type="button"
+                    onClick={() => {
+                      setError("");
+                      setActiveIndex(idx);
+                    }}
+                    className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm ${boxCls} ${
+                      isCurrent
+                        ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
+                        : "hover:border-primary/60"
+                    }`}
+                    title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi" : "Belum diisi"}`}
+                  >
+                    {idx + 1}
+                    <span
+                      className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${
+                        isDone ? "bg-emerald-400" : "bg-slate-400"
+                      }`}
+                    />
+                  </button>
+                );
+              })}
+            </div>
 
-            return (
-              <button
-                key={q.question_id}
-                type="button"
-                onClick={() => {
-                  setError("");
-                  setActiveIndex(idx);
-                }}
-                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border text-sm transition-all cursor-pointer ${pillStyle}`}
-              >
-                {idx + 1}
-              </button>
-            );
-          })}
-        </nav>
+            <div className="space-y-1 border-t border-outline-variant/30 pt-2 text-xs font-medium text-on-surface-variant">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                <span>Sudah Diisi</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-slate-400" />
+                <span>Belum Diisi</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+        </div>
       )}
 
       {/* Modal Peringatan Keluar */}

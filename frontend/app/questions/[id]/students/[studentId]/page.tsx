@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   TriangleAlert,
   Unlock,
+  X,
   XCircle,
 } from "lucide-react";
 
@@ -176,6 +177,49 @@ const fmtPct = (num: number) => {
   return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
 };
 
+type ValidationDraft = {
+  questionId: string;
+  orderIndex: number;
+  isCorrect: boolean;
+  finalCategory: string;
+  notes: string;
+  rejected: boolean;
+  mode: "new" | "correction";
+  updatedAt: string;
+};
+
+const draftStorageKey = (setId: string, studentId: string) =>
+  `acm_val_drafts:${setId}:${studentId}`;
+
+const readDrafts = (
+  setId: string | undefined,
+  studentId: string | undefined
+): Record<string, ValidationDraft> => {
+  if (!setId || !studentId || typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey(setId, studentId));
+    return raw ? (JSON.parse(raw) as Record<string, ValidationDraft>) : {};
+  } catch {
+    return {};
+  }
+};
+
+const persistDrafts = (
+  setId: string | undefined,
+  studentId: string | undefined,
+  next: Record<string, ValidationDraft>
+) => {
+  if (!setId || !studentId || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      draftStorageKey(setId, studentId),
+      JSON.stringify(next)
+    );
+  } catch {
+    /* abaikan error quota/privacy mode */
+  }
+};
+
 export default function StudentPackageReviewPage({ examPackage = false }: { examPackage?: boolean }) {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -196,12 +240,13 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
   // Form State
   const [isCorrect, setIsCorrect] = useState<boolean>(false);
   const [finalCategory, setFinalCategory] = useState<string>("LK");
-  const [feedback, setFeedback] = useState("");
   const [notes, setNotes] = useState("");
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [showAiDetails, setShowAiDetails] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [submittingValidation, setSubmittingValidation] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, ValidationDraft>>({});
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
 
   const load = useCallback(async () => {
     if (!setId || !studentId) return;
@@ -212,6 +257,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
         `/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${studentId}/review`
       );
       setData(res);
+      setDrafts(readDrafts(setId, studentId));
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Gagal memuat review paket."
@@ -257,43 +303,72 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     if (!currentAttempt || !currentAttempt.analysis) return;
     const a = currentAttempt.analysis;
     const v = a.validation;
+    const savedDraft = drafts[a.id];
 
-    const initialScoreVal =
-      v?.final_percentage !== null && v?.final_percentage !== undefined
-        ? Number(v.final_percentage)
-        : Number(a.percentage_correct);
-
-    setIsCorrect(initialScoreVal >= 99.9);
-    setFinalCategory(a.four_tier_category ?? "LK");
-    setFeedback(v?.final_feedback ?? a.explanation);
-    setNotes("");
+    if (savedDraft) {
+      setIsCorrect(savedDraft.isCorrect);
+      setFinalCategory(savedDraft.finalCategory);
+      setNotes(savedDraft.notes);
+    } else {
+      const initialScoreVal =
+        v?.final_percentage !== null && v?.final_percentage !== undefined
+          ? Number(v.final_percentage)
+          : Number(a.percentage_correct);
+      setIsCorrect(initialScoreVal >= 99.9);
+      setFinalCategory(a.four_tier_category ?? "LK");
+      setNotes("");
+    }
     setShowRejectBox(false);
     setShowAiDetails(false);
     setIsUnlocked(false);
+    // drafts dibaca saat berpindah soal; tidak perlu jadi dependency
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAttempt]);
 
   const isAlreadyValidated = Boolean(currentAttempt?.analysis?.validation);
   const isLocked = isAlreadyValidated && !isUnlocked;
 
-  const isFormModified = useMemo(() => {
-    if (!currentAttempt?.analysis) return false;
-    const a = currentAttempt.analysis;
-    const v = a.validation;
-    const initialScoreVal =
-      v?.final_percentage !== null && v?.final_percentage !== undefined
-        ? Number(v.final_percentage)
-        : Number(a.percentage_correct);
-    const initialIsCorrect = initialScoreVal >= 99.9;
-    const initialCat = a.four_tier_category ?? "LK";
-    const initialFeedback = v?.final_feedback ?? a.explanation;
+  const currentDraft: ValidationDraft | undefined = currentAttempt?.analysis
+    ? drafts[currentAttempt.analysis.id]
+    : undefined;
 
-    return (
-      isCorrect !== initialIsCorrect ||
-      finalCategory !== initialCat ||
-      feedback.trim() !== initialFeedback.trim() ||
-      notes.trim().length > 0
-    );
-  }, [currentAttempt, isCorrect, finalCategory, feedback, notes]);
+  const updateDraft = (
+    patch: Partial<{
+      isCorrect: boolean;
+      finalCategory: string;
+      notes: string;
+      rejected: boolean;
+    }>
+  ) => {
+    if (!currentAttempt?.analysis || !activeQuestion) return;
+    const nextIsCorrect = patch.isCorrect ?? isCorrect;
+    const nextCategory = patch.finalCategory ?? finalCategory;
+    const nextNotes = patch.notes ?? notes;
+    const nextRejected = patch.rejected ?? currentDraft?.rejected ?? false;
+
+    setIsCorrect(nextIsCorrect);
+    setFinalCategory(nextCategory);
+    setNotes(nextNotes);
+
+    const analysisId = currentAttempt.analysis.id;
+    setDrafts((prev) => {
+      const next: Record<string, ValidationDraft> = {
+        ...prev,
+        [analysisId]: {
+          questionId: activeQuestion.question_id,
+          orderIndex: activeQuestion.order_index,
+          isCorrect: nextIsCorrect,
+          finalCategory: nextCategory,
+          notes: nextNotes,
+          rejected: nextRejected,
+          mode: isAlreadyValidated ? "correction" : "new",
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      persistDrafts(setId, studentId, next);
+      return next;
+    });
+  };
 
   const handleSelectAttempt = (questionId: string, attemptNo: number) => {
     setSelectedAttemptByQuestion((prev) => ({
@@ -302,97 +377,130 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     }));
   };
 
-  const handleValidationSubmit = async (forcedStatus?: "REJECTED") => {
-    if (!currentAttempt || !currentAttempt.analysis) return;
+  const latestAttemptOf = (q: QuestionReviewItem): AttemptItem | undefined =>
+    [...q.attempts].sort((a, b) => b.attempt_no - a.attempt_no)[0];
+
+  const pendingQuestions = useMemo(
+    () =>
+      (data?.questions ?? []).filter(
+        (q) => latestAttemptOf(q)?.status === "PENDING_VALIDATION"
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data]
+  );
+
+  const finalizeItems = useMemo(() => {
+    if (!data) return [];
+    const items: {
+      analysisId: string;
+      orderIndex: number;
+      attempt: AttemptItem;
+      draft: ValidationDraft;
+    }[] = [];
+    for (const q of data.questions) {
+      for (const att of q.attempts) {
+        const aid = att.analysis?.id;
+        if (aid && drafts[aid]) {
+          items.push({
+            analysisId: aid,
+            orderIndex: q.order_index,
+            attempt: att,
+            draft: drafts[aid],
+          });
+        }
+      }
+    }
+    items.sort((a, b) => a.orderIndex - b.orderIndex);
+    return items;
+  }, [data, drafts]);
+
+  const decidedPendingCount = pendingQuestions.filter((q) => {
+    const aid = latestAttemptOf(q)?.analysis?.id;
+    return aid ? Boolean(drafts[aid]) : false;
+  }).length;
+
+  const allPendingDecided =
+    pendingQuestions.length === 0 ||
+    decidedPendingCount === pendingQuestions.length;
+
+  const buildSubmitBody = (draft: ValidationDraft, attempt: AttemptItem) => {
+    const a = attempt.analysis;
+    if (draft.rejected) {
+      const body: Record<string, unknown> = { status: "REJECTED" };
+      if (draft.notes.trim()) body.notes = draft.notes.trim();
+      return body;
+    }
+    const targetScore = draft.isCorrect ? 100.0 : 0.0;
+    const isScoreChanged = a
+      ? Math.abs(targetScore - Number(a.percentage_correct)) > 0.01
+      : true;
+    const isCategoryChanged = a
+      ? draft.finalCategory !== (a.four_tier_category ?? "LK")
+      : true;
+    const decisionStatus =
+      isScoreChanged || isCategoryChanged ? "EDITED" : "ACCEPTED";
+    const body: Record<string, unknown> = {
+      status: decisionStatus,
+      final_percentage: targetScore,
+      final_tier_level:
+        CATEGORY_TO_LEVEL[draft.finalCategory] ?? (a?.tier_level ?? 1),
+    };
+    if (draft.notes.trim()) body.notes = draft.notes.trim();
+    return body;
+  };
+
+  const handleFinalize = async () => {
+    if (!finalizeItems.length || finalizing) return;
+    setFinalizing(true);
     setError("");
     setNotice("");
+    const failed: string[] = [];
+    const succeededIds: string[] = [];
 
-    if (forcedStatus !== "REJECTED") {
-      if (!finalCategory) {
-        setError("Peringatan: Silakan pilih Diagnosis Akhir Dosen terlebih dahulu.");
-        return;
+    for (const item of finalizeItems) {
+      if (item.draft.rejected && !item.draft.notes.trim()) {
+        failed.push(`Soal ${item.orderIndex}: catatan penolakan wajib diisi.`);
+        continue;
       }
-      if (!feedback.trim()) {
-        setError("Peringatan: Feedback untuk mahasiswa tidak boleh kosong.");
-        return;
+      if (!item.draft.rejected && !item.draft.finalCategory) {
+        failed.push(`Soal ${item.orderIndex}: diagnosis akhir wajib dipilih.`);
+        continue;
       }
-    } else if (!notes.trim()) {
-      setError("Peringatan: Harap isi catatan alasan penolakan untuk AI.");
-      return;
-    }
-
-    setSubmittingValidation(true);
-
-    try {
-      const a = currentAttempt.analysis;
-      let decisionStatus: "ACCEPTED" | "EDITED" | "REJECTED" = "ACCEPTED";
-      const targetScorePct = isCorrect ? 100.0 : 0.0;
-
-      if (forcedStatus === "REJECTED") {
-        decisionStatus = "REJECTED";
-      } else {
-        const isScoreChanged =
-          Math.abs(targetScorePct - Number(a.percentage_correct)) > 0.01;
-        const isCategoryChanged =
-          finalCategory !== (a.four_tier_category ?? "LK");
-        const isFeedbackChanged = feedback.trim() !== a.explanation.trim();
-        if (isScoreChanged || isCategoryChanged || isFeedbackChanged) {
-          decisionStatus = "EDITED";
-        }
-      }
-
-      const body: Record<string, unknown> = { status: decisionStatus };
-      if (decisionStatus !== "REJECTED") {
-        body.final_percentage = targetScorePct;
-        body.final_tier_level =
-          CATEGORY_TO_LEVEL[finalCategory] ?? a.tier_level ?? 1;
-        body.final_feedback = feedback.trim();
-      }
-      if (notes.trim()) {
-        body.notes = notes.trim();
-      }
-
-      const res = await apiFetch<{
-        message: string;
-        submission_status: string;
-      }>(`/validations/${currentAttempt.analysis.id}/submit`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-
-      setIsUnlocked(false);
-      await load();
-
-      if (data) {
-        const nextPending = data.questions.findIndex(
-          (q, i) =>
-            i > activeQuestionIdx &&
-            q.attempts.some((att) => att.status === "PENDING_VALIDATION")
+      try {
+        await apiFetch(`/validations/${item.analysisId}/submit`, {
+          method: "POST",
+          body: JSON.stringify(buildSubmitBody(item.draft, item.attempt)),
+        });
+        succeededIds.push(item.analysisId);
+      } catch (err) {
+        failed.push(
+          `Soal ${item.orderIndex}: ${err instanceof Error ? err.message : "gagal menyimpan."}`
         );
-        if (nextPending !== -1) {
-          setNotice(
-            `Soal ${activeQuestion?.order_index} berhasil divalidasi. Mengalihkan ke Soal ${data.questions[nextPending].order_index}...`
-          );
-          setActiveQuestionIdx(nextPending);
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        } else {
-          setNotice(res.message || "Validasi berhasil disimpan.");
-        }
       }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Gagal menyimpan validasi."
-      );
-    } finally {
-      setSubmittingValidation(false);
     }
+
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const id of succeededIds) delete next[id];
+      persistDrafts(setId, studentId, next);
+      return next;
+    });
+    setShowFinalizeModal(false);
+    await load();
+    if (failed.length) {
+      setError(`Evaluasi selesai sebagian. ${failed.join(" ")}`);
+    } else {
+      setNotice(`Evaluasi selesai: ${succeededIds.length} validasi disimpan.`);
+    }
+    setFinalizing(false);
   };
 
   const resetToAiValues = () => {
     if (!currentAttempt?.analysis) return;
-    setIsCorrect(Number(currentAttempt.analysis.percentage_correct) >= 99.9);
-    setFinalCategory(currentAttempt.analysis.four_tier_category ?? "LK");
-    setFeedback(currentAttempt.analysis.explanation);
+    updateDraft({
+      isCorrect: Number(currentAttempt.analysis.percentage_correct) >= 99.9,
+      finalCategory: currentAttempt.analysis.four_tier_category ?? "LK",
+    });
   };
 
   const handleCancelUnlock = () => {
@@ -405,7 +513,14 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
         : Number(a.percentage_correct);
     setIsCorrect(initialScoreVal >= 99.9);
     setFinalCategory(a.four_tier_category ?? "LK");
-    setFeedback(v?.final_feedback ?? a.explanation);
+    setNotes("");
+    setShowRejectBox(false);
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[a.id];
+      persistDrafts(setId, studentId, next);
+      return next;
+    });
     setIsUnlocked(false);
   };
 
@@ -438,13 +553,6 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
             <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
               {data.package.code} • Meja Evaluasi Diagnostik
             </span>
-          }
-          action={
-            <div className="flex items-center gap-2">
-              <span className="badge badge-active text-xs">
-                Terjawab {data.answered_count} / {data.published_question_count} Soal
-              </span>
-            </div>
           }
         />
       )}
@@ -527,54 +635,55 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 </div>
               </div>
 
-              {/* SOAL vs JAWABAN MAHASISWA */}
+              {/* PERTANYAAN KONSEPTUAL — callout penuh, sama seperti view lain */}
+              <div className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-4 shadow-sm sm:p-5 space-y-2">
+                <span className="block text-sm font-semibold uppercase tracking-wider text-primary">
+                  Pertanyaan Konseptual
+                </span>
+                <RichTextContent html={activeQuestion.prompt} className="text-lg font-semibold leading-relaxed text-on-surface" />
+              </div>
+
+              {/* REFERENSI vs JAWABAN MAHASISWA — berdampingan di bawah soal */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
                 <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 flex flex-col justify-between space-y-3">
                   <div>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant block mb-1">
-                      Pertanyaan Konseptual
-                    </span>
-                    <RichTextContent html={activeQuestion.prompt} className="text-[15px] font-medium leading-relaxed" />
-                  </div>
-
-                  <div className="border-t border-outline-variant/20 pt-2.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
                       Jawaban Singkat (Referensi)
                     </span>
-                    <RichTextContent html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ''} className="text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
+                    <RichTextContent html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ''} className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-2.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
                       Alasan Referensi
                     </span>
-                    <RichTextContent html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ''} className="text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
+                    <RichTextContent html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ''} className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 space-y-2.5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                      <span className="text-xs font-bold uppercase tracking-wider text-primary">
                         Jawaban Mahasiswa
                       </span>
                       {currentAttempt && (
-                        <span className="text-[11px] text-on-surface-variant font-mono-ui">
+                        <span className="text-xs text-on-surface-variant font-mono-ui">
                           {fmtDate(currentAttempt.submitted_at)}
                         </span>
                       )}
                     </div>
 
                     {currentAttempt?.heuristic_flags && currentAttempt.heuristic_flags.length > 0 && (
-                      <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
+                      <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">
                         <AlertTriangle size={12} className="shrink-0" />
                         <span className="font-semibold">Catatan:</span>
                         {currentAttempt.heuristic_flags.map((flag) => (
                           <span key={flag} className="font-mono-ui">
-                            {flag === "t1_berisi_alasan" && "[T1 Memuat Alasan]"}
-                            {flag === "t3_kosong" && "[T3 Kurang Kata]"}
-                            {flag === "t3_redundan" && "[T3 Redundan]"}
-                            {flag === "t3_hafalan" && "[T3 Hafalan Rumus]"}
+                            {flag === "t1_berisi_alasan" && "[Jawaban Memuat Alasan]"}
+                            {flag === "t3_kosong" && "[Alasan Terlalu Singkat]"}
+                            {flag === "t3_redundan" && "[Alasan Redundan]"}
+                            {flag === "t3_hafalan" && "[Alasan Hafalan Rumus]"}
                           </span>
                         ))}
                       </div>
@@ -582,14 +691,14 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
 
                     <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-                          1. Kesimpulan (Tier 1)
+                        <span className="text-xs font-bold uppercase tracking-wide text-primary">
+                          1. Jawaban Singkat
                         </span>
-                        <span className="font-mono-ui text-[11px] text-on-surface-variant/80">
+                        <span className="font-mono-ui text-xs font-bold text-primary">
                           {currentAttempt?.tier2_confidence ?? 1}/6 · {(currentAttempt?.tier2_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}
                         </span>
                       </div>
-                      <p className="text-[15px] font-medium text-on-surface leading-normal mt-0.5">
+                      <p className="text-base font-medium text-on-surface leading-normal mt-0.5">
                         {currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}
                       </p>
                     </div>
@@ -597,10 +706,10 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
 
                   <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-                        2. Alasan Ilmiah (Tier 3)
+                      <span className="text-xs font-bold uppercase tracking-wide text-primary">
+                        2. Alasan Ilmiah
                       </span>
-                      <span className="font-mono-ui text-[11px] text-on-surface-variant/80">
+                      <span className="font-mono-ui text-xs font-bold text-primary">
                         {currentAttempt?.tier4_confidence ?? 1}/6 · {(currentAttempt?.tier4_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}
                       </span>
                     </div>
@@ -616,8 +725,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/70 px-3.5 py-2.5 space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
-                        <BrainCircuit size={14} className="text-primary" /> REKOMENDASI AI:
+                      <span className="text-sm font-bold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
+                        <BrainCircuit size={15} className="text-primary" /> REKOMENDASI AI:
                       </span>
 
                       <span
@@ -641,7 +750,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       </span>
 
                       <span className="text-xs text-on-surface-variant">
-                        T1: <strong className="text-on-surface">{currentAttempt.analysis.module_a_score}</strong> · T3: <strong className="text-on-surface">{currentAttempt.analysis.module_b_score}</strong>
+                        Jawaban: <strong className="text-on-surface">{currentAttempt.analysis.module_a_score}</strong> · Alasan: <strong className="text-on-surface">{currentAttempt.analysis.module_b_score}</strong>
                       </span>
                     </div>
 
@@ -672,7 +781,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       <div className="bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/25 whitespace-pre-wrap leading-relaxed">
                         {currentAttempt.analysis.explanation}
                       </div>
-                      <div className="flex items-center justify-between text-[11px] font-mono-ui text-on-surface-variant/80">
+                      <div className="flex items-center justify-between text-xs font-mono-ui text-on-surface-variant/80">
                         <span>Tingkat Keyakinan Model AI: {Number(currentAttempt.analysis.confidence).toFixed(2)}</span>
                         <span>Waktu Analisis: {currentAttempt.analysis.execution_time_ms ?? "-"} ms</span>
                       </div>
@@ -699,7 +808,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       ) : (
                         <ShieldCheck size={18} className="text-primary" />
                       )}
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface">
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-on-surface">
                         KEPUTUSAN VALIDASI DOSEN
                       </h3>
                     </div>
@@ -709,9 +818,9 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                         <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 inline-flex items-center gap-1.5">
                           ✓ Sudah Divalidasi ({VALIDATION_STATUS_LABEL[currentAttempt.analysis.validation?.status ?? "ACCEPTED"]})
                         </span>
-                      ) : isFormModified ? (
-                        <span className="text-xs font-semibold text-amber-500 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/30 inline-flex items-center gap-1">
-                          ● Ada perubahan belum disimpan
+                      ) : currentDraft ? (
+                        <span className="text-xs font-semibold text-primary bg-primary-fixed px-2.5 py-0.5 rounded-full border border-primary/30 inline-flex items-center gap-1">
+                          ● Draft tersimpan{currentDraft.rejected ? " (Ditolak)" : ""}
                         </span>
                       ) : (
                         <span className="text-xs font-semibold text-on-surface-variant bg-surface-container px-2.5 py-0.5 rounded-full border border-outline-variant/30">
@@ -725,7 +834,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                     <div className="space-y-3 pt-1">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                         <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
+                          <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
                             STATUS BUTIR INI
                           </span>
                           <span
@@ -739,7 +848,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                         </div>
 
                         <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
+                          <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
                             DIAGNOSIS AKHIR DOSEN
                           </span>
                           <span
@@ -752,17 +861,23 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                         </div>
                       </div>
 
-                      <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
-                          FEEDBACK UNTUK MAHASISWA
-                        </span>
-                        <p className="text-xs text-on-surface leading-relaxed whitespace-pre-wrap">
-                          {feedback || "Tidak ada umpan balik tertulis."}
+                      <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                          <Info size={14} className="text-primary" />
+                          Referensi &amp; Materi Pembelajaran
+                          <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
+                            In Development
+                          </span>
+                        </div>
+                        <p className="text-xs text-on-surface-variant leading-relaxed">
+                          Area ini nantinya berisi daftar buku, referensi, dan sumber
+                          materi pilihan AI untuk membantu mahasiswa. Fitur sedang
+                          dalam pengembangan.
                         </p>
                       </div>
 
                       <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
-                        <span className="text-[11px] text-on-surface-variant">
+                        <span className="text-xs text-on-surface-variant">
                           Divalidasi oleh: <strong className="text-on-surface">{currentAttempt.analysis.validation?.lecturer_name}</strong>
                           {currentAttempt.analysis.validation?.validated_at && (
                             <> ({fmtDate(currentAttempt.analysis.validation.validated_at)})</>
@@ -788,7 +903,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           <button
                             type="button"
                             onClick={handleCancelUnlock}
-                            className="text-amber-400 hover:underline font-semibold cursor-pointer text-[11px]"
+                            className="text-amber-400 hover:underline font-semibold cursor-pointer text-xs"
                           >
                             Batal Koreksi
                           </button>
@@ -804,7 +919,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => setIsCorrect(true)}
+                              onClick={() => updateDraft({ isCorrect: true })}
                               className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
                                 isCorrect
                                   ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50 font-bold ring-1 ring-emerald-500/25 shadow-sm"
@@ -815,7 +930,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                             </button>
                             <button
                               type="button"
-                              onClick={() => setIsCorrect(false)}
+                              onClick={() => updateDraft({ isCorrect: false })}
                               className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
                                 !isCorrect
                                   ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50 font-bold ring-1 ring-rose-500/25 shadow-sm"
@@ -851,7 +966,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           </span>
                           <AppSelect
                             value={finalCategory}
-                            onValueChange={(val) => setFinalCategory(val)}
+                            onValueChange={(val) => updateDraft({ finalCategory: val })}
                             className="w-full text-xs font-medium"
                             ariaLabel="Pilih Diagnosis Akhir Dosen"
                             options={[
@@ -865,7 +980,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           <span className="text-xs text-on-surface-variant mt-1.5 flex items-center gap-1.5">
                             AI merekomendasikan:{" "}
                             <strong
-                              className={`font-mono-ui text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                              className={`font-mono-ui text-xs font-bold px-2 py-0.5 rounded-md ${
                                 CATEGORY_STYLES[currentAttempt.analysis.four_tier_category ?? "LK"]?.badgeCls
                               }`}
                             >
@@ -874,22 +989,22 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           </span>
                         </div>
 
-                        {/* Feedback Textarea */}
+                        {/* Referensi & Materi — In Development */}
                         <div className="sm:col-span-2">
-                          <label
-                            htmlFor="feedback"
-                            className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1"
-                          >
-                            FEEDBACK UNTUK MAHASISWA
-                          </label>
-                          <textarea
-                            id="feedback"
-                            rows={3}
-                            value={feedback}
-                            onChange={(e) => setFeedback(e.target.value)}
-                            className="form-input w-full text-xs leading-relaxed resize-y"
-                            placeholder="Tuliskan umpan balik atau bimbingan konsep yang akan dibaca oleh mahasiswa pada lembar evaluasinya..."
-                          />
+                          <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
+                            <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                              <Info size={14} className="text-primary" />
+                              Referensi &amp; Materi Pembelajaran
+                              <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
+                                In Development
+                              </span>
+                            </div>
+                            <p className="text-xs text-on-surface-variant leading-relaxed">
+                              Area ini nantinya berisi daftar buku, referensi, dan
+                              sumber materi pilihan AI untuk membantu mahasiswa.
+                              Fitur sedang dalam pengembangan.
+                            </p>
+                          </div>
                         </div>
                       </div>
 
@@ -910,25 +1025,35 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           <textarea
                             rows={2}
                             value={notes}
-                            onChange={(e) => setNotes(e.target.value)}
+                            onChange={(e) => updateDraft({ notes: e.target.value })}
                             placeholder="Jelaskan alasan penolakan agar model AI dapat memperbaiki analisis ulangnya..."
                             className="form-input w-full text-xs"
                           />
                           <div className="flex justify-end pt-1">
                             <button
                               type="button"
-                              onClick={() => handleValidationSubmit("REJECTED")}
-                              disabled={submittingValidation}
+                              onClick={() => {
+                                updateDraft({ rejected: true });
+                                setShowRejectBox(false);
+                              }}
                               className="btn-danger !py-1.5 !px-3.5 text-xs font-semibold cursor-pointer"
                             >
-                              Konfirmasi Tolak &amp; Re-analisis
+                              Tandai Ditolak (Draft)
                             </button>
                           </div>
                         </div>
                       )}
 
                       <div className="pt-2 border-t border-outline-variant/20 flex items-center justify-between gap-3">
-                        {!showRejectBox ? (
+                        {currentDraft?.rejected ? (
+                          <button
+                            type="button"
+                            onClick={() => updateDraft({ rejected: false })}
+                            className="btn-secondary !py-2 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <XCircle size={14} /> Ditandai Tolak — Urungkan
+                          </button>
+                        ) : !showRejectBox ? (
                           <button
                             type="button"
                             onClick={() => setShowRejectBox(true)}
@@ -947,18 +1072,14 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                               onClick={handleCancelUnlock}
                               className="btn-secondary !py-2 !px-3.5 text-xs font-semibold cursor-pointer"
                             >
-                              Batal
+                              Batal Koreksi
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => handleValidationSubmit()}
-                            disabled={submittingValidation}
-                            className="btn-primary !py-2 !px-5 text-xs font-bold inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
-                          >
-                            <ShieldCheck size={16} />
-                            {submittingValidation ? "Menyimpan..." : isAlreadyValidated ? "Simpan Perubahan" : "Simpan Validasi"}
-                          </button>
+                          <span className="text-xs text-on-surface-variant">
+                            {currentDraft
+                              ? "Tersimpan sebagai draft — dikirim lewat “Selesai Evaluasi”."
+                              : "Ubah penilaian untuk menyimpan draft."}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1024,6 +1145,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 {data.questions.map((q, idx) => {
                   const isCurrent = idx === activeQuestionIdx;
                   const isAnswered = q.attempts.length > 0;
+                  const draftAid = latestAttemptOf(q)?.analysis?.id;
+                  const hasDraft = draftAid ? Boolean(drafts[draftAid]) : false;
                   const hasPendingValidation = q.attempts.some(
                     (a) => a.status === "PENDING_VALIDATION"
                   );
@@ -1077,12 +1200,15 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       <span
                         className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
                       />
+                      {hasDraft && (
+                        <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest bg-primary" />
+                      )}
                     </button>
                   );
                 })}
               </div>
 
-              <div className="pt-2 border-t border-outline-variant/30 space-y-1 text-[11px] text-on-surface-variant font-medium">
+              <div className="pt-2 border-t border-outline-variant/30 space-y-1 text-xs text-on-surface-variant font-medium">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
                   <span>Jawaban Benar</span>
@@ -1094,6 +1220,10 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
                   <span>Menunggu Validasi</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
+                  <span>Draft tersimpan</span>
                 </div>
               </div>
             </div>
@@ -1107,9 +1237,101 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 {fmtPct(summary?.overall_score ?? 0)}
               </span>
             </div>
+
+            {/* FINALISASI: kirim semua draft validasi sekaligus */}
+            <button
+              type="button"
+              onClick={() => setShowFinalizeModal(true)}
+              disabled={!allPendingDecided || finalizeItems.length === 0 || finalizing}
+              className="btn-primary w-full !py-2.5 text-sm font-bold inline-flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ShieldCheck size={16} />
+              {finalizing ? "Menyimpan..." : "Selesai Evaluasi"}
+            </button>
+            <p className="text-xs text-on-surface-variant text-center">
+              Draf: {decidedPendingCount} / {pendingQuestions.length} soal menunggu
+              validasi diputuskan
+            </p>
           </aside>
         </div>
       ) : null}
+
+      {/* MODAL RINGKASAN FINALISASI */}
+      {showFinalizeModal && (
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2">
+                <ShieldCheck size={18} className="text-primary" /> Selesai Evaluasi?
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowFinalizeModal(false)}
+                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-sm text-on-surface-variant">
+              {finalizeItems.length} keputusan draft akan dikirim sebagai validasi
+              final:
+            </p>
+            <div className="max-h-64 overflow-y-auto space-y-1.5">
+              {finalizeItems.map((item) => (
+                <div
+                  key={item.analysisId}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs"
+                >
+                  <span className="font-mono-ui font-bold text-on-surface">
+                    Soal {item.orderIndex}
+                  </span>
+                  <span
+                    className={`font-semibold ${
+                      item.draft.rejected
+                        ? "text-rose-500"
+                        : item.draft.isCorrect
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-500"
+                    }`}
+                  >
+                    {item.draft.rejected
+                      ? "Tolak & Re-analisis"
+                      : item.draft.isCorrect
+                        ? "Benar"
+                        : "Salah"}
+                  </span>
+                  <span className="font-mono-ui text-on-surface-variant">
+                    [{item.draft.finalCategory}]
+                  </span>
+                  <span className="text-on-surface-variant">
+                    {item.draft.mode === "correction" ? "Koreksi" : "Validasi baru"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowFinalizeModal(false)}
+                className="btn-secondary text-xs cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleFinalize}
+                disabled={finalizing}
+                className="btn-primary text-xs font-bold cursor-pointer"
+              >
+                {finalizing ? "Menyimpan..." : "Ya, Selesai Evaluasi"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageContainer>
   );
 }

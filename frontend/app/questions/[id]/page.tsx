@@ -191,9 +191,6 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
                     <p className="mt-1 text-sm text-on-surface-variant">{student.student_email}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="badge badge-active">
-                      Terjawab {student.answered_count} / {student.published_question_count} Soal
-                    </span>
                     <span className="badge badge-role font-mono-ui">
                       {student.total_attempts_count} Percobaan Total
                     </span>
