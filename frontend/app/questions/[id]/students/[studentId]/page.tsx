@@ -126,6 +126,16 @@ const CATEGORY_TO_LEVEL: Record<string, number> = {
   LK: 1,
 };
 
+// Status yang berarti "sedang/akan dianalisis (ulang) oleh AI" — validasi
+// belum bisa diselesaikan selama ada soal pada status ini.
+const IN_FLIGHT_STATUSES = ["SUBMITTED", "ANALYZING", "ANALYSIS_FAILED"];
+
+// Mirror backend LLM_MAX_RUNS default (worker caps re-analysis runs per submission).
+const MAX_ANALYSIS_RUNS = 3;
+
+// Pagination for the Ringkasan table.
+const SUMMARY_PAGE_SIZE = 10;
+
 const CATEGORY_STYLES: Record<
   string,
   { badgeCls: string; label: string; desc: string; detailExpl: string }
@@ -182,9 +192,8 @@ type ValidationDraft = {
   orderIndex: number;
   isCorrect: boolean;
   finalCategory: string;
-  notes: string;
-  rejected: boolean;
   mode: "new" | "correction";
+  touched: boolean;
   updatedAt: string;
 };
 
@@ -247,6 +256,15 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
   const [drafts, setDrafts] = useState<Record<string, ValidationDraft>>({});
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [finalizeProgress, setFinalizeProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  const [showFinalizeDetail, setShowFinalizeDetail] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectError, setRejectError] = useState("");
+  const [activeTab, setActiveTab] = useState<"SUMMARY" | "DETAIL">("SUMMARY");
+  const [summaryPage, setSummaryPage] = useState(1);
 
   const load = useCallback(async () => {
     if (!setId || !studentId) return;
@@ -305,23 +323,49 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     const v = a.validation;
     const savedDraft = drafts[a.id];
 
+    let nextIsCorrect: boolean;
+    let nextCategory: string;
     if (savedDraft) {
-      setIsCorrect(savedDraft.isCorrect);
-      setFinalCategory(savedDraft.finalCategory);
-      setNotes(savedDraft.notes);
+      nextIsCorrect = savedDraft.isCorrect;
+      nextCategory = savedDraft.finalCategory;
     } else {
       const initialScoreVal =
         v?.final_percentage !== null && v?.final_percentage !== undefined
           ? Number(v.final_percentage)
           : Number(a.percentage_correct);
-      setIsCorrect(initialScoreVal >= 99.9);
-      setFinalCategory(a.four_tier_category ?? "LK");
-      setNotes("");
+      nextIsCorrect = initialScoreVal >= 99.9;
+      nextCategory = a.four_tier_category ?? "LK";
     }
+    setIsCorrect(nextIsCorrect);
+    setFinalCategory(nextCategory);
+    setNotes("");
     setShowRejectBox(false);
     setShowAiDetails(false);
     setIsUnlocked(false);
-    // drafts dibaca saat berpindah soal; tidak perlu jadi dependency
+
+    // Draft otomatis terbentuk begitu soal dibuka (tanpa perlu klik), memakai
+    // nilai awal/rekomendasi AI. Soal yang sudah tervalidasi TIDAK di-seed —
+    // koreksi hanya lewat "Buka Kunci" lalu edit.
+    if (!savedDraft && !v && activeQuestion) {
+      const analysisId = a.id;
+      setDrafts((prev) => {
+        if (prev[analysisId]) return prev;
+        const next: Record<string, ValidationDraft> = {
+          ...prev,
+          [analysisId]: {
+            questionId: activeQuestion.question_id,
+            orderIndex: activeQuestion.order_index,
+            isCorrect: nextIsCorrect,
+            finalCategory: nextCategory,
+            mode: "new",
+            touched: false,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+        persistDrafts(setId, studentId, next);
+        return next;
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAttempt]);
 
@@ -336,19 +380,14 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     patch: Partial<{
       isCorrect: boolean;
       finalCategory: string;
-      notes: string;
-      rejected: boolean;
     }>
   ) => {
     if (!currentAttempt?.analysis || !activeQuestion) return;
     const nextIsCorrect = patch.isCorrect ?? isCorrect;
     const nextCategory = patch.finalCategory ?? finalCategory;
-    const nextNotes = patch.notes ?? notes;
-    const nextRejected = patch.rejected ?? currentDraft?.rejected ?? false;
 
     setIsCorrect(nextIsCorrect);
     setFinalCategory(nextCategory);
-    setNotes(nextNotes);
 
     const analysisId = currentAttempt.analysis.id;
     setDrafts((prev) => {
@@ -359,9 +398,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
           orderIndex: activeQuestion.order_index,
           isCorrect: nextIsCorrect,
           finalCategory: nextCategory,
-          notes: nextNotes,
-          rejected: nextRejected,
           mode: isAlreadyValidated ? "correction" : "new",
+          touched: true,
           updatedAt: new Date().toISOString(),
         },
       };
@@ -380,10 +418,20 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
   const latestAttemptOf = (q: QuestionReviewItem): AttemptItem | undefined =>
     [...q.attempts].sort((a, b) => b.attempt_no - a.attempt_no)[0];
 
-  const pendingQuestions = useMemo(
+  const awaitingDecisionQuestions = useMemo(
     () =>
-      (data?.questions ?? []).filter(
-        (q) => latestAttemptOf(q)?.status === "PENDING_VALIDATION"
+      (data?.questions ?? []).filter((q) => {
+        const st = latestAttemptOf(q)?.status;
+        return st === "PENDING_VALIDATION" || st === "REJECTED";
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data]
+  );
+
+  const inFlightQuestions = useMemo(
+    () =>
+      (data?.questions ?? []).filter((q) =>
+        IN_FLIGHT_STATUSES.includes(latestAttemptOf(q)?.status ?? "")
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data]
@@ -414,22 +462,173 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     return items;
   }, [data, drafts]);
 
-  const decidedPendingCount = pendingQuestions.filter((q) => {
+  const decidedPendingCount = awaitingDecisionQuestions.filter((q) => {
     const aid = latestAttemptOf(q)?.analysis?.id;
     return aid ? Boolean(drafts[aid]) : false;
   }).length;
 
+  const rejectedUndecidedCount = awaitingDecisionQuestions.filter((q) => {
+    if (latestAttemptOf(q)?.status !== "REJECTED") return false;
+    const aid = latestAttemptOf(q)?.analysis?.id;
+    return !(aid && drafts[aid]);
+  }).length;
+
   const allPendingDecided =
-    pendingQuestions.length === 0 ||
-    decidedPendingCount === pendingQuestions.length;
+    inFlightQuestions.length === 0 &&
+    (awaitingDecisionQuestions.length === 0 ||
+      decidedPendingCount === awaitingDecisionQuestions.length);
+
+  const finalizeSummary = useMemo(() => {
+    const s = { benar: 0, salah: 0, correction: 0 };
+    for (const it of finalizeItems) {
+      if (it.draft.isCorrect) s.benar += 1;
+      else s.salah += 1;
+      if (it.draft.mode === "correction") s.correction += 1;
+    }
+    return s;
+  }, [finalizeItems]);
+
+  // Analisis AI dihitung sebagai draft sejak awal (touched=false) sehingga dosen
+  // dapat langsung "Selesai Evaluasi" tanpa membuka/mengubah tiap soal.
+  useEffect(() => {
+    if (!data) return;
+    setDrafts((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const q of data.questions) {
+        const att = latestAttemptOf(q);
+        const an = att?.analysis;
+        if (
+          att?.status === "PENDING_VALIDATION" &&
+          an &&
+          !an.validation &&
+          !next[an.id]
+        ) {
+          next[an.id] = {
+            questionId: q.question_id,
+            orderIndex: q.order_index,
+            isCorrect: Number(an.percentage_correct) >= 99.9,
+            finalCategory: an.four_tier_category ?? "LK",
+            mode: "new",
+            touched: false,
+            updatedAt: new Date().toISOString(),
+          };
+          changed = true;
+        }
+      }
+      if (changed) persistDrafts(setId, studentId, next);
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  type SummaryRow = {
+    idx: number;
+    questionId: string;
+    statusLabel: string;
+    statusCls: string;
+    decision: "Benar" | "Salah" | null;
+    diagnosis: string;
+    source: "Dosen" | "AI" | "-";
+  };
+
+  const summaryRows: SummaryRow[] = useMemo(() => {
+    if (!data) return [];
+    return data.questions.map((q, idx) => {
+      const att = latestAttemptOf(q);
+      const an = att?.analysis ?? null;
+      const aid = an?.id;
+      const draft = aid ? drafts[aid] : undefined;
+      const validation = an?.validation ?? null;
+      const status = att?.status ?? "UNANSWERED";
+
+      let statusLabel = "Belum Dijawab";
+      let statusCls = "text-on-surface-variant";
+      if (status === "VALIDATED") {
+        statusLabel = "Tervalidasi";
+        statusCls = "text-emerald-600 dark:text-emerald-400 font-semibold";
+      } else if (status === "REJECTED") {
+        statusLabel = "Ditolak — menunggu analisis ulang";
+        statusCls = "text-rose-500 font-semibold";
+      } else if (status === "ANALYZING" || status === "SUBMITTED") {
+        statusLabel = "Menunggu analisis AI";
+        statusCls = "text-amber-600 dark:text-amber-400 font-semibold";
+      } else if (status === "ANALYSIS_FAILED") {
+        statusLabel = "Analisis gagal";
+        statusCls = "text-rose-500 font-semibold";
+      } else if (status === "PENDING_VALIDATION") {
+        if (draft) {
+          if (draft.touched) {
+            statusLabel = "Draft dosen";
+            statusCls = "text-primary font-semibold";
+          } else {
+            statusLabel = "AI belum disentuh";
+            statusCls = "text-on-surface-variant font-semibold";
+          }
+        } else {
+          statusLabel = "Menunggu validasi";
+          statusCls = "text-amber-600 dark:text-amber-400 font-semibold";
+        }
+      }
+
+      let decision: SummaryRow["decision"] = null;
+      let source: SummaryRow["source"] = "-";
+      const levelToCode: Record<number, string> = { 4: "SC", 3: "FN", 2: "MSC", 1: "LK" };
+      const labelFor = (code?: string | null) =>
+        code ? CATEGORY_STYLES[code]?.label ?? code : "-";
+      let diagnosis = "-";
+      if (validation) {
+        decision =
+          Number(validation.final_percentage ?? an?.percentage_correct ?? 0) >= 99.9
+            ? "Benar"
+            : "Salah";
+        source = "Dosen";
+        const code =
+          draft?.finalCategory ??
+          (validation.final_tier_level === (an?.tier_level ?? null)
+            ? (an?.four_tier_category ?? null)
+            : (levelToCode[validation.final_tier_level ?? 0] ?? null));
+        diagnosis = labelFor(code);
+      } else if (draft) {
+        decision = draft.isCorrect ? "Benar" : "Salah";
+        source = draft.touched ? "Dosen" : "AI";
+        diagnosis = labelFor(draft.finalCategory);
+      } else if (an) {
+        decision = Number(an.percentage_correct) >= 99.9 ? "Benar" : "Salah";
+        source = "AI";
+        diagnosis = labelFor(an.four_tier_category);
+      }
+
+      return {
+        idx,
+        questionId: q.question_id,
+        statusLabel,
+        statusCls,
+        decision,
+        diagnosis,
+        source,
+      };
+    });
+  }, [data, drafts]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(summaryRows.length / SUMMARY_PAGE_SIZE)
+  );
+  const safePage = Math.min(summaryPage, totalPages);
+  const pageRows = summaryRows.slice(
+    (safePage - 1) * SUMMARY_PAGE_SIZE,
+    safePage * SUMMARY_PAGE_SIZE
+  );
+
+  const openQuestionFromSummary = (idx: number) => {
+    setActiveQuestionIdx(idx);
+    setActiveTab("DETAIL");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const buildSubmitBody = (draft: ValidationDraft, attempt: AttemptItem) => {
     const a = attempt.analysis;
-    if (draft.rejected) {
-      const body: Record<string, unknown> = { status: "REJECTED" };
-      if (draft.notes.trim()) body.notes = draft.notes.trim();
-      return body;
-    }
     const targetScore = draft.isCorrect ? 100.0 : 0.0;
     const isScoreChanged = a
       ? Math.abs(targetScore - Number(a.percentage_correct)) > 0.01
@@ -445,7 +644,6 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
       final_tier_level:
         CATEGORY_TO_LEVEL[draft.finalCategory] ?? (a?.tier_level ?? 1),
     };
-    if (draft.notes.trim()) body.notes = draft.notes.trim();
     return body;
   };
 
@@ -456,13 +654,12 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     setNotice("");
     const failed: string[] = [];
     const succeededIds: string[] = [];
+    const total = finalizeItems.length;
+    let done = 0;
+    setFinalizeProgress({ done: 0, total });
 
     for (const item of finalizeItems) {
-      if (item.draft.rejected && !item.draft.notes.trim()) {
-        failed.push(`Soal ${item.orderIndex}: catatan penolakan wajib diisi.`);
-        continue;
-      }
-      if (!item.draft.rejected && !item.draft.finalCategory) {
+      if (!item.draft.finalCategory) {
         failed.push(`Soal ${item.orderIndex}: diagnosis akhir wajib dipilih.`);
         continue;
       }
@@ -476,8 +673,13 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
         failed.push(
           `Soal ${item.orderIndex}: ${err instanceof Error ? err.message : "gagal menyimpan."}`
         );
+      } finally {
+        done += 1;
+        setFinalizeProgress({ done, total });
       }
     }
+
+    setFinalizeProgress(null);
 
     setDrafts((prev) => {
       const next = { ...prev };
@@ -493,6 +695,42 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
       setNotice(`Evaluasi selesai: ${succeededIds.length} validasi disimpan.`);
     }
     setFinalizing(false);
+  };
+
+  // Tolak & Re-analisis: LANGSUNG kirim REJECTED untuk soal aktif (tidak di-draft),
+  // sehingga analisis ulang AI segera terjadwal untuk butir ini.
+  const handleRejectNow = async () => {
+    if (!currentAttempt?.analysis || rejecting) return;
+    if (!notes.trim()) {
+      setRejectError("Harap isi catatan alasan penolakan untuk AI.");
+      return;
+    }
+    setRejecting(true);
+    setRejectError("");
+    setError("");
+    setNotice("");
+    try {
+      await apiFetch(`/validations/${currentAttempt.analysis.id}/submit`, {
+        method: "POST",
+        body: JSON.stringify({ status: "REJECTED", notes: notes.trim() }),
+      });
+      const aid = currentAttempt.analysis.id;
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[aid];
+        persistDrafts(setId, studentId, next);
+        return next;
+      });
+      setShowRejectBox(false);
+      setNotes("");
+      setIsUnlocked(false);
+      await load();
+      setNotice("Ditolak — analisis ulang AI dijadwalkan untuk soal ini.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menolak analisis.");
+    } finally {
+      setRejecting(false);
+    }
   };
 
   const resetToAiValues = () => {
@@ -585,6 +823,126 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
         <div className="mt-3.5 flex flex-col lg:flex-row gap-5 items-start">
           {/* KOLOM KIRI: WORKBENCH EVALUASI & VALIDASI */}
           <main className="flex-1 min-w-0 space-y-4">
+            {/* TAB NAVIGASI (di atas card, pola sama dgn navigasi subjek Bank Soal/Ujian) */}
+            <div className="flex border-b border-outline-variant/40">
+              <button
+                type="button"
+                onClick={() => setActiveTab("SUMMARY")}
+                className={`border-b-2 px-5 py-3 text-sm font-semibold ${
+                  activeTab === "SUMMARY"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-on-surface-variant"
+                }`}
+              >
+                Ringkasan
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("DETAIL")}
+                className={`border-b-2 px-5 py-3 text-sm font-semibold ${
+                  activeTab === "DETAIL"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-on-surface-variant"
+                }`}
+              >
+                Detail Evaluasi
+              </button>
+            </div>
+
+            {activeTab === "SUMMARY" ? (
+              <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-on-surface mb-3">
+                  Ringkasan Evaluasi Mahasiswa
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-outline-variant/40 text-left text-xs uppercase tracking-wider text-on-surface-variant">
+                        <th className="py-2 pr-3 font-bold">No</th>
+                        <th className="py-2 pr-3 font-bold">Status Butir</th>
+                        <th className="py-2 pr-3 font-bold">Keputusan</th>
+                        <th className="py-2 pr-3 font-bold">Diagnosis</th>
+                        <th className="py-2 pr-3 font-bold">Sumber</th>
+                        <th className="py-2 text-right font-bold">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((row) => (
+                        <tr
+                          key={row.questionId}
+                          onClick={() => openQuestionFromSummary(row.idx)}
+                          className="border-b border-outline-variant/20 cursor-pointer transition-colors hover:bg-surface-container-high/40"
+                        >
+                          <td className="py-2 pr-3 font-mono-ui font-bold text-on-surface">
+                            {row.idx + 1}
+                          </td>
+                          <td className={`py-2 pr-3 text-xs ${row.statusCls}`}>
+                            {row.statusLabel}
+                          </td>
+                          <td
+                            className={`py-2 pr-3 font-semibold ${
+                              row.decision === "Benar"
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : row.decision === "Salah"
+                                  ? "text-rose-500"
+                                  : "text-on-surface-variant"
+                            }`}
+                          >
+                            {row.decision ?? "—"}
+                          </td>
+                          <td className="py-2 pr-3 font-mono-ui text-xs text-on-surface">
+                            {row.diagnosis}
+                          </td>
+                          <td className="py-2 pr-3 text-xs text-on-surface-variant">
+                            {row.source}
+                          </td>
+                          <td className="py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openQuestionFromSummary(row.idx);
+                              }}
+                              className="text-xs font-semibold text-primary hover:underline cursor-pointer"
+                            >
+                              Buka
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs text-on-surface-variant">
+                    Halaman {safePage}/{totalPages} · menampilkan {pageRows.length}{" "}
+                    dari {summaryRows.length} soal
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={safePage <= 1}
+                      onClick={() => setSummaryPage(safePage - 1)}
+                      className="btn-secondary text-xs !py-1.5 !px-3 disabled:opacity-30 cursor-pointer"
+                    >
+                      ← Sebelumnya
+                    </button>
+                    <button
+                      type="button"
+                      disabled={safePage >= totalPages}
+                      onClick={() => setSummaryPage(safePage + 1)}
+                      className="btn-secondary text-xs !py-1.5 !px-3 disabled:opacity-30 cursor-pointer"
+                    >
+                      Berikutnya →
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-on-surface-variant">
+                  Klik baris atau “Buka” untuk meninjau &amp; menyesuaikan keputusan
+                  pada tab Detail Evaluasi.
+                </p>
+              </section>
+            ) : (
             <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
                 <div className="flex items-center gap-2">
@@ -674,21 +1032,6 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       )}
                     </div>
 
-                    {currentAttempt?.heuristic_flags && currentAttempt.heuristic_flags.length > 0 && (
-                      <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">
-                        <AlertTriangle size={12} className="shrink-0" />
-                        <span className="font-semibold">Catatan:</span>
-                        {currentAttempt.heuristic_flags.map((flag) => (
-                          <span key={flag} className="font-mono-ui">
-                            {flag === "t1_berisi_alasan" && "[Jawaban Memuat Alasan]"}
-                            {flag === "t3_kosong" && "[Alasan Terlalu Singkat]"}
-                            {flag === "t3_redundan" && "[Alasan Redundan]"}
-                            {flag === "t3_hafalan" && "[Alasan Hafalan Rumus]"}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
                     <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold uppercase tracking-wide text-primary">
@@ -701,6 +1044,15 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       <p className="text-base font-medium text-on-surface leading-normal mt-0.5">
                         {currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}
                       </p>
+                      {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
+                        <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+                          <AlertTriangle size={12} className="shrink-0" />
+                          <span>
+                            Jawaban singkat memuat alasan — uraikan alasan ilmiah
+                            pada kolom Alasan.
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -716,6 +1068,23 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                     <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">
                       {currentAttempt?.tier3_reason || currentAttempt?.answer_text || "Belum ada alasan"}
                     </p>
+                    {(currentAttempt?.heuristic_flags ?? []).some(
+                      (f) =>
+                        f === "t3_kosong" || f === "t3_redundan" || f === "t3_hafalan"
+                    ) && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+                        <AlertTriangle size={12} className="shrink-0" />
+                        {currentAttempt?.heuristic_flags?.includes("t3_kosong") && (
+                          <span>Alasan terlalu singkat.</span>
+                        )}
+                        {currentAttempt?.heuristic_flags?.includes("t3_redundan") && (
+                          <span>Alasan mengulang jawaban.</span>
+                        )}
+                        {currentAttempt?.heuristic_flags?.includes("t3_hafalan") && (
+                          <span>Alasan hafalan rumus tanpa penerapan.</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -738,6 +1107,16 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                         [{currentAttempt.analysis.four_tier_category}] {categoryMeta?.label}
                         <Info size={11} className="opacity-70" />
                       </span>
+
+                      {currentAttempt.analysis.run_number > 1 && (
+                        <span
+                          className="font-mono-ui text-xs font-bold inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                          title="Analisis ulang oleh AI setelah penolakan dosen"
+                        >
+                          <RotateCcw size={12} /> Analisis{" "}
+                          {currentAttempt.analysis.run_number}/{MAX_ANALYSIS_RUNS}
+                        </span>
+                      )}
 
                       <span
                         className={`font-mono-ui font-bold text-xs px-2.5 py-0.5 rounded border inline-flex items-center gap-1 ${
@@ -820,7 +1199,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                         </span>
                       ) : currentDraft ? (
                         <span className="text-xs font-semibold text-primary bg-primary-fixed px-2.5 py-0.5 rounded-full border border-primary/30 inline-flex items-center gap-1">
-                          ● Draft tersimpan{currentDraft.rejected ? " (Ditolak)" : ""}
+                          ● Draft tersimpan
                         </span>
                       ) : (
                         <span className="text-xs font-semibold text-on-surface-variant bg-surface-container px-2.5 py-0.5 rounded-full border border-outline-variant/30">
@@ -1016,7 +1395,10 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                             </span>
                             <button
                               type="button"
-                              onClick={() => setShowRejectBox(false)}
+                              onClick={() => {
+                                setShowRejectBox(false);
+                                setRejectError("");
+                              }}
                               className="text-xs text-on-surface-variant hover:text-on-surface cursor-pointer"
                             >
                               Batal
@@ -1025,38 +1407,42 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           <textarea
                             rows={2}
                             value={notes}
-                            onChange={(e) => updateDraft({ notes: e.target.value })}
+                            onChange={(e) => {
+                              setNotes(e.target.value);
+                              if (rejectError) setRejectError("");
+                            }}
                             placeholder="Jelaskan alasan penolakan agar model AI dapat memperbaiki analisis ulangnya..."
-                            className="form-input w-full text-xs"
+                            className={`form-input w-full text-xs ${
+                              rejectError ? "border-error ring-1 ring-error/40" : ""
+                            }`}
                           />
+                          {rejectError && (
+                            <p className="flex items-center gap-1.5 text-xs font-semibold text-error">
+                              <AlertTriangle size={13} className="shrink-0" />
+                              {rejectError}
+                            </p>
+                          )}
                           <div className="flex justify-end pt-1">
                             <button
                               type="button"
-                              onClick={() => {
-                                updateDraft({ rejected: true });
-                                setShowRejectBox(false);
-                              }}
+                              onClick={handleRejectNow}
+                              disabled={rejecting}
                               className="btn-danger !py-1.5 !px-3.5 text-xs font-semibold cursor-pointer"
                             >
-                              Tandai Ditolak (Draft)
+                              {rejecting ? "Menolak..." : "Konfirmasi Tolak & Re-analisis"}
                             </button>
                           </div>
                         </div>
                       )}
 
                       <div className="pt-2 border-t border-outline-variant/20 flex items-center justify-between gap-3">
-                        {currentDraft?.rejected ? (
+                        {!showRejectBox ? (
                           <button
                             type="button"
-                            onClick={() => updateDraft({ rejected: false })}
-                            className="btn-secondary !py-2 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <XCircle size={14} /> Ditandai Tolak — Urungkan
-                          </button>
-                        ) : !showRejectBox ? (
-                          <button
-                            type="button"
-                            onClick={() => setShowRejectBox(true)}
+                            onClick={() => {
+                              setShowRejectBox(true);
+                              setRejectError("");
+                            }}
                             className="btn-danger !py-2 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                           >
                             <XCircle size={14} /> Tolak &amp; Re-analisis
@@ -1077,8 +1463,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                           )}
                           <span className="text-xs text-on-surface-variant">
                             {currentDraft
-                              ? "Tersimpan sebagai draft — dikirim lewat “Selesai Evaluasi”."
-                              : "Ubah penilaian untuk menyimpan draft."}
+                              ? "Draft tersimpan otomatis — dikirim lewat “Selesai Evaluasi”."
+                              : "Draft dibuat otomatis saat soal dibuka."}
                           </span>
                         </div>
                       </div>
@@ -1128,6 +1514,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 </button>
               </div>
             </section>
+            )}
           </main>
 
           {/* KOLOM KANAN: DAFTAR SOAL + KARTU NILAI AKHIR (100%, 75%, 50%, ETC) */}
@@ -1248,9 +1635,19 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
               <ShieldCheck size={16} />
               {finalizing ? "Menyimpan..." : "Selesai Evaluasi"}
             </button>
+            {(inFlightQuestions.length > 0 || rejectedUndecidedCount > 0) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 text-center leading-relaxed">
+                {inFlightQuestions.length > 0
+                  ? `${inFlightQuestions.length} soal sedang dianalisis AI. `
+                  : ""}
+                {rejectedUndecidedCount > 0
+                  ? `${rejectedUndecidedCount} soal menunggu analisis ulang selesai — validasi ulang setelah siap.`
+                  : ""}
+              </p>
+            )}
             <p className="text-xs text-on-surface-variant text-center">
-              Draf: {decidedPendingCount} / {pendingQuestions.length} soal menunggu
-              validasi diputuskan
+              Draf: {decidedPendingCount} / {awaitingDecisionQuestions.length} soal
+              menunggu validasi diputuskan
             </p>
           </aside>
         </div>
@@ -1279,39 +1676,87 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
               {finalizeItems.length} keputusan draft akan dikirim sebagai validasi
               final:
             </p>
-            <div className="max-h-64 overflow-y-auto space-y-1.5">
+
+            {/* Ringkasan agregat — tetap mudah dipindai walau puluhan soal */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 size={14} /> {finalizeSummary.benar} Benar
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-600 dark:text-rose-400">
+                <XCircle size={14} /> {finalizeSummary.salah} Salah
+              </span>
+              {finalizeSummary.correction > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary-fixed px-2.5 py-1 text-xs font-bold text-primary">
+                  <ShieldCheck size={14} /> {finalizeSummary.correction} Koreksi
+                </span>
+              )}
+            </div>
+
+            {/* Grid nomor soal berwarna sesuai keputusan — compact untuk N besar */}
+            <div className="flex flex-wrap gap-1.5">
               {finalizeItems.map((item) => (
-                <div
+                <span
                   key={item.analysisId}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs"
+                  title={`Soal ${item.orderIndex}: ${
+                    item.draft.isCorrect ? "Benar" : "Salah"
+                  } [${item.draft.finalCategory}]${
+                    item.draft.mode === "correction" ? " · Koreksi" : ""
+                  }`}
+                  className={`flex h-7 w-7 items-center justify-center rounded-md border font-mono-ui text-xs font-bold ${
+                    item.draft.isCorrect
+                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : "border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                  }`}
                 >
-                  <span className="font-mono-ui font-bold text-on-surface">
-                    Soal {item.orderIndex}
-                  </span>
-                  <span
-                    className={`font-semibold ${
-                      item.draft.rejected
-                        ? "text-rose-500"
-                        : item.draft.isCorrect
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-rose-500"
-                    }`}
-                  >
-                    {item.draft.rejected
-                      ? "Tolak & Re-analisis"
-                      : item.draft.isCorrect
-                        ? "Benar"
-                        : "Salah"}
-                  </span>
-                  <span className="font-mono-ui text-on-surface-variant">
-                    [{item.draft.finalCategory}]
-                  </span>
-                  <span className="text-on-surface-variant">
-                    {item.draft.mode === "correction" ? "Koreksi" : "Validasi baru"}
-                  </span>
-                </div>
+                  {item.orderIndex}
+                </span>
               ))}
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowFinalizeDetail((s) => !s)}
+              className="text-xs font-semibold text-primary hover:underline cursor-pointer"
+            >
+              {showFinalizeDetail
+                ? "Sembunyikan rincian"
+                : `Lihat rincian (${finalizeItems.length})`}
+            </button>
+            {showFinalizeDetail && (
+              <div className="max-h-56 overflow-y-auto space-y-1.5">
+                {finalizeItems.map((item) => (
+                  <div
+                    key={item.analysisId}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs"
+                  >
+                    <span className="font-mono-ui font-bold text-on-surface">
+                      Soal {item.orderIndex}
+                    </span>
+                    <span
+                      className={`font-semibold ${
+                        item.draft.isCorrect
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-500"
+                      }`}
+                    >
+                      {item.draft.isCorrect ? "Benar" : "Salah"}
+                    </span>
+                    <span className="font-mono-ui text-on-surface-variant">
+                      [{item.draft.finalCategory}]
+                    </span>
+                    <span className="text-on-surface-variant">
+                      {item.draft.mode === "correction" ? "Koreksi" : "Validasi baru"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {finalizeProgress && (
+              <p className="text-xs font-mono-ui font-bold text-primary">
+                Menyimpan {finalizeProgress.done} / {finalizeProgress.total} ...
+              </p>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"

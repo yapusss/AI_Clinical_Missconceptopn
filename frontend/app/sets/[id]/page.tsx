@@ -81,6 +81,11 @@ function AnswerSetContent() {
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  // Kembali ke atas setiap kali nomor soal berubah (prev/next/pill/submit-advance)
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [activeIndex]);
+
   const storageKey = setId && user ? `exam_response_${setId}_${user.id}` : null;
   const passwordKey = setId ? `exam_package_password_${setId}` : null;
 
