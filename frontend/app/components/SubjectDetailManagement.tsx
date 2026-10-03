@@ -27,6 +27,7 @@ import ListToolbar from "./ListToolbar";
 import PageContainer from "./PageContainer";
 import PageHeader from "./PageHeader";
 import QuestionBankImport from "./QuestionBankImport";
+import RowMenu from "./RowMenu";
 
 type Subject = {
   id: string;
