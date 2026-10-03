@@ -20,7 +20,8 @@ import {
   type StudentSetGroup,
 } from "../lib/studentSubmissions";
 
-const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const errMsg = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
 
 const SORT_OPTIONS: SortMenuOption[] = [
   {
@@ -53,7 +54,9 @@ export default function MySubmissions({ compactHeading = false }: Props) {
   const load = useCallback(async () => {
     if (!user) return;
     try {
-      const data = await apiFetch<StudentSetGroup[]>("/student/submission-sets");
+      const data = await apiFetch<StudentSetGroup[]>(
+        "/student/submission-sets",
+      );
       setGroups(data);
       setError("");
     } catch (err) {
@@ -88,7 +91,8 @@ export default function MySubmissions({ compactHeading = false }: Props) {
         return false;
       }
       if (q) {
-        const textToMatch = `${group.code} ${group.title} ${group.subject_name}`.toLowerCase();
+        const textToMatch =
+          `${group.code} ${group.title} ${group.subject_name}`.toLowerCase();
         if (!textToMatch.includes(q)) {
           return false;
         }
@@ -98,8 +102,12 @@ export default function MySubmissions({ compactHeading = false }: Props) {
 
     // 2. Sort
     return filtered.sort((a, b) => {
-      const timeA = a.last_submitted_at ? new Date(a.last_submitted_at).getTime() : 0;
-      const timeB = b.last_submitted_at ? new Date(b.last_submitted_at).getTime() : 0;
+      const timeA = a.last_submitted_at
+        ? new Date(a.last_submitted_at).getTime()
+        : 0;
+      const timeB = b.last_submitted_at
+        ? new Date(b.last_submitted_at).getTime()
+        : 0;
 
       if (sortOrder === "LATEST") {
         return timeB - timeA;
@@ -113,7 +121,9 @@ export default function MySubmissions({ compactHeading = false }: Props) {
     <div>
       {!compactHeading && (
         <div className="flex items-center gap-2 mb-2">
-          <h2 className="font-display text-sm font-bold text-on-surface">Pengumpulan Saya</h2>
+          <h2 className="font-display text-sm font-bold text-on-surface">
+            Pengumpulan Saya
+          </h2>
         </div>
       )}
 
@@ -157,7 +167,9 @@ export default function MySubmissions({ compactHeading = false }: Props) {
       {/* Real-time Status Feedback Bar */}
       <div className="mt-2 flex items-center justify-between px-1 text-xs text-on-surface-variant">
         <span>
-          Menampilkan <strong className="text-on-surface">{visible.length}</strong> dari {groups.length} paket soal
+          Menampilkan{" "}
+          <strong className="text-on-surface">{visible.length}</strong> dari{" "}
+          {groups.length} paket soal
         </span>
         <span className="inline-flex items-center gap-1.5 text-[11px]">
           <span className="text-on-surface-variant/70">Urutan:</span>
@@ -177,15 +189,21 @@ export default function MySubmissions({ compactHeading = false }: Props) {
 
       {/* Submissions Table */}
       {fetching ? (
-        <p className="mt-6 text-center text-xs text-on-surface-variant">Memuat riwayat pengumpulan...</p>
+        <p className="mt-6 text-center text-xs text-on-surface-variant">
+          Memuat riwayat pengumpulan...
+        </p>
       ) : groups.length === 0 ? (
         <div className="glass-panel mt-2 rounded-xl border border-outline-variant/40 p-6 text-center text-xs text-on-surface-variant">
-          Belum ada jawaban yang dikumpulkan. Masukkan kode soal di atas untuk memulai.
+          Belum ada jawaban yang dikumpulkan. Masukkan kode soal di atas untuk
+          memulai.
         </div>
       ) : (
         <div className="glass-panel mt-2 overflow-hidden rounded-xl border border-outline-variant/40 shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm border-collapse" role="table">
+            <table
+              className="w-full text-left text-sm border-collapse"
+              role="table"
+            >
               <thead className="border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase text-on-surface-variant">
                 <tr>
                   <th scope="col" className="w-[38%] px-4 py-3">
@@ -208,14 +226,24 @@ export default function MySubmissions({ compactHeading = false }: Props) {
               <tbody className="divide-y divide-outline-variant/20">
                 {visible.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-xs text-on-surface-variant">
-                      <p className="font-medium">Tidak ada pengumpulan yang cocok dengan kriteria.</p>
+                    <td
+                      colSpan={5}
+                      className="px-4 py-8 text-center text-xs text-on-surface-variant"
+                    >
+                      <p className="font-medium">
+                        Tidak ada pengumpulan yang cocok dengan kriteria.
+                      </p>
                     </td>
                   </tr>
                 ) : (
                   visible.map((group) => {
-                    const status = summarizeSetStatus(group.status_summary, group.status_counts);
-                    const allAnswered = group.answered_count === group.question_count && group.question_count > 0;
+                    const status = summarizeSetStatus(
+                      group.status_summary,
+                      group.status_counts,
+                    );
+                    const allAnswered =
+                      group.answered_count === group.question_count &&
+                      group.question_count > 0;
 
                     return (
                       <tr
@@ -247,13 +275,19 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                         {/* 3. Progress (Small text simplified to only tell Percobaan ke-x) */}
                         <td className="px-4 py-3.5 align-middle">
                           <div className="flex items-center gap-1.5">
-                            <Layers size={13} className="text-primary shrink-0" />
+                            <Layers
+                              size={13}
+                              className="text-primary shrink-0"
+                            />
                             <span
                               className={`text-xs font-semibold ${
-                                allAnswered ? "text-emerald-400" : "text-amber-400"
+                                allAnswered
+                                  ? "text-emerald-400"
+                                  : "text-amber-400"
                               }`}
                             >
-                              {group.answered_count} / {group.question_count} Soal
+                              {group.answered_count} / {group.question_count}{" "}
+                              Soal
                             </span>
                           </div>
                           <p className="mt-0.5 text-[11px] text-on-surface-variant">
@@ -261,11 +295,21 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                           </p>
                         </td>
 
-                        {/* 4. Status (Only badge, explanation removed) */}
+                        {/* 4. Status & Nilai Paket */}
                         <td className="px-4 py-3.5 align-middle">
-                          <span className={`badge ${status.cls} text-[11px] whitespace-nowrap`}>
-                            {status.label}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`badge ${status.cls} text-[11px] whitespace-nowrap`}
+                            >
+                              {status.label}
+                            </span>
+                            {group.overall_score !== null &&
+                              group.overall_score !== undefined && (
+                                <span className="font-mono-ui font-extrabold text-[11px] text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 whitespace-nowrap">
+                                  Nilai: {group.overall_score.toFixed(0)}%
+                                </span>
+                              )}
+                          </div>
                         </td>
 
                         {/* 5. Action (Standardized Eye icon button, date removed) */}
@@ -277,7 +321,12 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                               aria-label={`Lihat detail ${group.title}`}
                               title="Lihat detail"
                             >
-                              <Eye size={18} stroke="#4f46e5" strokeWidth={2.5} aria-hidden="true" />
+                              <Eye
+                                size={18}
+                                stroke="#4f46e5"
+                                strokeWidth={2.5}
+                                aria-hidden="true"
+                              />
                             </Link>
                           </div>
                         </td>

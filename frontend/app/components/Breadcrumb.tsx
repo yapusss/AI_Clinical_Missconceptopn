@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ChevronRight, Home } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 const labels: Record<string, string> = {
   admin: "Administrasi",
@@ -23,13 +23,21 @@ const labels: Record<string, string> = {
 
 // Segments that do not have standalone index pages and should redirect to their parent section
 const PATH_TARGETS: Record<string, string> = {
-  "/pengumpulan": "/code",
+  "/pengumpulan": "/code#pengumpulan",
   "/sets": "/code",
+  "/questions/subject": "/questions",
 };
 
 type Crumb = { label: string; href?: string };
 
-function buildCrumbs(pathname: string): Crumb[] {
+function questionLeafLabel(path: string): string {
+  if (/^\/questions\/[^/]+\/students\/[^/]+$/.test(path)) return "Review Mahasiswa";
+  if (/^\/questions\/[^/]+\/view$/.test(path)) return "Pratinjau Paket";
+  if (/^\/questions\/[^/]+\/edit$/.test(path)) return "Edit Paket";
+  return "Detail";
+}
+
+function buildCrumbs(pathname: string, subjectId: string | null): Crumb[] {
   const parts = pathname.split("/").filter(Boolean);
   if (!parts.length) return [];
 
@@ -40,23 +48,33 @@ function buildCrumbs(pathname: string): Crumb[] {
       { label: "Administrasi", href: "/questions" },
       { label: "Mata Kuliah", href: "/questions" },
     ];
-    if (parts.length > 1) crumbs.push({ label: "Detail" });
+    if (parts.length > 1) {
+      crumbs.push({ label: questionLeafLabel(`/${parts.join("/")}`) });
+    }
     return crumbs;
   }
 
   return parts.map((part, index) => {
     const path = `/${parts.slice(0, index + 1).join("/")}`;
     const last = index === parts.length - 1;
-    return {
-      label: labels[part] ?? (last ? "Detail" : part),
-      href: last ? undefined : (PATH_TARGETS[path] ?? path),
-    };
+    const label =
+      path === "/exam-packages/create"
+        ? "Buat Paket Ujian"
+        : labels[part] ?? (last ? "Detail" : part);
+    const targetHref =
+      path === "/exam-packages" && subjectId
+        ? `/admin/subjects/${subjectId}`
+        : PATH_TARGETS[path] ?? path;
+    const clickable = !last && path !== "/admin";
+    return { label, href: clickable ? targetHref : undefined };
   });
 }
 
 export default function Breadcrumb() {
   const pathname = usePathname();
-  const crumbs = buildCrumbs(pathname);
+  const searchParams = useSearchParams();
+  const subjectId = searchParams.get("subject_id");
+  const crumbs = buildCrumbs(pathname, subjectId);
   if (!crumbs.length) return null;
 
   return (

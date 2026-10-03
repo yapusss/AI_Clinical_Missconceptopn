@@ -2,10 +2,9 @@ import csv
 import io
 import json
 import uuid
-from decimal import Decimal
 from django.utils.text import slugify
 from django.db import connection, transaction
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from django.http import HttpResponse
 from openpyxl import Workbook, load_workbook
@@ -21,7 +20,6 @@ from .serializers import FourTierPackageSubmissionSerializer
 from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
-    ConceptIndicator,
     ExamPackage,
     ExamPackageQuestion,
     HelpArticle,
@@ -415,6 +413,10 @@ class AdminManagedUserListView(APIView):
         data = serializer.validated_data
         if User.objects.filter(email__iexact=data['email']).exists():
             return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
+        if managed_role == UserRole.Role.STUDENT and not data.get('nim', '').strip():
+            return Response({'nim': ['NIM wajib diisi untuk mahasiswa.']}, status=status.HTTP_400_BAD_REQUEST)
+        if data.get('nim') and User.objects.filter(nim__iexact=data['nim'].strip()).exists():
+            return Response({'nim': ['NIM sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
         subject_ids = data.get('subject_ids', []) if managed_role == UserRole.Role.LECTURER else []
         valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
         if len(valid_subjects) != len(set(subject_ids)):
@@ -423,7 +425,7 @@ class AdminManagedUserListView(APIView):
             return Response({'password': ['Password wajib diisi saat membuat akun.']}, status=status.HTTP_400_BAD_REQUEST)
         from django.contrib.auth.hashers import make_password
         user = User.objects.create(
-            id=uuid.uuid4(), email=data['email'].lower(), full_name=data['full_name'],
+            id=uuid.uuid4(), email=data['email'].lower(), full_name=data['full_name'], nim=data.get('nim', '').strip().upper() or None,
             password_hash=make_password(data['password']), is_active=data.get('is_active', True),
         )
         UserRole.objects.create(user=user, role=managed_role)
@@ -439,7 +441,7 @@ class AdminManagedUserListView(APIView):
             user=user, role=UserSubjectRole.Role.LECTURER,
         ).select_related('subject') if role == UserRole.Role.LECTURER else []
         return {
-            'id': str(user.id), 'email': user.email, 'full_name': user.full_name,
+            'id': str(user.id), 'email': user.email, 'full_name': user.full_name, 'nim': user.nim,
             'is_active': user.is_active, 'created_at': user.created_at,
             'role': role, 'subjects': [
                 {'id': str(item.subject_id), 'name': item.subject.name, 'slug': item.subject.slug}
@@ -468,6 +470,8 @@ class AdminManagedUserDetailView(APIView):
         data = serializer.validated_data
         if 'email' in data and User.objects.exclude(pk=user.pk).filter(email__iexact=data['email']).exists():
             return Response({'email': ['Email sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
+        if 'nim' in data and data['nim'] and User.objects.exclude(pk=user.pk).filter(nim__iexact=data['nim'].strip()).exists():
+            return Response({'nim': ['NIM sudah terdaftar.']}, status=status.HTTP_400_BAD_REQUEST)
         if managed_role == UserRole.Role.LECTURER and 'subject_ids' in data:
             subject_ids = data['subject_ids']
             valid_subjects = set(Subject.objects.filter(id__in=subject_ids).values_list('id', flat=True))
@@ -475,6 +479,7 @@ class AdminManagedUserDetailView(APIView):
                 return Response({'subject_ids': ['Ada mata kuliah yang tidak ditemukan.']}, status=status.HTTP_400_BAD_REQUEST)
         if 'email' in data: user.email = data['email'].lower()
         if 'full_name' in data: user.full_name = data['full_name']
+        if 'nim' in data: user.nim = data['nim'].strip().upper() or None
         if 'is_active' in data: user.is_active = data['is_active']
         if data.get('password'):
             from django.contrib.auth.hashers import make_password
@@ -663,26 +668,6 @@ def is_lecturer_for_subject(user, subject_id):
 
 
 IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'short_answer', 'alasan'}
-
-
-def _parse_import_indicators(raw_value):
-    if not raw_value.strip():
-        return [{'label': 'Konsep utama', 'description': '', 'weight': Decimal('1.0000')}]
-    indicators = []
-    for item in raw_value.split('|'):
-        label, separator, weight = item.partition(':')
-        if not separator:
-            raise ValueError('Format indikator harus label:bobot|label:bobot.')
-        try:
-            parsed_weight = Decimal(weight.strip())
-        except Exception as exc:
-            raise ValueError(f'Bobot indikator tidak valid: {weight}.') from exc
-        if not label.strip() or parsed_weight <= 0 or parsed_weight > 1:
-            raise ValueError('Label indikator wajib diisi dan bobot harus antara 0 dan 1.')
-        indicators.append({'label': label.strip(), 'description': '', 'weight': parsed_weight})
-    if abs(sum(item['weight'] for item in indicators) - Decimal('1.0000')) > Decimal('0.0001'):
-        raise ValueError('Total bobot indikator harus tepat 1.0000.')
-    return indicators
 
 
 def _normalize_import_row(raw):
@@ -1335,7 +1320,6 @@ class QuestionListCreateView(APIView):
                     'prompt': data['prompt'],
                     'short_answer': data.get('short_answer', ''),
                     'model_answer': data['model_answer'],
-                    'indicators': data.get('indicators', []),
                 }]
 
             for q_idx, q_item in enumerate(questions_list, start=1):
@@ -1364,17 +1348,6 @@ class QuestionListCreateView(APIView):
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
-
-                indicators_data = q_item.get('indicators', [])
-                for idx, ind in enumerate(indicators_data, start=1):
-                    ConceptIndicator.objects.create(
-                        id=uuid.uuid4(),
-                        question_version=qv,
-                        label=ind['label'],
-                        description=ind.get('description', ''),
-                        weight=ind['weight'],
-                        order_index=idx,
-                    )
 
                 if data.get('publish', False):
                     with connection.cursor() as cursor:
@@ -1409,8 +1382,6 @@ class QuestionDetailView(APIView):
         for question in Question.objects.filter(question_set=q_set).order_by('order_index'):
             versions = []
             for version in QuestionVersion.objects.filter(question=question).order_by('-version_number'):
-                indicators = ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
-
                 refs = list(
                     ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
                 )
@@ -1446,16 +1417,6 @@ class QuestionDetailView(APIView):
                     'is_published': version.is_published,
                     'created_at': version.created_at,
                     'reference_answers': ref_answers,
-                    'indicators': [
-                        {
-                            'id': str(indicator.id),
-                            'label': indicator.label,
-                            'description': indicator.description or '',
-                            'weight': str(indicator.weight),
-                            'order_index': indicator.order_index,
-                        }
-                        for indicator in indicators
-                    ],
                 })
             questions.append({
                 'id': str(question.id),
@@ -1570,18 +1531,6 @@ class QuestionDetailView(APIView):
                     answer_type='CANONICAL',
                     is_primary=True,
                 )
-
-            if 'indicators' in data:
-                ConceptIndicator.objects.filter(question_version=target_v).delete()
-                for idx, ind in enumerate(data['indicators'], start=1):
-                    ConceptIndicator.objects.create(
-                        id=uuid.uuid4(),
-                        question_version=target_v,
-                        label=ind['label'],
-                        description=ind.get('description', ''),
-                        weight=ind['weight'],
-                        order_index=idx,
-                    )
 
             if data.get('publish', False) and not target_v.is_published:
                 with connection.cursor() as cursor:
@@ -1698,7 +1647,7 @@ class QuestionSetReviewView(APIView):
 
 
 class QuestionSetStudentReviewView(APIView):
-    """Full package review for one student, supporting all submission attempts and 4-tier diagnostics."""
+    """Full package review for one student, supporting all submission attempts, 4-tier diagnostics, and package score aggregation."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -1735,7 +1684,6 @@ class QuestionSetStudentReviewView(APIView):
         package_versions = list(QuestionVersion.objects.filter(question_id__in=question_ids))
         package_version_ids = [version.id for version in package_versions]
         
-        # Fetch ALL submissions from this student for this package
         submissions = list(
             Submission.objects.filter(
                 student=student,
@@ -1758,23 +1706,12 @@ class QuestionSetStudentReviewView(APIView):
             ).select_related('lecturer')
         }
 
-        indicators_by_version = {}
-        for indicator in ConceptIndicator.objects.filter(
-            question_version_id__in=[v.id for v in version_by_question.values()]
-        ).order_by('order_index'):
-            indicators_by_version.setdefault(indicator.question_version_id, []).append({
-                'id': str(indicator.id), 'label': indicator.label,
-                'description': indicator.description or '', 'weight': str(indicator.weight),
-                'order_index': indicator.order_index,
-            })
-
         rows = []
         for question in questions:
             version = version_by_question.get(question.id)
             if not version:
                 continue
 
-            # Group all attempts for this question
             question_subs = [
                 s for s in submissions if version_question_ids.get(s.question_version_id) == question.id
             ]
@@ -1831,10 +1768,43 @@ class QuestionSetStudentReviewView(APIView):
                 'prompt': version.prompt,
                 'short_answer': version.short_answer or '',
                 'model_answer': version.model_answer,
-                'indicators': indicators_by_version.get(version.id, []),
                 'status': attempts_payload[0]['status'] if attempts_payload else 'UNANSWERED',
                 'attempts': attempts_payload,
             })
+
+        # Hitung poin per soal menurut banyaknya butir soal (100 / N)
+        total_questions = len(rows)
+        validated_count = 0
+        correct_count = 0
+
+        for r in rows:
+            if r['attempts']:
+                latest = r['attempts'][0]
+                val = latest.get('analysis', {}).get('validation') if latest.get('analysis') else None
+                if latest['status'] == 'VALIDATED' or (val and val.get('status') in ('ACCEPTED', 'EDITED')):
+                    validated_count += 1
+                    pct = (
+                        float(val['final_percentage'])
+                        if (val and val.get('final_percentage') is not None)
+                        else (float(latest['analysis']['percentage_correct']) if latest.get('analysis') else 0.0)
+                    )
+                    if pct >= 99.9:
+                        correct_count += 1
+
+        is_all_validated = (validated_count == total_questions and total_questions > 0)
+        overall_score = (
+            round((correct_count / total_questions) * 100.0, 1)
+            if total_questions > 0
+            else 0.0
+        )
+
+        summary = {
+            'total_questions': total_questions,
+            'validated_count': validated_count,
+            'correct_count': correct_count,
+            'overall_score': overall_score,
+            'is_all_validated': is_all_validated,
+        }
 
         return Response({
             'package': {
@@ -1853,6 +1823,7 @@ class QuestionSetStudentReviewView(APIView):
             'published_question_count': len(rows),
             'answered_count': sum(len(row['attempts']) > 0 for row in rows),
             'total_attempts_count': sum(len(row['attempts']) for row in rows),
+            'summary': summary,
             'questions': rows,
         })
 
@@ -1902,9 +1873,6 @@ class QuestionSetPublishView(APIView):
             version = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
             if not version:
                 return Response({'detail': f'Pertanyaan ke-{question.order_index} belum memiliki versi.'}, status=status.HTTP_400_BAD_REQUEST)
-            total_weight = ConceptIndicator.objects.filter(question_version=version).aggregate(total=Sum('weight'))['total'] or Decimal('0')
-            if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
-                return Response({'detail': f'Bobot indikator pertanyaan ke-{question.order_index} harus tepat 1.0000.'}, status=status.HTTP_400_BAD_REQUEST)
             versions.append(version)
 
         try:
@@ -2037,6 +2005,148 @@ class ExamPackageToggleActiveView(APIView):
         package.is_active = not package.is_active
         package.save(update_fields=['is_active', 'updated_at'])
         return Response({'id': str(package.id), 'is_active': package.is_active})
+
+
+class ExamPackageReviewView(APIView):
+    """Lecturer review roster, restricted to versions assigned to this exam package."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        items = list(ExamPackageQuestion.objects.filter(exam_package=package).select_related('question_version').order_by('order_index'))
+        version_ids = [item.question_version_id for item in items]
+        submissions = list(Submission.objects.filter(question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        students = list(User.objects.filter(
+            id__in={submission.student_id for submission in submissions}, is_active=True,
+            userrole__role=UserRole.Role.STUDENT,
+        ).order_by('full_name', 'email').distinct())
+        allowed_student_ids = {student.id for student in students}
+        submissions = [submission for submission in submissions if submission.student_id in allowed_student_ids]
+        analyses = {
+            analysis.submission_id: analysis
+            for analysis in LlmAnalysis.objects.filter(submission_id__in=[submission.id for submission in submissions], is_current=True)
+        }
+        validations = {
+            validation.analysis_id: validation
+            for validation in Validation.objects.filter(analysis_id__in=[analysis.id for analysis in analyses.values()])
+        }
+        item_by_version = {item.question_version_id: item for item in items}
+        rows = []
+        for student in students:
+            student_submissions = [submission for submission in submissions if submission.student_id == student.id]
+            all_submissions = []
+            for submission in student_submissions:
+                item = item_by_version[submission.question_version_id]
+                analysis = analyses.get(submission.id)
+                validation = validations.get(analysis.id) if analysis else None
+                all_submissions.append({
+                    'question_id': str(item.question_id), 'order_index': item.order_index,
+                    'question_prompt_preview': item.question_version.prompt[:160] + ('...' if len(item.question_version.prompt) > 160 else ''),
+                    'submission_id': str(submission.id), 'attempt_no': submission.attempt_no,
+                    'status': submission.status, 'submitted_at': submission.submitted_at,
+                    'analysis_id': str(analysis.id) if analysis else None,
+                    'validation_status': validation.status if validation else None,
+                })
+            rows.append({
+                'student_id': str(student.id), 'student_name': student.full_name, 'student_email': student.email,
+                'answered_count': len({submission.question_version_id for submission in student_submissions}),
+                'published_question_count': len(items), 'total_attempts_count': len(student_submissions),
+                'all_submissions': all_submissions,
+            })
+        return Response({
+            'id': str(package.id), 'code': package.code, 'title': package.title,
+            'description': package.description or '', 'subject_id': str(package.subject_id),
+            'subject_name': package.subject.name, 'is_active': package.is_active,
+            'published_question_count': len(items), 'roster_scope': 'submitted_students',
+            'unsubmitted_roster_available': False, 'students': rows,
+        })
+
+
+class ExamPackageStudentReviewView(APIView):
+    """One student's answers, analysis, and validation state for one exact exam package."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, student_id):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        items = list(ExamPackageQuestion.objects.filter(exam_package=package).select_related('question_version').order_by('order_index'))
+        version_ids = [item.question_version_id for item in items]
+        try:
+            student = User.objects.filter(
+                pk=student_id, is_active=True, userrole__role=UserRole.Role.STUDENT,
+                submissions__question_version_id__in=version_ids,
+            ).distinct().get()
+        except User.DoesNotExist:
+            return Response({'detail': 'Mahasiswa belum mengumpulkan paket ini.'}, status=status.HTTP_404_NOT_FOUND)
+
+        submissions = list(Submission.objects.filter(student=student, question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        analyses = {
+            analysis.submission_id: analysis
+            for analysis in LlmAnalysis.objects.filter(submission_id__in=[submission.id for submission in submissions], is_current=True)
+        }
+        validations = {
+            validation.analysis_id: validation
+            for validation in Validation.objects.filter(analysis_id__in=[analysis.id for analysis in analyses.values()]).select_related('lecturer')
+        }
+        rows = []
+        for item in items:
+            attempts = []
+            for submission in submissions:
+                if submission.question_version_id != item.question_version_id:
+                    continue
+                analysis = analyses.get(submission.id)
+                validation = validations.get(analysis.id) if analysis else None
+                attempts.append({
+                    'submission_id': str(submission.id), 'attempt_no': submission.attempt_no, 'status': submission.status,
+                    'tier1_answer': submission.tier1_answer or '', 'tier2_confidence': submission.tier2_confidence or 1,
+                    'tier3_reason': submission.tier3_reason or submission.answer_text, 'tier4_confidence': submission.tier4_confidence or 1,
+                    'heuristic_flags': submission.heuristic_flags or [], 'answer_text': submission.answer_text, 'submitted_at': submission.submitted_at,
+                    'analysis': {
+                        'id': str(analysis.id), 'run_number': analysis.run_number, 'percentage_correct': str(analysis.percentage_correct),
+                        'tier_level': analysis.tier_level_snapshot, 'tier_label': analysis.tier_label_snapshot,
+                        'confidence': str(analysis.confidence), 'explanation': analysis.explanation, 'execution_time_ms': analysis.execution_time_ms,
+                        'module_a_score': analysis.module_a_score, 'module_b_score': analysis.module_b_score,
+                        'module_c_code': analysis.module_c_code, 'four_tier_category': analysis.four_tier_category,
+                        'risk_level': analysis.risk_level, 'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        'validation': {'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
+                            'final_tier_level': validation.final_tier_level_snapshot, 'final_feedback': validation.final_feedback,
+                            'lecturer_name': validation.lecturer.full_name, 'validated_at': validation.validated_at} if validation else None,
+                    } if analysis else None,
+                })
+            attempts.sort(key=lambda attempt: attempt['attempt_no'], reverse=True)
+            rows.append({'question_id': str(item.question_id), 'order_index': item.order_index,
+                         'version_id': str(item.question_version_id), 'version_number': item.question_version.version_number,
+                         'prompt': item.question_version.prompt, 'model_answer': item.question_version.model_answer,
+                         'status': attempts[0]['status'] if attempts else 'UNANSWERED', 'attempts': attempts})
+
+        validated = [row['attempts'][0] for row in rows if row['attempts'] and row['attempts'][0]['status'] == 'VALIDATED']
+        correct = sum(1 for attempt in validated if float(((attempt['analysis'] or {}).get('validation') or {}).get('final_percentage') or (attempt['analysis'] or {}).get('percentage_correct') or 0) >= 99.9)
+        return Response({
+            'package': {'id': str(package.id), 'code': package.code, 'title': package.title,
+                        'description': package.description or '', 'subject_id': str(package.subject_id), 'subject_name': package.subject.name},
+            'student': {'id': str(student.id), 'name': student.full_name, 'email': student.email},
+            'published_question_count': len(rows), 'answered_count': sum(bool(row['attempts']) for row in rows),
+            'total_attempts_count': sum(len(row['attempts']) for row in rows),
+            'summary': {'total_questions': len(rows), 'validated_count': len(validated), 'correct_count': correct,
+                        'overall_score': round(correct / len(rows) * 100, 1) if rows else 0.0,
+                        'is_all_validated': bool(rows) and len(validated) == len(rows)},
+            'questions': rows,
+        })
 
 
 # SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
@@ -2378,8 +2488,8 @@ class StudentSubmissionListView(APIView):
 def _build_submission_set_groups(user):
     """Group a student's submissions per question set with comprehensive pedagogical diagnostics.
 
-    Exposes rubric points breakdown, attempt-bound evaluations, model answer benchmarks,
-    and verified misconceptions without leaking internal unvalidated AI hypotheses.
+    Exposes structured student feedback (poin tepat, letak kekeliruan, konsep seharusnya),
+    binary question grading, and whole-package aggregated score.
     """
     submissions = list(
         Submission.objects.filter(student=user).order_by('submitted_at')
@@ -2399,11 +2509,6 @@ def _build_submission_set_groups(user):
         s.id: s
         for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject', 'topic')
     }
-
-    # Fetch concept indicators for all versions in scope
-    indicators_by_version = {}
-    for ind in ConceptIndicator.objects.filter(question_version_id__in=version_ids).order_by('order_index'):
-        indicators_by_version.setdefault(ind.question_version_id, []).append(ind)
 
     # Fetch current analyses and validations for every attempt
     sub_ids = [s.id for s in submissions]
@@ -2462,40 +2567,24 @@ def _build_submission_set_groups(user):
                 evaluation_payload = None
 
                 if s.status == 'VALIDATED' and validation:
-                    v_indicators = indicators_by_version.get(s.question_version_id, [])
                     breakdown = analysis.concept_breakdown_json or {}
-                    indicator_results = {
-                        item.get('order_index'): item
-                        for item in breakdown.get('indicators', [])
+                    raw_student_fb = breakdown.get('student_feedback') or {}
+
+                    # Target 7: Umpan balik terstruktur 3 kartu
+                    student_feedback_payload = {
+                        'poin_tepat': raw_student_fb.get('poin_tepat') or (
+                            'Kesimpulan dan penalaran fisis yang disampaikan sudah tepat.'
+                            if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
+                            else 'Telah menyampaikan kesimpulan dan alasan.'
+                        ),
+                        'letak_kekeliruan': raw_student_fb.get('letak_kekeliruan') or (
+                            '-' if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
+                            else (analysis.module_b_score if analysis else 'Terdapat ketidaksinkronan konsep atau penalaran.')
+                        ),
+                        'konsep_seharusnya': raw_student_fb.get('konsep_seharusnya') or (
+                            versions.get(s.question_version_id).model_answer if s.question_version_id in versions else ''
+                        ),
                     }
-
-                    # Construct explainable rubric scoring breakdown
-                    rubric_breakdown = []
-                    for ind in v_indicators:
-                        res = indicator_results.get(ind.order_index, {})
-                        score_enum = res.get('score', 'MISSING')
-                        credit_factor = 1.0 if score_enum == 'PRESENT' else (0.5 if score_enum == 'PARTIAL' else 0.0)
-                        weight_float = float(ind.weight)
-                        earned_points = round(weight_float * credit_factor * 100, 2)
-
-                        rubric_breakdown.append({
-                            'order_index': ind.order_index,
-                            'label': ind.label,
-                            'description': ind.description or '',
-                            'max_weight_percent': round(weight_float * 100, 1),
-                            'earned_points_percent': earned_points,
-                            'status': score_enum,
-                            'evidence': res.get('evidence', ''),
-                        })
-
-                    # Filter lecturer-confirmed misconceptions
-                    confirmed_misconceptions = []
-                    for m in breakdown.get('misconception_matches', []):
-                        if m.get('lecturer_confirmed') is True:
-                            confirmed_misconceptions.append({
-                                'label': m.get('label'),
-                                'reasoning': m.get('reasoning'),
-                            })
 
                     final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
 
@@ -2506,8 +2595,11 @@ def _build_submission_set_groups(user):
                         'tier_level': validation.final_tier_level_snapshot or analysis.tier_level_snapshot,
                         'tier_label': validation.final_tier_label_snapshot or analysis.tier_label_snapshot,
                         'clinical_feedback': validation.final_feedback or analysis.explanation,
-                        'confirmed_misconceptions': confirmed_misconceptions,
-                        'rubric_breakdown': rubric_breakdown,
+                        'student_feedback': student_feedback_payload,
+                        'misconception_info': {
+                            'code': analysis.module_c_code,
+                            'category': analysis.four_tier_category,
+                        } if analysis and analysis.module_c_code else None,
                         'suggested_materials': analysis.suggested_materials_json or [],
                         'validator_name': validation.lecturer.full_name,
                         'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
@@ -2534,7 +2626,6 @@ def _build_submission_set_groups(user):
                     'evaluation': evaluation_payload,
                 })
 
-            # Retrieve prompt and reference model answer from latest version
             latest_version = versions[sorted(subs, key=lambda x: x.attempt_no)[-1].question_version_id]
             questions_payload.append({
                 'question_id': str(qid),
@@ -2572,6 +2663,27 @@ def _build_submission_set_groups(user):
         questions_payload.sort(key=lambda item: item['order_index'])
         status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
 
+        # Target 3: Kalkulasi Nilai Keseluruhan Paket Soal
+        total_questions = published_count.get(set_id, 0) or len(questions_payload)
+        validated_questions_count = 0
+        correct_questions_count = 0
+
+        for q_item in questions_payload:
+            if q_item['answered'] and q_item['attempts']:
+                latest_att = q_item['attempts'][-1]
+                if latest_att['status'] == 'VALIDATED':
+                    validated_questions_count += 1
+                    eval_d = latest_att.get('evaluation')
+                    if eval_d and float(eval_d.get('percentage_correct', 0)) >= 99.9:
+                        correct_questions_count += 1
+
+        is_fully_validated = (validated_questions_count == total_questions and total_questions > 0)
+        overall_score = (
+            round((correct_questions_count / total_questions) * 100.0, 1)
+            if total_questions > 0
+            else 0.0
+        )
+
         results.append({
             'set_id': str(q_set.id),
             'code': q_set.code,
@@ -2580,13 +2692,17 @@ def _build_submission_set_groups(user):
             'subject_name': q_set.subject.name,
             'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
             'topic_name': q_set.topic.name if q_set.topic else None,
-            'question_count': published_count.get(set_id, 0),
+            'question_count': total_questions,
             'answered_count': sum(1 for item in questions_payload if item['answered']),
             'total_attempts': sum(status_counts.values()),
             'max_attempt_no': max_attempt,
             'status_summary': status_summary,
             'status_counts': status_counts,
             'last_submitted_at': last_submitted,
+            'overall_score': overall_score,
+            'correct_count': correct_questions_count,
+            'validated_count': validated_questions_count,
+            'is_fully_validated': is_fully_validated,
             'questions': questions_payload,
         })
 
@@ -2747,15 +2863,6 @@ class LecturerSubmissionDetailView(APIView):
                 'reference_answers': [
                     {'id': str(answer.id), 'answer_key': answer.answer_key, 'text': answer.answer_text}
                     for answer in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')
-                ],
-                'indicators': [
-                    {
-                        'order_index': indicator.order_index,
-                        'label': indicator.label,
-                        'description': indicator.description or '',
-                        'weight': str(indicator.weight),
-                    }
-                    for indicator in ConceptIndicator.objects.filter(question_version=version).order_by('order_index')
                 ],
             },
             'answer_text': submission.answer_text,

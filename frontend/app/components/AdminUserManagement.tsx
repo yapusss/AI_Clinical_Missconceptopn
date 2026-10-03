@@ -23,6 +23,7 @@ type ManagedUser = {
   id: string;
   email: string;
   full_name: string;
+  nim?: string | null;
   is_active: boolean;
   created_at: string;
   subjects: Subject[];
@@ -51,6 +52,7 @@ export default function AdminUserManagement({
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     full_name: "",
+    nim: "",
     email: "",
     password: "",
     subject_ids: [] as string[],
@@ -85,7 +87,7 @@ export default function AdminUserManagement({
 
   function openCreate() {
     setEditing(null);
-    setForm({ full_name: "", email: "", password: "", subject_ids: [] });
+    setForm({ full_name: "", nim: "", email: "", password: "", subject_ids: [] });
     setShowForm(true);
     setError("");
   }
@@ -93,6 +95,7 @@ export default function AdminUserManagement({
     setEditing(user);
     setForm({
       full_name: user.full_name,
+      nim: user.nim ?? "",
       email: user.email,
       password: "",
       subject_ids: user.subjects.map((subject) => subject.id),
@@ -118,6 +121,7 @@ export default function AdminUserManagement({
           },
           body: JSON.stringify({
             full_name: form.full_name,
+            ...(role === "students" ? { nim: form.nim } : {}),
             email: form.email,
             password: form.password,
             ...(role === "lecturers" ? { subject_ids: form.subject_ids } : {}),
@@ -174,7 +178,7 @@ export default function AdminUserManagement({
 
   const visible = users
     .filter((user) =>
-      `${user.full_name} ${user.email}`.toLowerCase().includes(search.toLowerCase()) &&
+      `${user.full_name} ${user.nim ?? ""} ${user.email}`.toLowerCase().includes(search.toLowerCase()) &&
       (statusFilter === "ALL" || (statusFilter === "ACTIVE" ? user.is_active : !user.is_active)),
     )
     .sort((a, b) => {
@@ -209,7 +213,7 @@ export default function AdminUserManagement({
           onAdd={openCreate}
           searchValue={search}
           onSearchChange={setSearch}
-          searchPlaceholder="Cari nama atau email..."
+          searchPlaceholder={role === "students" ? "Cari nama, NIM, atau email..." : "Cari nama atau email..."}
           filters={<AppSelect value={statusFilter} onValueChange={setStatusFilter} ariaLabel="Filter status akun" className="min-w-36" options={[{ value: "ALL", label: "Semua status" }, { value: "ACTIVE", label: "Aktif" }, { value: "INACTIVE", label: "Nonaktif" }]} />}
           sortOptions={[{ value: "NAME_ASC", label: "Nama A-Z", direction: "asc" }, { value: "NAME_DESC", label: "Nama Z-A", direction: "desc" }, { value: "EMAIL_ASC", label: "Email A-Z", direction: "asc" }]}
           currentSort={sortOrder}
@@ -221,6 +225,7 @@ export default function AdminUserManagement({
           <thead className="border-b border-outline-variant/40 bg-surface-container-low text-on-surface-variant">
             <tr>
               <th className="px-5 py-4">Nama</th>
+              {role === "students" && <th className="px-5 py-4">NIM</th>}
               <th className="px-5 py-4">Email</th>
               {role === "lecturers" && <th className="px-5 py-4">Mata kuliah</th>}
               <th className="px-5 py-4">Status</th>
@@ -233,6 +238,7 @@ export default function AdminUserManagement({
                 <td className="px-5 py-4 font-semibold text-on-surface">
                   {user.full_name}
                 </td>
+                {role === "students" && <td className="px-5 py-4 font-mono-ui text-on-surface-variant">{user.nim || "-"}</td>}
                 <td className="px-5 py-4 text-on-surface-variant">
                   {user.email}
                 </td>
@@ -343,6 +349,9 @@ export default function AdminUserManagement({
               </button>
             </div>
             <dl className="mt-5 space-y-4 text-sm">
+              <div>
+                {role === "students" && <><dt className="text-xs font-semibold uppercase text-on-surface-variant">NIM</dt><dd className="mt-1 font-mono-ui text-on-surface">{viewing.nim || "-"}</dd></>}
+              </div>
               <div>
                 <dt className="text-xs font-semibold uppercase text-on-surface-variant">
                   Email
@@ -466,6 +475,10 @@ export default function AdminUserManagement({
                         className="form-input"
                       />
                     </div>
+                    {role === "students" && <div>
+                      <label htmlFor="account-nim" className="mb-1.5 block text-sm font-medium text-on-surface-variant">NIM</label>
+                      <input id="account-nim" value={form.nim} onChange={(event) => setForm({ ...form, nim: event.target.value.toUpperCase() })} required placeholder="Nomor Induk Mahasiswa" className="form-input" />
+                    </div>}
                   </div>
                 </section>
                 <section className="rounded-xl border border-outline-variant/50 p-4">

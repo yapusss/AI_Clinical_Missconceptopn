@@ -12,6 +12,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [isRegister, setIsRegister] = useState(false);
   const [namaLengkap, setNamaLengkap] = useState("");
+  const [nim, setNim] = useState("");
   const [identitas, setIdentitas] = useState("");
   const [kataSandi, setKataSandi] = useState("");
   const [konfirmasiSandi, setKonfirmasiSandi] = useState("");
@@ -30,7 +31,7 @@ export default function LoginPage() {
     try {
       if (isRegister) {
         if (kataSandi !== konfirmasiSandi) throw new Error("Konfirmasi kata sandi tidak sama.");
-        await register(namaLengkap, identitas, kataSandi);
+        await register(namaLengkap, nim, identitas, kataSandi);
       } else {
         await login(identitas, kataSandi);
       }
@@ -98,6 +99,13 @@ export default function LoginPage() {
             <div style={{ position: "relative" }}>
               <UserRound size={18} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
               <input type="text" autoComplete="name" required value={namaLengkap} onChange={(e) => setNamaLengkap(e.target.value)} placeholder="Nama lengkap" className="form-input" style={{ paddingLeft: "2.4rem" }} />
+            </div>
+          </label>}
+          {isRegister && <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
+            NIM
+            <div style={{ position: "relative" }}>
+              <UserRound size={18} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
+              <input type="text" autoComplete="username" required value={nim} onChange={(e) => setNim(e.target.value.toUpperCase())} placeholder="Nomor Induk Mahasiswa" className="form-input" style={{ paddingLeft: "2.4rem" }} />
             </div>
           </label>}
           <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>

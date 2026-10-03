@@ -13,6 +13,6 @@ ALTER TABLE question_versions
 
 
 class Migration(migrations.Migration):
-    dependencies = [('api', '0012_exam_packages')]
+    dependencies = [('api', '0015_allow_validation_corrections')]
 
     operations = [migrations.RunSQL(FORWARD_SQL, REVERSE_SQL)]

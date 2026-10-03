@@ -46,6 +46,7 @@ CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) NOT NULL UNIQUE,
     full_name VARCHAR(255) NOT NULL,
+    nim VARCHAR(32) UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     is_superuser BOOLEAN NOT NULL DEFAULT FALSE,
@@ -739,7 +740,6 @@ CREATE OR REPLACE PROCEDURE sp_publish_question_version(
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_total_weight DECIMAL(7, 4);
     v_question_id UUID;
     v_is_already_published BOOLEAN;
     v_subject_id UUID;
@@ -769,21 +769,11 @@ BEGIN
         RETURN;
     END IF;
 
-    SELECT COALESCE(SUM(weight), 0.0000) INTO v_total_weight
-    FROM concept_indicators
-    WHERE question_version_id = p_question_version_id;
-
-    IF ABS(v_total_weight - 1.0000) > 0.0001 THEN
-        RAISE EXCEPTION
-            'Publication failed: Concept indicator weights must sum exactly to 1.0000. Current sum: %',
-            v_total_weight;
-    END IF;
-
     UPDATE question_versions SET is_published = TRUE WHERE id = p_question_version_id;
 
     INSERT INTO audit_logs (actor_id, action, entity_name, entity_id, metadata_json)
     VALUES (p_actor_id, 'PUBLISH_QUESTION_VERSION', 'question_versions', p_question_version_id,
-            jsonb_build_object('total_indicators_weight', v_total_weight));
+            '{}'::jsonb);
 END;
 $$;
 

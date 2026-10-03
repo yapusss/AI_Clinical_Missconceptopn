@@ -1,5 +1,4 @@
 import re
-from decimal import Decimal
 
 from django.contrib.auth.hashers import check_password, make_password
 from rest_framework import serializers
@@ -10,13 +9,14 @@ from .models import User, UserRole
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'is_active', 'is_superuser', 'created_at']
+        fields = ['id', 'email', 'full_name', 'nim', 'is_active', 'is_superuser', 'created_at']
         read_only_fields = fields
 
 
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
+    nim = serializers.CharField(max_length=32)
     password = serializers.CharField(write_only=True, min_length=8)
 
     def validate_email(self, value):
@@ -24,10 +24,17 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError('Email sudah terdaftar.')
         return value
 
+    def validate_nim(self, value):
+        nim = value.strip().upper()
+        if User.objects.filter(nim__iexact=nim).exists():
+            raise serializers.ValidationError('NIM sudah terdaftar.')
+        return nim
+
     def create(self, validated_data):
         user = User.objects.create(
             email=validated_data['email'].lower(),
             full_name=validated_data['full_name'],
+            nim=validated_data['nim'].strip().upper(),
             password_hash=make_password(validated_data['password']),
         )
         UserRole.objects.create(user=user, role=UserRole.Role.STUDENT)
@@ -55,6 +62,7 @@ class LoginSerializer(serializers.Serializer):
 class AdminManagedUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
+    nim = serializers.CharField(max_length=32, required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     is_active = serializers.BooleanField(required=False, default=True)
     subject_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
@@ -67,19 +75,6 @@ class AdminManagedUserSerializer(serializers.Serializer):
 CODE_REGEX = re.compile(r'^[A-Z0-9][A-Z0-9\-]{1,62}[A-Z0-9]$')
 
 
-class ConceptIndicatorSerializer(serializers.Serializer):
-    id = serializers.UUIDField(read_only=True)
-    label = serializers.CharField(max_length=255)
-    description = serializers.CharField(required=False, allow_blank=True, default="")
-    weight = serializers.DecimalField(
-        max_digits=5,
-        decimal_places=4,
-        min_value=Decimal('0.0001'),
-        max_value=Decimal('1.0000'),
-    )
-    order_index = serializers.IntegerField(read_only=True)
-
-
 class QuestionVersionSerializer(serializers.Serializer):
     id = serializers.UUIDField(read_only=True)
     version_number = serializers.IntegerField(read_only=True)
@@ -88,14 +83,12 @@ class QuestionVersionSerializer(serializers.Serializer):
     model_answer = serializers.CharField(required=False, default='')
     is_published = serializers.BooleanField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
-    indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
 
 
 class QuestionItemCreateSerializer(serializers.Serializer):
     prompt = serializers.CharField()
     short_answer = serializers.CharField(required=False, allow_blank=True, default='')
     model_answer = serializers.CharField()
-    indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
 
 
 class QuestionSetCreateSerializer(serializers.Serializer):
@@ -108,7 +101,6 @@ class QuestionSetCreateSerializer(serializers.Serializer):
     prompt = serializers.CharField(required=False)
     short_answer = serializers.CharField(required=False, allow_blank=True, default='')
     model_answer = serializers.CharField(required=False)
-    indicators = ConceptIndicatorSerializer(many=True, required=False, default=list)
     questions = QuestionItemCreateSerializer(many=True, required=False, default=list)
     publish = serializers.BooleanField(default=False)
 
@@ -129,22 +121,11 @@ class QuestionSetCreateSerializer(serializers.Serializer):
             attrs['prompt'] = first_q['prompt']
             attrs['short_answer'] = first_q.get('short_answer', '')
             attrs['model_answer'] = first_q['model_answer']
-            attrs['indicators'] = first_q.get('indicators', [])
         else:
             if not attrs.get('prompt'):
                 raise serializers.ValidationError({'prompt': ['This field is required.']})
             if not attrs.get('model_answer'):
                 raise serializers.ValidationError({'model_answer': ['This field is required.']})
-
-        indicators = attrs.get('indicators', [])
-        publish = attrs.get('publish', False)
-
-        if indicators:
-            total_weight = sum(Decimal(str(i['weight'])) for i in indicators)
-            if publish and abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
-                raise serializers.ValidationError({
-                    'indicators': f"Total bobot indikator harus tepat 1.0000 untuk dapat dipublikasikan. Saat ini: {total_weight}"
-                })
 
         return attrs
 
@@ -156,19 +137,8 @@ class QuestionSetUpdateSerializer(serializers.Serializer):
     prompt = serializers.CharField(required=False)
     short_answer = serializers.CharField(required=False, allow_blank=True)
     model_answer = serializers.CharField(required=False)
-    indicators = ConceptIndicatorSerializer(many=True, required=False)
     publish = serializers.BooleanField(required=False)
 
-    def validate(self, attrs):
-        indicators = attrs.get('indicators')
-        publish = attrs.get('publish')
-        if indicators and publish:
-            total_weight = sum(Decimal(str(i['weight'])) for i in indicators)
-            if abs(total_weight - Decimal('1.0000')) > Decimal('0.0001'):
-                raise serializers.ValidationError({
-                    'indicators': f"Total bobot indikator harus tepat 1.0000 untuk dipublikasikan. Saat ini: {total_weight}"
-                })
-        return attrs
 
 class ExamPackageCreateSerializer(serializers.Serializer):
     subject_id = serializers.UUIDField()

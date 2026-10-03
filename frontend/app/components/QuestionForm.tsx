@@ -373,9 +373,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
   const goToSubject = () => {
     if (subjectId) {
-      router.push(`/questions/subject/${subjectId}`);
+      router.push(`/admin/subjects/${subjectId}`);
     } else {
-      router.push("/questions");
+      router.push("/admin/subjects");
     }
   };
 
@@ -483,7 +483,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           onClick={handleExit}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary cursor-pointer"
         >
-          <ArrowLeft size={14} /> Kembali ke daftar paket
+          <ArrowLeft size={14} /> Kembali ke mata kuliah
         </button>
       </div>
 

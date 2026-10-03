@@ -39,6 +39,7 @@ type QuestionSetReview = {
   code: string;
   title: string;
   description: string;
+  subject_id: string;
   subject_name: string;
   is_active: boolean;
   published_question_count: number;
@@ -75,7 +76,7 @@ const STATUS_META: Record<string, { label: string; badge: string }> = {
   REJECTED: { label: "Ditolak", badge: "badge-revoked" },
 };
 
-export default function QuestionSetReviewPage() {
+export default function QuestionSetReviewPage({ examPackage = false }: { examPackage?: boolean }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -90,7 +91,7 @@ export default function QuestionSetReviewPage() {
     setFetching(true);
     setError("");
     try {
-      setData(await apiFetch<QuestionSetReview>(`/questions/${setId}/review`));
+      setData(await apiFetch<QuestionSetReview>(`/${examPackage ? "exam-packages" : "questions"}/${setId}/review`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Gagal memuat progres mahasiswa.");
     } finally {
@@ -122,8 +123,8 @@ export default function QuestionSetReviewPage() {
 
   return (
     <PageContainer>
-      <Link href="/questions" className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline">
-        <ArrowLeft size={16} /> Kembali ke paket ujian
+      <Link href={data ? `/admin/subjects/${data.subject_id}` : "/admin/subjects"} className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline">
+        <ArrowLeft size={16} /> Kembali ke mata kuliah
       </Link>
 
       {data && (
@@ -211,7 +212,7 @@ export default function QuestionSetReviewPage() {
                     })}
                   </div>
 
-                  <Link href={`/questions/${setId}/students/${student.student_id}`} className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm">
+                  <Link href={`/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${student.student_id}`} className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm">
                     Tinjau &amp; Validasi Jawaban <ArrowRight size={15} />
                   </Link>
                 </div>

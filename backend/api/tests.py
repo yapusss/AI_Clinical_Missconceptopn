@@ -9,6 +9,8 @@ from rest_framework.test import APIClient
 from .models import (
     AuthToken,
     ConceptIndicator,
+    ExamPackage,
+    ExamPackageQuestion,
     Question,
     QuestionSet,
     QuestionVersion,
@@ -366,7 +368,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(body['questions'][0]['submission']['id'], str(submission.id))
         self.assertEqual(body['questions'][0]['submission']['answer_text'], 'Jawaban paket.')
         self.assertEqual(body['questions'][0]['model_answer'], self.version.model_answer)
-        self.assertEqual(body['questions'][0]['indicators'][0]['label'], 'Ketepatan Konsep')
+        self.assertNotIn('indicators', body['questions'][0])
         self.assertIsNone(body['questions'][0]['analysis'])
         self.assertEqual(body['questions'][1]['status'], 'UNANSWERED')
         self.assertIsNone(body['questions'][1]['submission'])
@@ -402,7 +404,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(body['answer_text'], 'Jawaban tanpa analisis.')
         self.assertEqual(body['question']['prompt'], self.version.prompt)
         self.assertEqual(body['question']['model_answer'], self.version.model_answer)
-        self.assertEqual(body['question']['indicators'][0]['label'], 'Ketepatan Konsep')
+        self.assertNotIn('indicators', body['question'])
         self.assertEqual(body['current_analysis'], None)
 
     def test_lecturer_submission_detail_is_scoped_to_assigned_subject(self):
@@ -536,6 +538,63 @@ class StudentSubmissionAPITests(TransactionTestCase):
         )
         self._auth(other)
         self.assertEqual(self.client.get(reverse('student-submission-set-list')).json(), [])
+
+
+class ExamPackageReviewScopingTests(TransactionTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.users')")
+            if cursor.fetchone()[0] is None:
+                cursor.execute(V2_SQL.read_text(encoding='utf-8'))
+
+    def setUp(self):
+        self.client = APIClient()
+        self.subject = Subject.objects.create(id=uuid.uuid4(), name='Review Subject', slug=f'review-{uuid.uuid4().hex}', description='')
+        self.lecturer = User.objects.create(id=uuid.uuid4(), email=f'lecturer-{uuid.uuid4().hex}@test.local', full_name='Lecturer', password_hash='!', is_active=True)
+        UserSubjectRole.objects.create(user=self.lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER)
+        self.student = User.objects.create(id=uuid.uuid4(), email=f'student-{uuid.uuid4().hex}@test.local', full_name='Included Student', password_hash='!', is_active=True)
+        self.other_student = User.objects.create(id=uuid.uuid4(), email=f'other-{uuid.uuid4().hex}@test.local', full_name='Other Student', password_hash='!', is_active=True)
+        for student in (self.student, self.other_student):
+            UserRole.objects.create(user=student, role=UserRole.Role.STUDENT)
+        question_set = QuestionSet.objects.create(id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer, code=f'BANK-{uuid.uuid4().hex}', title='Bank', is_active=True)
+        self.package_question, self.package_version = self._question(question_set, 1)
+        self.other_question, self.other_version = self._question(question_set, 2)
+        self.package = self._package('PACKAGE-A', self.package_question, self.package_version)
+        self.other_package = self._package('PACKAGE-B', self.other_question, self.other_version)
+        Submission.objects.create(id=uuid.uuid4(), student=self.student, subject=self.subject, question_version_id=self.package_version.id, answer_text='In package', status='SUBMITTED', attempt_no=1)
+        Submission.objects.create(id=uuid.uuid4(), student=self.other_student, subject=self.subject, question_version_id=self.other_version.id, answer_text='Other package', status='SUBMITTED', attempt_no=1)
+        token = AuthToken.generate(self.lecturer)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token.key}')
+
+    def _question(self, question_set, order_index):
+        question = Question.objects.create(id=uuid.uuid4(), question_set=question_set, order_index=order_index)
+        version = QuestionVersion.objects.create(id=uuid.uuid4(), question=question, version_number=1, prompt=f'Prompt {order_index}', model_answer='Answer', is_published=True, created_by=self.lecturer)
+        return question, version
+
+    def _package(self, prefix, question, version):
+        package = ExamPackage.objects.create(id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer, code=f'{prefix}-{uuid.uuid4().hex[:8]}', title=prefix, is_active=True)
+        ExamPackageQuestion.objects.create(id=uuid.uuid4(), exam_package=package, question=question, question_version=version, order_index=1)
+        return package
+
+    def test_review_list_excludes_students_from_other_packages(self):
+        response = self.client.get(reverse('exam-package-review', kwargs={'pk': self.package.id}))
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([student['student_id'] for student in body['students']], [str(self.student.id)])
+        self.assertEqual(body['students'][0]['all_submissions'][0]['question_id'], str(self.package_question.id))
+
+    def test_student_review_rejects_student_without_submission_in_package(self):
+        response = self.client.get(reverse('exam-package-student-review', kwargs={'pk': self.package.id, 'student_id': self.other_student.id}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_student_review_contains_only_requested_package_versions(self):
+        response = self.client.get(reverse('exam-package-student-review', kwargs={'pk': self.package.id, 'student_id': self.student.id}))
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([question['version_id'] for question in body['questions']], [str(self.package_version.id)])
+        self.assertEqual(body['questions'][0]['attempts'][0]['answer_text'], 'In package')
 
 
 class DomainSchemaInvariantTests(SimpleTestCase):
