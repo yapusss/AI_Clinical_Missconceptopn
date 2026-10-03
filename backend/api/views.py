@@ -1979,6 +1979,148 @@ class ExamPackageToggleActiveView(APIView):
         return Response({'id': str(package.id), 'is_active': package.is_active})
 
 
+class ExamPackageReviewView(APIView):
+    """Lecturer review roster, restricted to versions assigned to this exam package."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        items = list(ExamPackageQuestion.objects.filter(exam_package=package).select_related('question_version').order_by('order_index'))
+        version_ids = [item.question_version_id for item in items]
+        submissions = list(Submission.objects.filter(question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        students = list(User.objects.filter(
+            id__in={submission.student_id for submission in submissions}, is_active=True,
+            userrole__role=UserRole.Role.STUDENT,
+        ).order_by('full_name', 'email').distinct())
+        allowed_student_ids = {student.id for student in students}
+        submissions = [submission for submission in submissions if submission.student_id in allowed_student_ids]
+        analyses = {
+            analysis.submission_id: analysis
+            for analysis in LlmAnalysis.objects.filter(submission_id__in=[submission.id for submission in submissions], is_current=True)
+        }
+        validations = {
+            validation.analysis_id: validation
+            for validation in Validation.objects.filter(analysis_id__in=[analysis.id for analysis in analyses.values()])
+        }
+        item_by_version = {item.question_version_id: item for item in items}
+        rows = []
+        for student in students:
+            student_submissions = [submission for submission in submissions if submission.student_id == student.id]
+            all_submissions = []
+            for submission in student_submissions:
+                item = item_by_version[submission.question_version_id]
+                analysis = analyses.get(submission.id)
+                validation = validations.get(analysis.id) if analysis else None
+                all_submissions.append({
+                    'question_id': str(item.question_id), 'order_index': item.order_index,
+                    'question_prompt_preview': item.question_version.prompt[:160] + ('...' if len(item.question_version.prompt) > 160 else ''),
+                    'submission_id': str(submission.id), 'attempt_no': submission.attempt_no,
+                    'status': submission.status, 'submitted_at': submission.submitted_at,
+                    'analysis_id': str(analysis.id) if analysis else None,
+                    'validation_status': validation.status if validation else None,
+                })
+            rows.append({
+                'student_id': str(student.id), 'student_name': student.full_name, 'student_email': student.email,
+                'answered_count': len({submission.question_version_id for submission in student_submissions}),
+                'published_question_count': len(items), 'total_attempts_count': len(student_submissions),
+                'all_submissions': all_submissions,
+            })
+        return Response({
+            'id': str(package.id), 'code': package.code, 'title': package.title,
+            'description': package.description or '', 'subject_id': str(package.subject_id),
+            'subject_name': package.subject.name, 'is_active': package.is_active,
+            'published_question_count': len(items), 'roster_scope': 'submitted_students',
+            'unsubmitted_roster_available': False, 'students': rows,
+        })
+
+
+class ExamPackageStudentReviewView(APIView):
+    """One student's answers, analysis, and validation state for one exact exam package."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, student_id):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        items = list(ExamPackageQuestion.objects.filter(exam_package=package).select_related('question_version').order_by('order_index'))
+        version_ids = [item.question_version_id for item in items]
+        try:
+            student = User.objects.filter(
+                pk=student_id, is_active=True, userrole__role=UserRole.Role.STUDENT,
+                submissions__question_version_id__in=version_ids,
+            ).distinct().get()
+        except User.DoesNotExist:
+            return Response({'detail': 'Mahasiswa belum mengumpulkan paket ini.'}, status=status.HTTP_404_NOT_FOUND)
+
+        submissions = list(Submission.objects.filter(student=student, question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        analyses = {
+            analysis.submission_id: analysis
+            for analysis in LlmAnalysis.objects.filter(submission_id__in=[submission.id for submission in submissions], is_current=True)
+        }
+        validations = {
+            validation.analysis_id: validation
+            for validation in Validation.objects.filter(analysis_id__in=[analysis.id for analysis in analyses.values()]).select_related('lecturer')
+        }
+        rows = []
+        for item in items:
+            attempts = []
+            for submission in submissions:
+                if submission.question_version_id != item.question_version_id:
+                    continue
+                analysis = analyses.get(submission.id)
+                validation = validations.get(analysis.id) if analysis else None
+                attempts.append({
+                    'submission_id': str(submission.id), 'attempt_no': submission.attempt_no, 'status': submission.status,
+                    'tier1_answer': submission.tier1_answer or '', 'tier2_confidence': submission.tier2_confidence or 1,
+                    'tier3_reason': submission.tier3_reason or submission.answer_text, 'tier4_confidence': submission.tier4_confidence or 1,
+                    'heuristic_flags': submission.heuristic_flags or [], 'answer_text': submission.answer_text, 'submitted_at': submission.submitted_at,
+                    'analysis': {
+                        'id': str(analysis.id), 'run_number': analysis.run_number, 'percentage_correct': str(analysis.percentage_correct),
+                        'tier_level': analysis.tier_level_snapshot, 'tier_label': analysis.tier_label_snapshot,
+                        'confidence': str(analysis.confidence), 'explanation': analysis.explanation, 'execution_time_ms': analysis.execution_time_ms,
+                        'module_a_score': analysis.module_a_score, 'module_b_score': analysis.module_b_score,
+                        'module_c_code': analysis.module_c_code, 'four_tier_category': analysis.four_tier_category,
+                        'risk_level': analysis.risk_level, 'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        'validation': {'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
+                            'final_tier_level': validation.final_tier_level_snapshot, 'final_feedback': validation.final_feedback,
+                            'lecturer_name': validation.lecturer.full_name, 'validated_at': validation.validated_at} if validation else None,
+                    } if analysis else None,
+                })
+            attempts.sort(key=lambda attempt: attempt['attempt_no'], reverse=True)
+            rows.append({'question_id': str(item.question_id), 'order_index': item.order_index,
+                         'version_id': str(item.question_version_id), 'version_number': item.question_version.version_number,
+                         'prompt': item.question_version.prompt, 'model_answer': item.question_version.model_answer,
+                         'status': attempts[0]['status'] if attempts else 'UNANSWERED', 'attempts': attempts})
+
+        validated = [row['attempts'][0] for row in rows if row['attempts'] and row['attempts'][0]['status'] == 'VALIDATED']
+        correct = sum(1 for attempt in validated if float(((attempt['analysis'] or {}).get('validation') or {}).get('final_percentage') or (attempt['analysis'] or {}).get('percentage_correct') or 0) >= 99.9)
+        return Response({
+            'package': {'id': str(package.id), 'code': package.code, 'title': package.title,
+                        'description': package.description or '', 'subject_id': str(package.subject_id), 'subject_name': package.subject.name},
+            'student': {'id': str(student.id), 'name': student.full_name, 'email': student.email},
+            'published_question_count': len(rows), 'answered_count': sum(bool(row['attempts']) for row in rows),
+            'total_attempts_count': sum(len(row['attempts']) for row in rows),
+            'summary': {'total_questions': len(rows), 'validated_count': len(validated), 'correct_count': correct,
+                        'overall_score': round(correct / len(rows) * 100, 1) if rows else 0.0,
+                        'is_all_validated': bool(rows) and len(validated) == len(rows)},
+            'questions': rows,
+        })
+
+
 # SPRINT 3: STUDENT SUBMISSION API (UC-01 / P3)
 # ============================================================================
 

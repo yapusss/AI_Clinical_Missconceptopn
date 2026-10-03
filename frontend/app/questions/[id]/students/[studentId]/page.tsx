@@ -174,7 +174,7 @@ const fmtPct = (num: number) => {
   return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
 };
 
-export default function StudentPackageReviewPage() {
+export default function StudentPackageReviewPage({ examPackage = false }: { examPackage?: boolean }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams<{ id: string; studentId: string }>();
@@ -207,7 +207,7 @@ export default function StudentPackageReviewPage() {
     setError("");
     try {
       const res = await apiFetch<PackageReview>(
-        `/questions/${setId}/students/${studentId}/review`
+        `/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${studentId}/review`
       );
       setData(res);
     } catch (caught) {
@@ -420,7 +420,7 @@ export default function StudentPackageReviewPage() {
   return (
     <PageContainer>
       <Link
-        href={`/questions/${setId}`}
+        href={`/${examPackage ? "exam-packages" : "questions"}/${setId}`}
         className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary no-underline transition-colors"
       >
         <ArrowLeft size={14} /> Kembali ke daftar mahasiswa

@@ -76,7 +76,7 @@ const STATUS_META: Record<string, { label: string; badge: string }> = {
   REJECTED: { label: "Ditolak", badge: "badge-revoked" },
 };
 
-export default function QuestionSetReviewPage() {
+export default function QuestionSetReviewPage({ examPackage = false }: { examPackage?: boolean }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -91,7 +91,7 @@ export default function QuestionSetReviewPage() {
     setFetching(true);
     setError("");
     try {
-      setData(await apiFetch<QuestionSetReview>(`/questions/${setId}/review`));
+      setData(await apiFetch<QuestionSetReview>(`/${examPackage ? "exam-packages" : "questions"}/${setId}/review`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Gagal memuat progres mahasiswa.");
     } finally {
@@ -212,7 +212,7 @@ export default function QuestionSetReviewPage() {
                     })}
                   </div>
 
-                  <Link href={`/questions/${setId}/students/${student.student_id}`} className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm">
+                  <Link href={`/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${student.student_id}`} className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm">
                     Tinjau &amp; Validasi Jawaban <ArrowRight size={15} />
                   </Link>
                 </div>
