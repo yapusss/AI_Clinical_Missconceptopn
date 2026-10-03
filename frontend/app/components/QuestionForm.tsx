@@ -577,15 +577,12 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                   </label>
                   <AppSelect
                     value={subjectId}
-                    onValueChange={(val) => {
-                      if (isReadOnly) return;
-                      setIsDirty(true);
-                      setSubjectId(val);
-                    }}
-                    disabled={isEditing || isReadOnly}
+                    onValueChange={() => {}}
+                    disabled
+                    showChevron={false}
                     className="mt-1 w-full"
                     ariaLabel="Mata Kuliah"
-                    placeholder="Pilih mata kuliah"
+                    placeholder="Mata kuliah"
                     options={subjects.map((s) => ({ value: s.id, label: s.name }))}
                   />
                 </div>

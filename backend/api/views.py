@@ -7,9 +7,8 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils.text import slugify
 from django.utils.html import strip_tags
-from django.db import connection, transaction, IntegrityError
+from django.db import connection, transaction
 from django.db.models import Avg, Count, Q
-from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from django.http import HttpResponse
 from openpyxl import Workbook, load_workbook
@@ -1582,15 +1581,27 @@ class QuestionDetailView(APIView):
         if not is_lecturer_for_subject(request.user, q_set.subject_id):
             return Response({'detail': 'Anda tidak berwenang menghapus soal ini.'}, status=status.HTTP_403_FORBIDDEN)
 
-        try:
-            with transaction.atomic():
-                q_set.delete()
-        except (ProtectedError, IntegrityError):
-            # Already used by a published exam package or has student answers:
-            # keep every row intact so those records never change, and simply
-            # hide the set from the active bank.
+        question_ids = list(Question.objects.filter(question_set=q_set).values_list('id', flat=True))
+        version_ids = list(QuestionVersion.objects.filter(question_id__in=question_ids).values_list('id', flat=True))
+
+        worked_on = Submission.objects.filter(question_version_id__in=version_ids).exists()
+        in_published_package = ExamPackageQuestion.objects.filter(
+            question_id__in=question_ids, exam_package__is_active=True
+        ).exists()
+
+        if worked_on or in_published_package:
+            # Keep every row intact (versions, AI analyses, submissions) so
+            # published exams and student work never change. Hide the set from
+            # the active bank; it stays visible on the exam/review pages.
             q_set.is_active = False
             q_set.save(update_fields=['is_active'])
+        else:
+            # Only referenced by draft packages (if at all) and nobody has
+            # worked on it yet: detach it from those drafts, then delete.
+            with transaction.atomic():
+                ExamPackageQuestion.objects.filter(question_id__in=question_ids).delete()
+                q_set.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

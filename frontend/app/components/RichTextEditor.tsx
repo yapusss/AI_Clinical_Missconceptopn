@@ -3,7 +3,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
   Bold,
@@ -20,6 +19,7 @@ import {
   Undo2,
 } from "lucide-react";
 import RichTextContent from "./RichTextContent";
+import ResizableImage from "./ResizableImage";
 
 type Props = {
   value: string;
@@ -89,7 +89,7 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
       StarterKit.configure({
         link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" } },
       }),
-      Image.configure({ inline: false, allowBase64: false }),
+      ResizableImage.configure({ inline: false, allowBase64: false }),
       Placeholder.configure({ placeholder: placeholder ?? "" }),
     ],
     content: value || "",

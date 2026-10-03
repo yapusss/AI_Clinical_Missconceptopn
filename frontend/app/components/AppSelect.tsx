@@ -14,6 +14,7 @@ type Props = {
   className?: string;
   ariaLabel?: string;
   trailingIcon?: ReactNode; // Supports custom icon (e.g. Filter) while keeping the trigger intact
+  showChevron?: boolean;
 };
 
 export default function AppSelect({
@@ -25,6 +26,7 @@ export default function AppSelect({
   className = "",
   ariaLabel,
   trailingIcon,
+  showChevron = true,
 }: Props) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -56,7 +58,7 @@ export default function AppSelect({
         onClick={() => setOpen((current) => !current)}
       >
         <span className="truncate pr-2">{selected?.label ?? placeholder}</span>
-        {trailingIcon ? (
+        {!showChevron ? null : trailingIcon ? (
           <span className="shrink-0 text-on-surface-variant/80 transition-colors">
             {trailingIcon}
           </span>

@@ -543,6 +543,49 @@ main:not([data-scrolled]) > header {
   pointer-events: none;
 }
 
+/* Resizable image node in the editor */
+.rte-image-node {
+  display: block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.rte-image-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.rte-image-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+}
+
+.rte-image-node[data-selected="true"] .rte-image-wrap {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 0.6rem;
+}
+
+.rte-image-handle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: nwse-resize;
+}
+
+.rte-image-node[data-resizing="true"] {
+  user-select: none;
+}
+
 
 /* App Shell */
 .app-shell {
