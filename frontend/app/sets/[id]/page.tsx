@@ -82,6 +82,7 @@ function AnswerSetContent() {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const storageKey = setId && user ? `exam_response_${setId}_${user.id}` : null;
+  const passwordKey = setId ? `exam_package_password_${setId}` : null;
 
   // 1. Load Data Soal & Pulihkan Jawaban
   const load = useCallback(async () => {
@@ -93,8 +94,9 @@ function AnswerSetContent() {
     setFetching(true);
     setError("");
     try {
+      const password = passwordKey ? sessionStorage.getItem(passwordKey) ?? "" : "";
       const res = await apiFetch<StudentSet>(
-        `/student/sets?code=${encodeURIComponent(code)}`,
+        `/student/sets?code=${encodeURIComponent(code)}&password=${encodeURIComponent(password)}`,
       );
       setData(res);
 
@@ -125,7 +127,7 @@ function AnswerSetContent() {
     } finally {
       setFetching(false);
     }
-  }, [code, storageKey]);
+  }, [code, storageKey, passwordKey]);
 
   useEffect(() => {
     if (loading) return;
@@ -255,7 +257,7 @@ function AnswerSetContent() {
 
       await apiFetch(`/student/sets/${setId}/submissions`, {
         method: "POST",
-        body: JSON.stringify({ answers: payloadAnswers }),
+        body: JSON.stringify({ answers: payloadAnswers, password: passwordKey ? sessionStorage.getItem(passwordKey) ?? "" : "" }),
       });
 
       if (storageKey) {

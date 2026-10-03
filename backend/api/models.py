@@ -183,11 +183,29 @@ class ExamPackage(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=False)
+    opens_at = models.DateTimeField(null=True, blank=True)
+    closes_at = models.DateTimeField(null=True, blank=True)
+    duration_minutes = models.PositiveIntegerField(null=True, blank=True)
+    max_attempts = models.PositiveIntegerField(null=True, blank=True)
+    password_hash = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'exam_packages'
+        managed = False
+
+
+class ExamPackageAttempt(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    exam_package = models.ForeignKey(ExamPackage, on_delete=models.RESTRICT, db_column='exam_package_id')
+    student = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='student_id')
+    attempt_number = models.PositiveIntegerField()
+    started_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'exam_package_attempts'
         managed = False
 
 

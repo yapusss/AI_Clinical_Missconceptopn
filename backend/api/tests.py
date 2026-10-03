@@ -1,7 +1,9 @@
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from django.db import connection
+from django.utils import timezone
 from django.test import SimpleTestCase, TransactionTestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -10,6 +12,7 @@ from .models import (
     AuthToken,
     ConceptIndicator,
     ExamPackage,
+    ExamPackageAttempt,
     ExamPackageQuestion,
     Question,
     QuestionSet,
@@ -625,6 +628,93 @@ class StudentSubmissionAPITests(TransactionTestCase):
             str(other_version.id),
             {question['version_id'] for question in detail.json()['questions']},
         )
+
+    def test_student_lookup_rejects_closed_and_password_protected_packages(self):
+        self.exam_package.closes_at = timezone.now() - timedelta(minutes=1)
+        self.exam_package.save(update_fields=['closes_at'])
+        self._auth(self.student)
+        response = self.client.get(reverse('student-set-lookup'), {'code': self.exam_package.code})
+        self.assertEqual(response.status_code, 403)
+
+        self.exam_package.closes_at = None
+        from django.contrib.auth.hashers import make_password
+        self.exam_package.password_hash = make_password('rahasia')
+        self.exam_package.save(update_fields=['closes_at', 'password_hash'])
+        self.assertEqual(self.client.get(reverse('student-set-lookup'), {'code': self.exam_package.code}).status_code, 403)
+        response = self.client.get(reverse('student-set-lookup'), {'code': self.exam_package.code, 'password': 'rahasia'})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('password_hash', response.json())
+
+    def test_student_package_submission_enforces_attempt_limit(self):
+        self.exam_package.max_attempts = 1
+        self.exam_package.save(update_fields=['max_attempts'])
+        self._auth(self.student)
+        answers = [{'question_id': str(self.question.id), 'tier1_answer': 'Kesimpulan', 'tier2_confidence': 4, 'tier3_reason': 'Alasan lengkap', 'tier4_confidence': 4}]
+        self.assertEqual(self._submit_package(answers).status_code, 201)
+        self.assertEqual(self._submit_package(answers).status_code, 403)
+        self.assertEqual(ExamPackageAttempt.objects.filter(exam_package=self.exam_package, student=self.student, submitted_at__isnull=False).count(), 1)
+
+
+class ExamPackageDuplicateTests(TransactionTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.users')")
+            if cursor.fetchone()[0] is None:
+                cursor.execute(V2_SQL.read_text(encoding='utf-8'))
+
+    def setUp(self):
+        self.client = APIClient()
+        self.subject = Subject.objects.create(id=uuid.uuid4(), name='Duplicate Subject', slug=f'duplicate-{uuid.uuid4().hex}', description='')
+        self.lecturer = User.objects.create(id=uuid.uuid4(), email=f'duplicate-lecturer-{uuid.uuid4().hex}@test.local', full_name='Lecturer', password_hash='!', is_active=True)
+        UserSubjectRole.objects.create(user=self.lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER)
+        question_set = QuestionSet.objects.create(id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer, code=f'BANK-{uuid.uuid4().hex[:8].upper()}', title='Bank', is_active=True)
+        self.question = Question.objects.create(id=uuid.uuid4(), question_set=question_set, order_index=1)
+        self.version = QuestionVersion.objects.create(id=uuid.uuid4(), question=self.question, version_number=1, prompt='Prompt', model_answer='Answer', is_published=True, created_by=self.lecturer)
+        self.package = ExamPackage.objects.create(
+            id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer,
+            code='DUPLICATE-PACKAGE', title='Paket Asli', description='Deskripsi asli', is_active=True,
+            opens_at=timezone.now(), closes_at=timezone.now() + timedelta(hours=1),
+            duration_minutes=45, max_attempts=2, password_hash='stored-password-hash',
+        )
+        ExamPackage.objects.create(
+            id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer,
+            code='DUPLICATE-PACKAGE-COPY', title='Kode yang sudah dipakai',
+        )
+        ExamPackageQuestion.objects.create(id=uuid.uuid4(), exam_package=self.package, question=self.question, question_version=self.version, order_index=3)
+        self.student = User.objects.create(id=uuid.uuid4(), email=f'duplicate-student-{uuid.uuid4().hex}@test.local', full_name='Student', password_hash='!', is_active=True)
+        ExamPackageAttempt.objects.create(id=uuid.uuid4(), exam_package=self.package, student=self.student, attempt_number=1)
+        Submission.objects.create(id=uuid.uuid4(), student=self.student, subject=self.subject, exam_package=self.package, question_version_id=self.version.id, answer_text='Jawaban asli', attempt_no=1, status='SUBMITTED')
+        token = AuthToken.generate(self.lecturer)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token.key}')
+
+    def test_duplicate_copies_settings_and_selected_versions_as_draft(self):
+        response = self.client.post(reverse('exam-package-duplicate', kwargs={'pk': self.package.id}))
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        duplicate = ExamPackage.objects.get(pk=body['id'])
+        self.assertFalse(duplicate.is_active)
+        self.assertNotEqual(duplicate.code.upper(), self.package.code.upper())
+        self.assertLessEqual(len(duplicate.code), 64)
+        self.assertEqual(ExamPackage.objects.filter(code__iexact=duplicate.code).count(), 1)
+        self.assertEqual(duplicate.title, self.package.title)
+        self.assertEqual(duplicate.description, self.package.description)
+        self.assertEqual(duplicate.opens_at, self.package.opens_at)
+        self.assertEqual(duplicate.closes_at, self.package.closes_at)
+        self.assertEqual(duplicate.duration_minutes, self.package.duration_minutes)
+        self.assertEqual(duplicate.max_attempts, self.package.max_attempts)
+        self.assertEqual(duplicate.password_hash, self.package.password_hash)
+        item = ExamPackageQuestion.objects.get(exam_package=duplicate)
+        self.assertEqual(item.question_id, self.question.id)
+        self.assertEqual(item.question_version_id, self.version.id)
+        self.assertEqual(item.order_index, 3)
+        self.assertTrue(ExamPackageAttempt.objects.filter(exam_package=self.package).exists())
+        self.assertTrue(Submission.objects.filter(exam_package=self.package).exists())
+        self.assertFalse(ExamPackageAttempt.objects.filter(exam_package=duplicate).exists())
+        self.assertFalse(Submission.objects.filter(exam_package=duplicate).exists())
+        self.assertNotIn('password_hash', body)
 
 
 class ExamPackageReviewScopingTests(TransactionTestCase):
