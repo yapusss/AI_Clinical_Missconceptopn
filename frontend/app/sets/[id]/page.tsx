@@ -17,6 +17,7 @@ import { useAuth } from "../../components/AuthProvider";
 import { apiFetch } from "../../lib/api";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
+import RichTextContent from "../../components/RichTextContent";
 
 type StudentQuestion = {
   question_id: string;
@@ -370,9 +371,7 @@ function AnswerSetContent() {
               Soal Nomor {activeQuestion.order_index} dari{" "}
               {data?.questions.length}
             </span>
-            <p className="whitespace-pre-line text-base font-semibold text-on-surface leading-relaxed">
-              {activeQuestion.prompt}
-            </p>
+            <RichTextContent html={activeQuestion.prompt} className="text-base font-semibold leading-relaxed" />
           </section>
 
           {/* 1. Kesimpulan / Jawaban Singkat */}

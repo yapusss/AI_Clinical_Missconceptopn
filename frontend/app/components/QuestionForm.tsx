@@ -15,6 +15,7 @@ import {
 import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
 import PageContainer from "./PageContainer";
+import RichTextEditor from "./RichTextEditor";
 
 export type ExamQuestion = {
   id?: string;
@@ -55,6 +56,14 @@ const blankQuestion = (): ExamQuestion => ({
   alasan: "",
 });
 
+const htmlToPlain = (html: string) =>
+  html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export default function QuestionForm({ isEditing = false, isReadOnly = false, setId, initialData }: Props) {
   const router = useRouter();
 
@@ -69,12 +78,12 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       ? initialData.questions
       : [blankQuestion()]
   );
-  const [publish, setPublish] = useState(initialData?.is_published ?? false);
 
   const [activeIndex, setActiveIndex] = useState(0);
 
   const [isDirty, setIsDirty] = useState(false);
   const [showExitModal, setShowExitModal] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [pendingQuestionRemoval, setPendingQuestionRemoval] = useState<number | null>(null);
   const [validationModalError, setValidationModalError] = useState<string | null>(null);
@@ -151,7 +160,6 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       if (initialData.questions && initialData.questions.length > 0) {
         setQuestions(initialData.questions);
       }
-      setPublish(initialData.is_published ?? false);
     } else if (!isEditing) {
       const stored = sessionStorage.getItem("imported_package");
       if (stored) {
@@ -186,14 +194,55 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isDirty, isReadOnly]);
 
+  // Intercept in-app navigation (breadcrumb, sidebar, any link) while there are
+  // unsaved changes, so the lecturer is warned instead of silently losing work.
+  useEffect(() => {
+    if (!isDirty || isReadOnly) return;
+    const handleClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      // Links inside the rich text editor are content, not navigation.
+      if (anchor.closest('[contenteditable="true"]')) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href || href.startsWith("#")) return;
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPendingHref(`${url.pathname}${url.search}`);
+      setShowExitModal(true);
+    };
+    document.addEventListener("click", handleClick, true);
+    return () => document.removeEventListener("click", handleClick, true);
+  }, [isDirty, isReadOnly]);
+
+  // Guard the browser Back/Forward buttons. A duplicate history entry keeps the
+  // first Back press on the current route so we can show the warning instead of
+  // navigating away and losing the unsaved form.
+  useEffect(() => {
+    if (!isDirty || isReadOnly) return;
+    const currentUrl = window.location.href;
+    window.history.pushState({ __bankSoalGuard: true }, "", currentUrl);
+    const handlePopState = () => {
+      setPendingHref(null);
+      setShowExitModal(true);
+      window.history.pushState({ __bankSoalGuard: true }, "", currentUrl);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [isDirty, isReadOnly]);
+
   const selectedTopicName =
     topics.find((topic) => topic.id === topicId)?.name ?? initialData?.topic_name ?? "";
 
   const questionValidity = useMemo(() => {
     return questions.map((q) => {
-      const hasPrompt = q.prompt.trim().length > 0;
-      const hasShortAnswer = q.short_answer.trim().length > 0;
-      const hasAlasan = q.alasan.trim().length > 0;
+      const hasPrompt = htmlToPlain(q.prompt).length > 0;
+      const hasShortAnswer = htmlToPlain(q.short_answer).length > 0;
+      const hasAlasan = htmlToPlain(q.alasan).length > 0;
       return hasPrompt && hasShortAnswer && hasAlasan;
     });
   }, [questions]);
@@ -236,7 +285,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       return "Topik belum ditentukan. Tambahkan soal dari salah satu topik pada halaman mata kuliah.";
     }
     if (!title || title.trim() === "") {
-      return "Judul ujian belum diisi";
+      return "Judul bank soal belum diisi";
     }
 
     for (let i = 0; i < questions.length; i++) {
@@ -244,13 +293,13 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       const qNum = i + 1;
       const unfilled: string[] = [];
 
-      if (!q.prompt || q.prompt.trim() === "") {
+      if (htmlToPlain(q.prompt).length === 0) {
         unfilled.push("Pertanyaan");
       }
-      if (!q.short_answer || q.short_answer.trim() === "") {
-        unfilled.push("Jawaban Singkat");
+      if (htmlToPlain(q.short_answer).length === 0) {
+        unfilled.push("Jawaban");
       }
-      if (!q.alasan || q.alasan.trim() === "") {
+      if (htmlToPlain(q.alasan).length === 0) {
         unfilled.push("Alasan Jawaban");
       }
 
@@ -262,7 +311,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     return null;
   };
 
-  const executeSave = async (forceDraft: boolean = false) => {
+  const executeSave = async () => {
     const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
     if (!token) {
       router.replace("/login");
@@ -274,7 +323,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
     const validationError = validateForm();
     if (validationError) {
-      const actionName = isEditing ? "Gagal memperbarui paket ujian" : "Gagal membuat paket ujian";
+      const actionName = isEditing ? "Gagal memperbarui bank soal" : "Gagal membuat bank soal";
       const fullError = `${actionName}: ${validationError}`;
       setError(fullError);
       setValidationModalError(validationError);
@@ -283,8 +332,6 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     }
 
     setBusy(true);
-
-    const targetPublish = forceDraft ? false : publish;
 
     const payloadQuestions = questions.map((q) => ({
       prompt: q.prompt,
@@ -302,8 +349,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           prompt: payloadQuestions[0]?.prompt ?? "",
           short_answer: payloadQuestions[0]?.short_answer ?? "",
           model_answer: payloadQuestions[0]?.model_answer ?? "",
+          questions: payloadQuestions,
           indicators: [],
-          publish: targetPublish,
+          publish: true,
         };
 
         const res = await fetch(`/api/questions/${setId}`, {
@@ -317,13 +365,13 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.detail || "Gagal memperbarui paket ujian.");
+          throw new Error(data.detail || "Gagal memperbarui bank soal.");
         }
 
         setIsDirty(false);
         sessionStorage.removeItem("imported_package");
-        setMessage("Paket ujian berhasil diperbarui.");
-        setTimeout(() => goToSubject(), 1000);
+        setMessage("Bank soal berhasil diperbarui.");
+        setTimeout(() => finishExit(pendingHref), 1000);
       } else {
         const payload = {
           subject_id: subjectId,
@@ -331,7 +379,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           title,
           description,
           questions: payloadQuestions,
-          publish: targetPublish,
+          publish: true,
         };
 
         const res = await fetch("/api/questions", {
@@ -351,17 +399,17 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
             data.code?.[0] ||
             data.indicators ||
             data.detail ||
-            "Gagal membuat paket ujian.";
+            "Gagal membuat bank soal.";
           throw new Error(errMsgFromBackend);
         }
 
         setIsDirty(false);
         sessionStorage.removeItem("imported_package");
-        setMessage("Paket ujian berhasil dibuat.");
-        setTimeout(() => goToSubject(), 1000);
+        setMessage("Bank soal berhasil dibuat.");
+        setTimeout(() => finishExit(pendingHref), 1000);
       }
     } catch (err) {
-      const actionName = isEditing ? "Gagal memperbarui paket ujian" : "Gagal membuat paket ujian";
+      const actionName = isEditing ? "Gagal memperbarui bank soal" : "Gagal membuat bank soal";
       const errText = err instanceof Error ? err.message : "Terjadi kesalahan.";
       setError(`${actionName}: ${errText}`);
       setValidationModalError(errText);
@@ -379,16 +427,27 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     }
   };
 
+  const finishExit = (destination: string | null) => {
+    setIsDirty(false);
+    setPendingHref(null);
+    sessionStorage.removeItem("imported_package");
+    if (destination) {
+      router.push(destination);
+    } else {
+      goToSubject();
+    }
+  };
+
   const handleExit = () => {
     if (isReadOnly) {
       goToSubject();
       return;
     }
     if (isDirty) {
+      setPendingHref(null);
       setShowExitModal(true);
     } else {
-      sessionStorage.removeItem("imported_package");
-      goToSubject();
+      finishExit(null);
     }
   };
 
@@ -431,29 +490,25 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           <label className="block text-xs font-semibold uppercase text-on-surface-variant">
             Pertanyaan
           </label>
-          <textarea
+          <RichTextEditor
             value={q.prompt}
-            onChange={(e) => updateQuestionField(qIndex, "prompt", e.target.value)}
+            onChange={(html) => updateQuestionField(qIndex, "prompt", html)}
             disabled={isReadOnly}
-            required
-            rows={3}
             placeholder="Tuliskan butir soal konseptual di sini..."
-            className="form-input mt-1 w-full disabled:opacity-80"
+            className="mt-1"
           />
         </div>
 
         <div>
           <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-            Jawaban Singkat
+            Jawaban
           </label>
-          <textarea
+          <RichTextEditor
             value={q.short_answer}
-            onChange={(e) => updateQuestionField(qIndex, "short_answer", e.target.value)}
+            onChange={(html) => updateQuestionField(qIndex, "short_answer", html)}
             disabled={isReadOnly}
-            required
-            rows={2}
-            placeholder="Tuliskan jawaban singkat / kunci jawaban yang benar..."
-            className="form-input mt-1 w-full disabled:opacity-80"
+            placeholder="Tuliskan jawaban / kunci jawaban yang benar..."
+            className="mt-1"
           />
         </div>
 
@@ -461,14 +516,12 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           <label className="block text-xs font-semibold uppercase text-on-surface-variant">
             Alasan Jawaban
           </label>
-          <textarea
+          <RichTextEditor
             value={q.alasan}
-            onChange={(e) => updateQuestionField(qIndex, "alasan", e.target.value)}
+            onChange={(html) => updateQuestionField(qIndex, "alasan", html)}
             disabled={isReadOnly}
-            required
-            rows={4}
-            placeholder="Uraikan alasan / penjelasan rinci yang mendasari jawaban singkat di atas..."
-            className="form-input mt-1 w-full disabled:opacity-80"
+            placeholder="Uraikan alasan / penjelasan rinci yang mendasari jawaban di atas..."
+            className="mt-1"
           />
         </div>
       </div>
@@ -489,12 +542,12 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
       <header className="mb-6">
         <h1 className="font-display text-2xl font-bold text-on-surface">
-          {isReadOnly ? "Lihat Paket Soal" : isEditing ? "Edit Paket Soal" : "Buat Paket Ujian Baru"}
+          {isReadOnly ? "Lihat Bank Soal" : isEditing ? "Edit Bank Soal" : "Buat Bank Soal Baru"}
         </h1>
         <p className="text-sm text-on-surface-variant mt-1">
           {isReadOnly
-            ? "Tinjau butir pertanyaan, jawaban singkat, dan alasan jawaban pada paket ini."
-            : "Atur informasi paket soal, lalu lengkapi pertanyaan, jawaban singkat, dan alasan jawaban."}
+            ? "Tinjau butir pertanyaan, jawaban, dan alasan jawaban pada bank soal ini."
+            : "Atur informasi bank soal, lalu lengkapi pertanyaan, jawaban, dan alasan jawaban."}
         </p>
       </header>
 
@@ -516,7 +569,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           <div className="lg:col-span-3 space-y-6">
             <section className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 space-y-4">
-              <h2 className="font-semibold text-on-surface text-base">Identitas Paket Ujian</h2>
+              <h2 className="font-semibold text-on-surface text-base">Identitas Bank Soal</h2>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-semibold uppercase text-on-surface-variant">
@@ -524,15 +577,12 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                   </label>
                   <AppSelect
                     value={subjectId}
-                    onValueChange={(val) => {
-                      if (isReadOnly) return;
-                      setIsDirty(true);
-                      setSubjectId(val);
-                    }}
-                    disabled={isEditing || isReadOnly}
+                    onValueChange={() => {}}
+                    disabled
+                    showChevron={false}
                     className="mt-1 w-full"
                     ariaLabel="Mata Kuliah"
-                    placeholder="Pilih mata kuliah"
+                    placeholder="Mata kuliah"
                     options={subjects.map((s) => ({ value: s.id, label: s.name }))}
                   />
                 </div>
@@ -552,7 +602,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
                 <div>
                   <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-                    Judul Ujian
+                    Judul Bank Soal
                   </label>
                   <input
                     value={title}
@@ -562,24 +612,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                     }}
                     disabled={isReadOnly}
                     required
-                    placeholder="Judul asesmen konseptual..."
-                    className="form-input mt-1 w-full disabled:opacity-80"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold uppercase text-on-surface-variant">
-                    Instruksi Pengerjaan
-                  </label>
-                  <textarea
-                    value={description}
-                    onChange={(e) => {
-                      setIsDirty(true);
-                      setDescription(e.target.value);
-                    }}
-                    disabled={isReadOnly}
-                    placeholder="Petunjuk atau instruksi untuk mahasiswa..."
-                    rows={2}
+                    placeholder="Judul bank soal..."
                     className="form-input mt-1 w-full disabled:opacity-80"
                   />
                 </div>
@@ -626,20 +659,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
             </div>
 
             {!isReadOnly && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-outline-variant/30 pt-4">
-                <label className="flex items-center gap-2 text-sm text-on-surface cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={publish}
-                    onChange={(e) => {
-                      setIsDirty(true);
-                      setPublish(e.target.checked);
-                    }}
-                    className="h-4 w-4 rounded border-outline-variant text-primary"
-                  />
-                  Terbitkan paket sekarang
-                </label>
-
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-4 border-t border-outline-variant/30 pt-4">
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
@@ -654,7 +674,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                     className="btn-primary px-6 py-2.5 min-w-[140px] text-sm font-semibold justify-center cursor-pointer"
                   >
                     <Send size={16} />
-                    {busy ? "Menyimpan..." : isEditing ? "Perbarui Paket" : "Simpan Paket"}
+                    {busy ? "Menyimpan..." : isEditing ? "Perbarui Bank Soal" : "Simpan Bank Soal"}
                   </button>
                 </div>
               </div>
@@ -698,7 +718,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                 })}
               </div>
 
-              {!isEditing && !isReadOnly && (
+              {!isReadOnly && (
                 <button
                   type="button"
                   onClick={addQuestion}
@@ -734,17 +754,13 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
       <ConfirmDialog
         open={showSubmitModal}
-        title={isEditing ? "Perbarui Paket Ujian?" : "Simpan Paket Ujian?"}
-        description={
-          publish
-            ? "Apakah Anda yakin ingin menyimpan dan langsung menerbitkan paket soal ini untuk mahasiswa?"
-            : "Apakah Anda yakin ingin menyimpan paket soal ini sebagai draft?"
-        }
+        title={isEditing ? "Perbarui Bank Soal?" : "Simpan Bank Soal?"}
+        description="Apakah Anda yakin ingin menyimpan bank soal ini? Bank soal akan langsung diterbitkan agar dapat dipakai pada paket ujian."
         confirmLabel={isEditing ? "Ya, Perbarui" : "Ya, Simpan"}
         onCancel={() => setShowSubmitModal(false)}
         onConfirm={() => {
           setShowSubmitModal(false);
-          void executeSave(false);
+          void executeSave();
         }}
       />
 
@@ -762,12 +778,15 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
               </button>
             </div>
             <p className="text-sm leading-6 text-on-surface-variant">
-              Anda belum menyimpan soal ini. Apakah ingin menyimpannya sebagai draft atau membuang perubahan?
+              Perubahan pada bank soal ini belum disimpan. Jika Anda keluar sekarang, perubahan akan hilang.
             </p>
             <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setShowExitModal(false)}
+                onClick={() => {
+                  setShowExitModal(false);
+                  setPendingHref(null);
+                }}
                 className="btn-secondary text-xs cursor-pointer"
               >
                 Lanjut Edit
@@ -775,24 +794,22 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
               <button
                 type="button"
                 onClick={() => {
-                  setIsDirty(false);
                   setShowExitModal(false);
-                  sessionStorage.removeItem("imported_package");
-                  goToSubject();
+                  finishExit(pendingHref);
                 }}
                 className="btn-danger text-xs cursor-pointer"
               >
-                Buang Soal
+                Buang &amp; Keluar
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setShowExitModal(false);
-                  void executeSave(true);
+                  void executeSave();
                 }}
                 className="btn-primary text-xs cursor-pointer"
               >
-                Simpan ke Draft
+                Simpan &amp; Terbitkan
               </button>
             </div>
           </div>

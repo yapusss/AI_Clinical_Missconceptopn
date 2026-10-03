@@ -88,6 +88,21 @@ class StudentSubmissionAPITests(TransactionTestCase):
             is_published=True,
             created_by=self.student,
         )
+        self.exam_package = ExamPackage.objects.create(
+            id=uuid.uuid4(),
+            subject=self.subject,
+            created_by=self.student,
+            code=f'EXAM-{uuid.uuid4().hex[:8].upper()}',
+            title='Paket Ujian Test',
+            is_active=True,
+        )
+        ExamPackageQuestion.objects.create(
+            id=uuid.uuid4(),
+            exam_package=self.exam_package,
+            question=self.question,
+            question_version=self.version,
+            order_index=1,
+        )
         ConceptIndicator.objects.create(
             id=uuid.uuid4(),
             question_version=self.version,
@@ -113,7 +128,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         if user is not None:
             self._auth(user)
         url = reverse('student-submission-create', kwargs={
-            'pk': self.q_set.id, 'qid': self.question.id,
+            'pk': self.exam_package.id, 'qid': self.question.id,
         })
         return self.client.post(url, {'answer_text': answer}, format='json')
 
@@ -135,8 +150,10 @@ class StudentSubmissionAPITests(TransactionTestCase):
     def _submit_package(self, answers, user=None):
         if user is not None:
             self._auth(user)
-        url = reverse('student-package-submission-create', kwargs={'pk': self.q_set.id})
-        return self.client.post(url, {'answers': answers}, format='json')
+        return self.client.post(
+            reverse('student-package-submission-create', kwargs={'pk': self.exam_package.id}),
+            {'answers': answers}, format='json',
+        )
 
     # ------------------------------------------------------------------ lookup
 
@@ -202,10 +219,10 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self._auth(self.student)
         draft_q, draft_v = self._make_draft_question()
         url = reverse('student-submission-create', kwargs={
-            'pk': self.q_set.id, 'qid': draft_q.id,
+            'pk': self.exam_package.id, 'qid': draft_q.id,
         })
         resp = self.client.post(url, {'answer_text': 'Jawaban ke draft.'}, format='json')
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 404)
 
     def test_submit_without_global_student_role_blocked(self):
         self._auth(self.other)
@@ -453,21 +470,28 @@ class StudentSubmissionAPITests(TransactionTestCase):
             weight=weight,
             order_index=1,
         )
+        ExamPackageQuestion.objects.create(
+            id=uuid.uuid4(),
+            exam_package=self.exam_package,
+            question=q,
+            question_version=v,
+            order_index=order_index,
+        )
         return q, v
 
-    def test_submission_sets_group_by_set(self):
+    def test_submission_packages_group_by_package(self):
         self._auth(self.student)
         self._add_published_question()
         self._submit('Jawaban pertama.')
         self._submit('Jawaban kedua.')
 
-        resp = self.client.get(reverse('student-submission-set-list'))
+        resp = self.client.get(reverse('student-submission-package-list'))
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(len(body), 1)
         group = body[0]
-        self.assertEqual(group['set_id'], str(self.q_set.id))
-        self.assertEqual(group['code'], self.q_set.code)
+        self.assertEqual(group['package_id'], str(self.exam_package.id))
+        self.assertEqual(group['code'], self.exam_package.code)
         self.assertEqual(group['subject_name'], self.subject.name)
         self.assertEqual(group['question_count'], 2)
         self.assertEqual(group['answered_count'], 1)
@@ -493,7 +517,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
         other_q, _ = self._add_published_question()
         self._submit('Jawaban soal satu.')
         url = reverse('student-submission-create', kwargs={
-            'pk': self.q_set.id, 'qid': other_q.id,
+            'pk': self.exam_package.id, 'qid': other_q.id,
         })
         self.client.post(url, {'answer_text': 'Jawaban soal dua.'}, format='json')
 
@@ -501,7 +525,7 @@ class StudentSubmissionAPITests(TransactionTestCase):
             status='PENDING_VALIDATION'
         )
 
-        group = self.client.get(reverse('student-submission-set-list')).json()[0]
+        group = self.client.get(reverse('student-submission-package-list')).json()[0]
         self.assertEqual(group['status_summary'], 'MIXED')
         self.assertEqual(
             group['status_counts'], {'PENDING_VALIDATION': 1, 'SUBMITTED': 1}
@@ -509,17 +533,17 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(group['answered_count'], 2)
         self.assertEqual(group['question_count'], 2)
 
-    def test_submission_set_detail_endpoint(self):
+    def test_submission_package_detail_endpoint(self):
         self._auth(self.student)
         self._submit('Jawaban untuk rincian.')
-        url = reverse('student-submission-set-detail', kwargs={'pk': self.q_set.id})
+        url = reverse('student-submission-package-detail', kwargs={'pk': self.exam_package.id})
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body['set_id'], str(self.q_set.id))
+        self.assertEqual(body['package_id'], str(self.exam_package.id))
         self.assertEqual(body['questions'][0]['attempts'][0]['answer_text'], 'Jawaban untuk rincian.')
 
-        missing = reverse('student-submission-set-detail', kwargs={'pk': uuid.uuid4()})
+        missing = reverse('student-submission-package-detail', kwargs={'pk': uuid.uuid4()})
         self.assertEqual(self.client.get(missing).status_code, 404)
 
     def test_submission_set_list_scoped_to_student(self):
@@ -537,7 +561,70 @@ class StudentSubmissionAPITests(TransactionTestCase):
             user=other, subject=self.subject, role=UserSubjectRole.Role.STUDENT
         )
         self._auth(other)
-        self.assertEqual(self.client.get(reverse('student-submission-set-list')).json(), [])
+        self.assertEqual(self.client.get(reverse('student-submission-package-list')).json(), [])
+
+    def test_submission_packages_only_expose_selected_versions(self):
+        self._auth(self.student)
+        selected = [self.question]
+        selected_versions = [self.version]
+        for index in range(2, 11):
+            question = Question.objects.create(
+                id=uuid.uuid4(), question_set=self.q_set, order_index=index
+            )
+            version = QuestionVersion.objects.create(
+                id=uuid.uuid4(), question=question, version_number=1,
+                prompt=f'Pertanyaan {index}', model_answer='Referensi',
+                is_published=True, created_by=self.student,
+            )
+            if index <= 3:
+                ExamPackageQuestion.objects.create(
+                    id=uuid.uuid4(), exam_package=self.exam_package,
+                    question=question, question_version=version, order_index=index,
+                )
+                selected.append(question)
+                selected_versions.append(version)
+            elif index == 4:
+                other_package = ExamPackage.objects.create(
+                    id=uuid.uuid4(), subject=self.subject, created_by=self.student,
+                    code=f'OTHER-{uuid.uuid4().hex[:8].upper()}', title='Paket Lain',
+                    is_active=True,
+                )
+                ExamPackageQuestion.objects.create(
+                    id=uuid.uuid4(), exam_package=other_package,
+                    question=question, question_version=version, order_index=1,
+                )
+                other_question, other_version = question, version
+
+        Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            exam_package=self.exam_package, question_version_id=selected_versions[0].id,
+            answer_text='Jawaban paket utama.', attempt_no=1, status='SUBMITTED',
+        )
+        Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            exam_package=other_package, question_version_id=other_version.id,
+            answer_text='Jawaban paket lain.', attempt_no=1, status='SUBMITTED',
+        )
+
+        groups = self.client.get(reverse('student-submission-package-list')).json()
+        primary = next(group for group in groups if group['package_id'] == str(self.exam_package.id))
+        self.assertEqual(primary['question_count'], 3)
+        self.assertEqual(primary['answered_count'], 1)
+        self.assertEqual(
+            {question['question_id'] for question in primary['questions']},
+            {str(question.id) for question in selected},
+        )
+        self.assertNotIn(str(other_question.id), {question['question_id'] for question in primary['questions']})
+
+        detail = self.client.get(reverse(
+            'student-submission-package-detail', kwargs={'pk': self.exam_package.id}
+        ))
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()['question_count'], 3)
+        self.assertNotIn(
+            str(other_version.id),
+            {question['version_id'] for question in detail.json()['questions']},
+        )
 
 
 class ExamPackageReviewScopingTests(TransactionTestCase):

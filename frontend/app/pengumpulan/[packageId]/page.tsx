@@ -22,13 +22,14 @@ import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
+import RichTextContent from "../../components/RichTextContent";
 import { apiFetch } from "../../lib/api";
 import {
   fmtDate,
   getSemanticStatus,
   type StudentAttempt,
   type StudentQuestionGroup,
-  type StudentSetGroup,
+  type StudentPackageGroup,
 } from "../../lib/studentSubmissions";
 
 const errMsg = (err: unknown) =>
@@ -69,22 +70,22 @@ const fmtPct = (num: number) => {
   return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
 };
 
-export default function SubmissionSetDetailPage() {
+export default function SubmissionPackageDetailPage() {
   return (
     <Suspense fallback={null}>
-      <SubmissionSetDetailPageContent />
+      <SubmissionPackageDetailPageContent />
     </Suspense>
   );
 }
 
-function SubmissionSetDetailPageContent() {
+function SubmissionPackageDetailPageContent() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const params = useParams<{ setId: string }>();
+  const params = useParams<{ packageId: string }>();
   const searchParams = useSearchParams();
-  const setId = params?.setId as string | undefined;
+  const packageId = params?.packageId as string | undefined;
 
-  const [group, setGroup] = useState<StudentSetGroup | null>(null);
+  const [group, setGroup] = useState<StudentPackageGroup | null>(null);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
 
@@ -94,14 +95,14 @@ function SubmissionSetDetailPageContent() {
   >({});
 
   const load = useCallback(async () => {
-    if (!setId) {
+    if (!packageId) {
       setFetching(false);
       setError("Paket evaluasi tidak teridentifikasi.");
       return;
     }
     try {
-      const data = await apiFetch<StudentSetGroup>(
-        `/student/submission-sets/${setId}`,
+      const data = await apiFetch<StudentPackageGroup>(
+        `/student/submission-packages/${packageId}`,
       );
       setGroup(data);
 
@@ -117,7 +118,7 @@ function SubmissionSetDetailPageContent() {
     } finally {
       setFetching(false);
     }
-  }, [setId, searchParams]);
+  }, [packageId, searchParams]);
 
   useEffect(() => {
     if (loading) return;
@@ -195,7 +196,7 @@ function SubmissionSetDetailPageContent() {
         <div className="space-y-4">
           <PageHeader
             title={group.title}
-            description={`Mata Kuliah: ${group.subject_name}${group.topic_name ? ` • Topik: ${group.topic_name}` : ""} • Kode: ${group.code}`}
+            description={`Mata Kuliah: ${group.subject_name} • Kode: ${group.code}`}
             icon={GraduationCap}
             eyebrow={
               <span className="text-xs font-bold uppercase tracking-wider text-primary font-mono-ui">
@@ -265,9 +266,7 @@ function SubmissionSetDetailPageContent() {
                   <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                     Pertanyaan Konseptual
                   </h3>
-                  <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-on-surface font-medium">
-                    {activeQuestion.prompt}
-                  </p>
+                  <RichTextContent html={activeQuestion.prompt} className="mt-1.5 text-sm leading-relaxed font-medium" />
                 </div>
 
                 {!currentAttempt ? (
@@ -281,7 +280,7 @@ function SubmissionSetDetailPageContent() {
                       </p>
                     </div>
                     <Link
-                      href={`/sets/${group.set_id}?code=${encodeURIComponent(group.code)}`}
+                      href={`/sets/${group.package_id}?code=${encodeURIComponent(group.code)}`}
                       className="btn-primary shrink-0 no-underline"
                     >
                       <PenLine size={16} />
@@ -450,10 +449,13 @@ function SubmissionSetDetailPageContent() {
                                     Konsep Seharusnya
                                   </h4>
                                 </div>
-                                <p className="mt-2 text-xs leading-relaxed text-on-surface whitespace-pre-wrap">
-                                  {currentAttempt.evaluation.student_feedback?.konsep_seharusnya ||
-                                    activeQuestion.model_answer}
-                                </p>
+                                {currentAttempt.evaluation.student_feedback?.konsep_seharusnya ? (
+                                  <p className="mt-2 text-xs leading-relaxed text-on-surface whitespace-pre-wrap">
+                                    {currentAttempt.evaluation.student_feedback.konsep_seharusnya}
+                                  </p>
+                                ) : (
+                                  <RichTextContent html={activeQuestion.model_answer} className="mt-2 text-xs leading-relaxed" />
+                                )}
                               </div>
                             </div>
                           </div>

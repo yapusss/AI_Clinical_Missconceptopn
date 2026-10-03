@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookOpen, MoreVertical, TriangleAlert } from "lucide-react";
+import { BookOpen, MoreVertical, Pencil, TriangleAlert } from "lucide-react";
 import { useAuth } from "../components/AuthProvider";
+import FormModal from "../components/FormModal";
+import ImageUploadField from "../components/ImageUploadField";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
 
@@ -12,6 +14,7 @@ type SubjectOption = {
   id: string;
   slug: string;
   name: string;
+  image_url?: string;
 };
 
 type QuestionSet = {
@@ -47,6 +50,10 @@ export default function QuestionsPage() {
   const [sets, setSets] = useState<QuestionSet[]>([]);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [editingCourse, setEditingCourse] = useState<SubjectOption | null>(null);
+  const [courseForm, setCourseForm] = useState({ name: "", image_url: "" });
+  const [savingCourse, setSavingCourse] = useState(false);
+  const [courseError, setCourseError] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,6 +94,37 @@ export default function QuestionsPage() {
     void load().catch(() => setError("Gagal memuat mata kuliah."));
   }, [loading, user, token, router, load]);
 
+  const openCourseForm = (course: SubjectOption) => {
+    setEditingCourse(course);
+    setCourseForm({ name: course.name, image_url: course.image_url ?? "" });
+    setCourseError("");
+    setOpenMenuId(null);
+  };
+
+  const saveCourse = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingCourse || !token) return;
+    setSavingCourse(true);
+    setCourseError("");
+    try {
+      const response = await fetch(`/api/admin/subjects/${editingCourse.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: courseForm.name, image_url: courseForm.image_url }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || "Gagal menyimpan mata kuliah.");
+      }
+      setEditingCourse(null);
+      await load();
+    } catch (caught) {
+      setCourseError(caught instanceof Error ? caught.message : "Gagal menyimpan mata kuliah.");
+    } finally {
+      setSavingCourse(false);
+    }
+  };
+
   if (!mounted || loading) return null;
   if (!user) return null;
 
@@ -120,7 +158,12 @@ export default function QuestionsPage() {
                 className="group relative overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest shadow-sm transition-colors hover:border-primary/50"
               >
                 <Link href={`/questions/subject/${course.id}`} className="block no-underline">
-                  <div className="h-24 w-full" style={{ backgroundImage: COURSE_BANNERS[index % COURSE_BANNERS.length] }} aria-hidden="true" />
+                  {course.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={course.image_url} alt={course.name} className="h-24 w-full object-cover" />
+                  ) : (
+                    <div className="h-24 w-full" style={{ backgroundImage: COURSE_BANNERS[index % COURSE_BANNERS.length] }} aria-hidden="true" />
+                  )}
                   <div className="p-4">
                     <h2 className="font-semibold leading-snug text-on-surface transition-colors group-hover:text-primary">
                       {course.name}
@@ -150,12 +193,45 @@ export default function QuestionsPage() {
                     >
                       Kelola paket soal
                     </Link>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openCourseForm(course)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-on-surface hover:bg-surface-container cursor-pointer"
+                    >
+                      <Pencil size={14} /> Edit kartu
+                    </button>
                   </div>
                 )}
               </article>
             );
           })}
         </div>
+      )}
+
+      {editingCourse && (
+        <FormModal
+          title="Edit mata kuliah"
+          subtitle="Perbarui nama dan gambar kartu mata kuliah."
+          icon={BookOpen}
+          onClose={() => setEditingCourse(null)}
+          onSubmit={saveCourse}
+          footer={
+            <>
+              <button type="button" onClick={() => setEditingCourse(null)} className="btn-secondary w-full sm:w-auto">Batal</button>
+              <button type="submit" disabled={savingCourse} className="btn-primary w-full sm:w-auto">{savingCourse ? "Menyimpan..." : "Simpan"}</button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            {courseError && <div role="alert" className="rounded-lg border border-error/40 bg-error-container p-3 text-sm text-on-error-container">{courseError}</div>}
+            <div>
+              <label htmlFor="course-name" className="mb-1.5 block text-sm font-medium text-on-surface-variant">Nama mata kuliah</label>
+              <input id="course-name" value={courseForm.name} onChange={(event) => setCourseForm({ ...courseForm, name: event.target.value })} required className="form-input" />
+            </div>
+            <ImageUploadField label="Gambar kartu" value={courseForm.image_url} onChange={(url) => setCourseForm({ ...courseForm, image_url: url })} hint="Ditampilkan pada kartu mata kuliah." />
+          </div>
+        </FormModal>
       )}
     </PageContainer>
   );

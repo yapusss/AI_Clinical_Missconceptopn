@@ -26,6 +26,7 @@ import { useAuth } from "../../../../components/AuthProvider";
 import AppSelect from "../../../../components/AppSelect";
 import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
+import RichTextContent from "../../../../components/RichTextContent";
 import { apiFetch } from "../../../../lib/api";
 
 type AttemptItem = {
@@ -533,27 +534,21 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                     <span className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant block mb-1">
                       Pertanyaan Konseptual
                     </span>
-                    <p className="whitespace-pre-wrap text-[15px] font-medium text-on-surface leading-relaxed">
-                      {activeQuestion.prompt}
-                    </p>
+                    <RichTextContent html={activeQuestion.prompt} className="text-[15px] font-medium leading-relaxed" />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-2.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
                       Jawaban Singkat (Referensi)
                     </span>
-                    <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20">
-                      {activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ''}
-                    </p>
+                    <RichTextContent html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ''} className="text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-2.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
                       Alasan Referensi
                     </span>
-                    <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20">
-                      {activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ''}
-                    </p>
+                    <RichTextContent html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ''} className="text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
                   </div>
                 </div>
 

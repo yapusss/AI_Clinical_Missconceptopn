@@ -47,6 +47,7 @@ class Subject(models.Model):
     name = models.CharField(max_length=150, unique=True)
     slug = models.SlugField(max_length=150, unique=True)
     description = models.TextField(blank=True, null=True)
+    image_url = models.CharField(max_length=1000, blank=True, null=True)
     is_active = models.BooleanField(default=True)
     archived_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -311,6 +312,13 @@ class Submission(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     student = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='student_id', related_name='submissions')
     question_version_id = models.UUIDField()
+    exam_package = models.ForeignKey(
+        ExamPackage,
+        on_delete=models.RESTRICT,
+        db_column='exam_package_id',
+        null=True,
+        blank=True,
+    )
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
     answer_text = models.TextField()
     tier1_answer = models.CharField(max_length=255, null=True, blank=True)

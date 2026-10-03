@@ -1,8 +1,12 @@
 import csv
 import io
 import json
+import os
 import uuid
+from django.conf import settings
+from django.core.files.storage import default_storage
 from django.utils.text import slugify
+from django.utils.html import strip_tags
 from django.db import connection, transaction
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
@@ -150,6 +154,7 @@ class DashboardView(APIView):
                     'id': str(r.subject.id),
                     'slug': r.subject.slug,
                     'name': r.subject.name,
+                    'image_url': r.subject.image_url or '',
                 }
                 for r in role_rows
             ],
@@ -283,6 +288,12 @@ class DashboardView(APIView):
 
 def require_admin(request):
     return request.user.is_superuser
+
+
+def plain_text_preview(value, length):
+    """Collapse rich-text HTML into a single-line plain-text preview."""
+    text = ' '.join(strip_tags(str(value or '')).split())
+    return text[:length] + ('...' if len(text) > length else '')
 
 
 HELP_ROLES = {choice for choice, _ in HelpArticle.Role.choices}
@@ -578,7 +589,8 @@ def serialize_admin_subject(subject):
     ).select_related('user').order_by('user__full_name')
     return {
         'id': str(subject.id), 'name': subject.name, 'slug': subject.slug,
-        'description': subject.description or '', 'is_active': subject.is_active,
+        'description': subject.description or '', 'image_url': subject.image_url or '',
+        'is_active': subject.is_active,
         'lecturers': [{'id': str(role.user_id), 'full_name': role.user.full_name, 'email': role.user.email} for role in lecturer_roles],
         'topic_count': Topic.objects.filter(subject=subject).count(),
     }
@@ -597,19 +609,20 @@ class AdminSubjectDetailView(APIView):
         return Response(serialize_admin_subject(subject))
 
     def patch(self, request, pk):
-        if not require_admin(request):
-            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             subject = Subject.objects.get(pk=pk)
         except Subject.DoesNotExist:
             return Response({'detail': 'Mata kuliah tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        is_admin = require_admin(request)
+        if not is_admin and not is_lecturer_for_subject(request.user, subject.id):
+            return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
         name = str(request.data.get('name', subject.name)).strip()
         slug = slugify(str(request.data.get('slug', subject.slug)).strip() or name)
         if not name or not slug:
             return Response({'detail': 'Nama dan kode mata kuliah wajib diisi.'}, status=status.HTTP_400_BAD_REQUEST)
         if Subject.objects.exclude(pk=subject.pk).filter(name__iexact=name).exists() or Subject.objects.exclude(pk=subject.pk).filter(slug=slug).exists():
             return Response({'detail': 'Nama atau kode mata kuliah sudah digunakan.'}, status=status.HTTP_400_BAD_REQUEST)
-        if 'lecturer_ids' in request.data:
+        if is_admin and 'lecturer_ids' in request.data:
             lecturer_ids, error = valid_lecturer_ids(request.data['lecturer_ids'])
             if error:
                 return Response({'lecturer_ids': [error]}, status=status.HTTP_400_BAD_REQUEST)
@@ -618,7 +631,9 @@ class AdminSubjectDetailView(APIView):
         subject.slug = slug
         if 'description' in request.data:
             subject.description = str(request.data['description']).strip() or None
-        if 'is_active' in request.data:
+        if 'image_url' in request.data:
+            subject.image_url = str(request.data['image_url']).strip() or None
+        if is_admin and 'is_active' in request.data:
             subject.is_active = bool(request.data['is_active'])
         subject.save()
         return Response(serialize_admin_subject(subject))
@@ -634,7 +649,7 @@ class AdminTopicListView(APIView):
     def get(self, request, subject_id):
         if not require_admin(request) and not is_lecturer_for_subject(request.user, subject_id):
             return Response({'detail': 'Anda tidak memiliki akses ke mata kuliah ini.'}, status=status.HTTP_403_FORBIDDEN)
-        return Response([serialize_admin_topic(topic) for topic in Topic.objects.filter(subject_id=subject_id).order_by('name')])
+        return Response([serialize_admin_topic(topic) for topic in Topic.objects.filter(subject_id=subject_id).order_by('created_at')])
 
     def post(self, request, subject_id):
         try:
@@ -892,35 +907,48 @@ class QuestionImportCreateView(APIView):
         if not subject:
             return Response({'detail': 'Mata kuliah tidak ditemukan atau Anda belum memiliki akses ke mata kuliah terkait.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validasi Topik dari Sheet
-        distinct_topics = {
-            r['raw_data'].get('topic', '').strip()
-            for r in parsed_rows
-            if r['raw_data'].get('topic', '').strip()
-        }
+        # Topik dapat dipaksa dari konteks (lecturer mengimpor dari sebuah topik).
+        forced_topic = None
+        forced_topic_id = request.data.get('topic_id')
+        if forced_topic_id:
+            forced_topic = Topic.objects.filter(pk=forced_topic_id, subject=subject).first()
+            if not forced_topic:
+                return Response({'detail': 'Topik tidak ditemukan pada mata kuliah ini.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if len(distinct_topics) > 1:
-            return Response({
-                'detail': f"File impor hanya boleh berisi satu topik per paket ujian. Ditemukan beberapa topik: {', '.join(sorted(distinct_topics))}."
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        detected_topic_name = next(iter(distinct_topics)) if distinct_topics else ""
-        if not detected_topic_name:
-            return Response({
-                'detail': "Kolom TOPIK wajib diisi untuk semua baris soal di dalam file Excel."
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        matched_topic = Topic.objects.filter(subject=subject, name__iexact=detected_topic_name).first()
-        new_topic_detected = matched_topic is None
-
-        if new_topic_detected and request.data.get('create_topic') in [True, 'true', '1']:
-            matched_topic = Topic.objects.create(
-                id=uuid.uuid4(),
-                subject=subject,
-                name=detected_topic_name,
-                description=f"Dibuat otomatis dari impor bank soal.",
-            )
+        if forced_topic:
+            matched_topic = forced_topic
             new_topic_detected = False
+            detected_topic_name = forced_topic.name
+        else:
+            # Validasi Topik dari Sheet
+            distinct_topics = {
+                r['raw_data'].get('topic', '').strip()
+                for r in parsed_rows
+                if r['raw_data'].get('topic', '').strip()
+            }
+
+            if len(distinct_topics) > 1:
+                return Response({
+                    'detail': f"File impor hanya boleh berisi satu topik per paket ujian. Ditemukan beberapa topik: {', '.join(sorted(distinct_topics))}."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            detected_topic_name = next(iter(distinct_topics)) if distinct_topics else ""
+            if not detected_topic_name:
+                return Response({
+                    'detail': "Kolom TOPIK wajib diisi untuk semua baris soal di dalam file Excel."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            matched_topic = Topic.objects.filter(subject=subject, name__iexact=detected_topic_name).first()
+            new_topic_detected = matched_topic is None
+
+            if new_topic_detected and request.data.get('create_topic') in [True, 'true', '1']:
+                matched_topic = Topic.objects.create(
+                    id=uuid.uuid4(),
+                    subject=subject,
+                    name=detected_topic_name,
+                    description=f"Dibuat otomatis dari impor bank soal.",
+                )
+                new_topic_detected = False
 
         first_data = parsed_rows[0]['raw_data'] if parsed_rows else {}
         code = (request.data.get('code') or first_data.get('code') or f"IMP-{uuid.uuid4().hex[:6].upper()}").strip().upper()
@@ -998,26 +1026,25 @@ class QuestionImportTemplateView(APIView):
         headers = [
             "NOMOR_SOAL",
             "JUDUL_UJIAN",
-            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
-            "PERTANYAAN_KONSEPTUAL",
+            "PERTANYAAN",
             "JAWABAN_SINGKAT",
             "ALASAN_JAWABAN",
         ]
 
-        ws.merge_cells("A1:G4")
+        ws.merge_cells("A1:F4")
         banner_cell = ws["A1"]
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
             f"Pastikan seluruh soal pada file ini diperuntukkan bagi mata kuliah {target_subject.name}.\n"
-            f"Isi kolom pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
+            f"Isi judul ujian, instruksi, pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
         )
         banner_cell.fill = banner_fill
         banner_cell.font = banner_font
         banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for r in range(1, 5):
-            for c in range(1, 8):
+            for c in range(1, 7):
                 ws.cell(row=r, column=c).border = banner_border
             ws.row_dimensions[r].height = 18
 
@@ -1032,7 +1059,6 @@ class QuestionImportTemplateView(APIView):
             [
                 1,
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
-                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
                 "Berat semu menjadi lebih kecil.",
@@ -1041,7 +1067,6 @@ class QuestionImportTemplateView(APIView):
             [
                 2,
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
-                "Hukum Newton",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
                 "Karena keduanya bekerja pada benda yang sama.",
@@ -1102,9 +1127,8 @@ class QuestionExportView(APIView):
         headers = [
             "NOMOR_SOAL",
             "JUDUL_UJIAN",
-            "TOPIK",
             "DESKRIPSI_INSTRUKSI",
-            "PERTANYAAN_KONSEPTUAL",
+            "PERTANYAAN",
             "JAWABAN_SINGKAT",
             "ALASAN_JAWABAN",
         ]
@@ -1124,11 +1148,10 @@ class QuestionExportView(APIView):
             v = QuestionVersion.objects.filter(question=q).order_by('-version_number').first()
             ws.cell(row=row_idx, column=1, value=q.order_index)
             ws.cell(row=row_idx, column=2, value=q_set.title)
-            ws.cell(row=row_idx, column=3, value=q_set.topic.name if q_set.topic else "")
-            ws.cell(row=row_idx, column=4, value=q_set.description or "")
-            ws.cell(row=row_idx, column=5, value=v.prompt if v else "")
-            ws.cell(row=row_idx, column=6, value=(v.short_answer or "") if v else "")
-            ws.cell(row=row_idx, column=7, value=v.model_answer if v else "")
+            ws.cell(row=row_idx, column=3, value=q_set.description or "")
+            ws.cell(row=row_idx, column=4, value=v.prompt if v else "")
+            ws.cell(row=row_idx, column=5, value=(v.short_answer or "") if v else "")
+            ws.cell(row=row_idx, column=6, value=v.model_answer if v else "")
             row_idx += 1
 
         for col in ws.columns:
@@ -1225,6 +1248,9 @@ class QuestionListCreateView(APIView):
             qs = qs.filter(subject_id=subject_id)
         if topic_id:
             qs = qs.filter(topic_id=topic_id)
+        include_inactive = str(request.query_params.get('include_inactive', '')).lower() in ('1', 'true', 'yes')
+        if not include_inactive:
+            qs = qs.filter(is_active=True)
 
         qs = qs.select_related('subject', 'topic', 'created_by').order_by('-created_at')
         set_ids = [item.id for item in qs]
@@ -1266,7 +1292,7 @@ class QuestionListCreateView(APIView):
                         'question_id': str(question.id),
                         'order_index': question.order_index,
                         'version_number': v.version_number,
-                        'prompt_preview': v.prompt[:160] + ('...' if len(v.prompt) > 160 else ''),
+                        'prompt_preview': plain_text_preview(v.prompt, 160),
                         'is_published': v.is_published,
                     })
 
@@ -1377,6 +1403,48 @@ class QuestionListCreateView(APIView):
             'is_active': q_set.is_active,
             'message': 'Soal berhasil disimpan.',
         }, status=status.HTTP_201_CREATED)
+
+
+def _upsert_question_version(question, prompt, short_answer, model_answer, user):
+    """Create a new version when the latest is published, otherwise update it in place."""
+    canonical_text = short_answer or model_answer
+    latest_v = QuestionVersion.objects.filter(question=question).order_by('-version_number').first()
+    if latest_v and latest_v.is_published:
+        target_v = QuestionVersion.objects.create(
+            id=uuid.uuid4(), question=question, version_number=latest_v.version_number + 1,
+            prompt=prompt, short_answer=short_answer, model_answer=model_answer,
+            is_published=False, created_by=user,
+        )
+        ReferenceAnswer.objects.create(
+            id=uuid.uuid4(), question_version=target_v, answer_key='CANONICAL',
+            answer_text=canonical_text, answer_type='CANONICAL', is_primary=True,
+        )
+    elif latest_v:
+        latest_v.prompt = prompt
+        latest_v.short_answer = short_answer
+        latest_v.model_answer = model_answer
+        latest_v.save()
+        target_v = latest_v
+        ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
+        if ref:
+            ref.answer_text = canonical_text
+            ref.save(update_fields=['answer_text'])
+        else:
+            ReferenceAnswer.objects.create(
+                id=uuid.uuid4(), question_version=target_v, answer_key='CANONICAL',
+                answer_text=canonical_text, answer_type='CANONICAL', is_primary=True,
+            )
+    else:
+        target_v = QuestionVersion.objects.create(
+            id=uuid.uuid4(), question=question, version_number=1,
+            prompt=prompt, short_answer=short_answer, model_answer=model_answer,
+            is_published=False, created_by=user,
+        )
+        ReferenceAnswer.objects.create(
+            id=uuid.uuid4(), question_version=target_v, answer_key='CANONICAL',
+            answer_text=canonical_text, answer_type='CANONICAL', is_primary=True,
+        )
+    return target_v
 
 
 class QuestionDetailView(APIView):
@@ -1500,14 +1568,33 @@ class QuestionDetailView(APIView):
                     is_published=False,
                     created_by=request.user,
                 )
-                _sync_reference_answers(target_v, short_answer, model_answer)
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(),
+                    question_version=target_v,
+                    answer_key='CANONICAL',
+                    answer_text=canonical_text,
+                    answer_type='CANONICAL',
+                    is_primary=True,
+                )
             elif latest_v:
                 latest_v.prompt = prompt
                 latest_v.short_answer = short_answer
                 latest_v.model_answer = model_answer
                 latest_v.save()
                 target_v = latest_v
-                _sync_reference_answers(target_v, short_answer, model_answer)
+                ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
+                if ref:
+                    ref.answer_text = canonical_text
+                    ref.save(update_fields=['answer_text'])
+                else:
+                    ReferenceAnswer.objects.create(
+                        id=uuid.uuid4(),
+                        question_version=target_v,
+                        answer_key='CANONICAL',
+                        answer_text=canonical_text,
+                        answer_type='CANONICAL',
+                        is_primary=True,
+                    )
             else:
                 target_v = QuestionVersion.objects.create(
                     id=uuid.uuid4(),
@@ -1519,7 +1606,14 @@ class QuestionDetailView(APIView):
                     is_published=False,
                     created_by=request.user,
                 )
-                _sync_reference_answers(target_v, short_answer, model_answer)
+                ReferenceAnswer.objects.create(
+                    id=uuid.uuid4(),
+                    question_version=target_v,
+                    answer_key='CANONICAL',
+                    answer_text=canonical_text,
+                    answer_type='CANONICAL',
+                    is_primary=True,
+                )
 
             if data.get('publish', False) and not target_v.is_published:
                 with connection.cursor() as cursor:
@@ -1528,7 +1622,37 @@ class QuestionDetailView(APIView):
 
         return Response({'detail': 'Soal berhasil diperbarui.'})
 
+    def delete(self, request, pk):
+        try:
+            q_set = QuestionSet.objects.get(pk=pk)
+        except QuestionSet.DoesNotExist:
+            return Response({'detail': 'Soal tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
 
+        if not is_lecturer_for_subject(request.user, q_set.subject_id):
+            return Response({'detail': 'Anda tidak berwenang menghapus soal ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        question_ids = list(Question.objects.filter(question_set=q_set).values_list('id', flat=True))
+        version_ids = list(QuestionVersion.objects.filter(question_id__in=question_ids).values_list('id', flat=True))
+
+        worked_on = Submission.objects.filter(question_version_id__in=version_ids).exists()
+        in_published_package = ExamPackageQuestion.objects.filter(
+            question_id__in=question_ids, exam_package__is_active=True
+        ).exists()
+
+        if worked_on or in_published_package:
+            # Keep every row intact (versions, AI analyses, submissions) so
+            # published exams and student work never change. Hide the set from
+            # the active bank; it stays visible on the exam/review pages.
+            q_set.is_active = False
+            q_set.save(update_fields=['is_active'])
+        else:
+            # Only referenced by draft packages (if at all) and nobody has
+            # worked on it yet: detach it from those drafts, then delete.
+            with transaction.atomic():
+                ExamPackageQuestion.objects.filter(question_id__in=question_ids).delete()
+                q_set.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class QuestionSetReviewView(APIView):
@@ -1601,7 +1725,7 @@ class QuestionSetReviewView(APIView):
                 all_submissions_payload.append({
                     'question_id': str(version.question_id),
                     'order_index': q.order_index if q else 1,
-                    'question_prompt_preview': (version.prompt[:160] + ('...' if len(version.prompt) > 160 else '')),
+                    'question_prompt_preview': plain_text_preview(version.prompt, 160),
                     'submission_id': str(s.id),
                     'attempt_no': s.attempt_no,
                     'status': s.status,
@@ -2039,7 +2163,7 @@ class ExamPackageReviewView(APIView):
                 validation = validations.get(analysis.id) if analysis else None
                 all_submissions.append({
                     'question_id': str(item.question_id), 'order_index': item.order_index,
-                    'question_prompt_preview': item.question_version.prompt[:160] + ('...' if len(item.question_version.prompt) > 160 else ''),
+                    'question_prompt_preview': plain_text_preview(item.question_version.prompt, 160),
                     'submission_id': str(submission.id), 'attempt_no': submission.attempt_no,
                     'status': submission.status, 'submitted_at': submission.submitted_at,
                     'analysis_id': str(analysis.id) if analysis else None,
@@ -2302,6 +2426,8 @@ class StudentSubmissionCreateView(APIView):
                         )
                         fallback = cursor.fetchone()
                         submission_id = str(fallback[0]) if fallback else None
+                if submission_id:
+                    Submission.objects.filter(pk=submission_id).update(exam_package=package)
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2323,7 +2449,7 @@ class StudentSubmissionCreateView(APIView):
 
 
 class StudentPackageSubmissionCreateView(APIView):
-    """Submit every published question in a set as one atomic 4-tier package."""
+    """Submit every question selected in an exam package as one atomic attempt."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -2394,8 +2520,9 @@ class StudentPackageSubmissionCreateView(APIView):
                         )
                         row = cursor.fetchone()
                         submission_id = str(row[0]) if row and row[0] else None
-                        if not submission_id:
-                            raise RuntimeError('Gagal menyimpan salah satu jawaban.')
+                    if not submission_id:
+                        raise RuntimeError('Gagal menyimpan salah satu jawaban.')
+                    Submission.objects.filter(pk=submission_id).update(exam_package=package)
                     submission_ids.append((question, version, submission_id))
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2407,7 +2534,7 @@ class StudentPackageSubmissionCreateView(APIView):
             )
         }
         return Response({
-            'set_id': str(package.id),
+            'package_id': str(package.id),
             'submissions': [
                 {
                     'submission_id': submission_id,
@@ -2472,34 +2599,30 @@ class StudentSubmissionListView(APIView):
 
 
 # ============================================================================
-# SPRINT 4: STUDENT SUBMISSION GROUPING BY QUESTION SET
+# SPRINT 4: STUDENT SUBMISSION GROUPING BY EXAM PACKAGE
 # ============================================================================
 
 
-def _build_submission_set_groups(user):
-    """Group a student's submissions per question set with comprehensive pedagogical diagnostics.
-
-    Exposes structured student feedback (poin tepat, letak kekeliruan, konsep seharusnya),
-    binary question grading, and whole-package aggregated score.
-    """
+def _build_submission_package_groups(user):
+    """Group student submissions by their assigned exam package and exact versions."""
     submissions = list(
-        Submission.objects.filter(student=user).order_by('submitted_at')
+        Submission.objects.filter(student=user, exam_package_id__isnull=False)
+        .order_by('submitted_at')
     )
     if not submissions:
         return []
 
-    version_ids = {s.question_version_id for s in submissions}
-    versions = {
-        v.id: v
-        for v in QuestionVersion.objects.filter(id__in=version_ids).select_related('question')
-    }
-    question_ids = {v.question_id for v in versions.values()}
-    questions = {q.id: q for q in Question.objects.filter(id__in=question_ids)}
-    set_ids = {q.question_set_id for q in questions.values()}
-    sets_map = {
-        s.id: s
-        for s in QuestionSet.objects.filter(id__in=set_ids).select_related('subject', 'topic')
-    }
+    package_ids = {s.exam_package_id for s in submissions}
+    package_items = list(
+        ExamPackageQuestion.objects.filter(exam_package_id__in=package_ids)
+        .select_related('exam_package__subject', 'question', 'question_version')
+        .order_by('exam_package_id', 'order_index')
+    )
+    items_by_package = {}
+    item_versions = set()
+    for item in package_items:
+        items_by_package.setdefault(item.exam_package_id, []).append(item)
+        item_versions.add((item.exam_package_id, item.question_version_id))
 
     # Fetch current analyses and validations for every attempt
     sub_ids = [s.id for s in submissions]
@@ -2514,38 +2637,29 @@ def _build_submission_set_groups(user):
         ).select_related('lecturer')
     }
 
-    published_rows = (
-        QuestionVersion.objects.filter(
-            is_published=True, question__question_set_id__in=set_ids
-        )
-        .values_list('question_id', 'question__question_set_id')
-        .distinct()
-    )
-    published_count = {}
-    for _qid, _sid in published_rows:
-        published_count[_sid] = published_count.get(_sid, 0) + 1
-
     grouped = {}
     for s in submissions:
-        v = versions.get(s.question_version_id)
-        q = questions.get(v.question_id) if v else None
-        if not q:
+        # The package FK and version must both match an assigned item. This is
+        # deliberately stricter than version-only lookup to prevent cross-package answers.
+        if (s.exam_package_id, s.question_version_id) not in item_versions:
             continue
-        grouped.setdefault(q.question_set_id, {}).setdefault(q.id, []).append(s)
+        grouped.setdefault(s.exam_package_id, {}).setdefault(s.question_version_id, []).append(s)
 
     results = []
-    for set_id, question_map in grouped.items():
-        q_set = sets_map.get(set_id)
-        if not q_set:
+    for package_id, attempts_by_version in grouped.items():
+        items = items_by_package.get(package_id, [])
+        if not items:
             continue
+        package = items[0].exam_package
 
         status_counts = {}
         max_attempt = 0
         last_submitted = None
         questions_payload = []
 
-        for qid, subs in question_map.items():
-            q = questions[qid]
+        for item in items:
+            subs = attempts_by_version.get(item.question_version_id, [])
+            version = item.question_version
             attempts = []
             for s in sorted(subs, key=lambda x: x.attempt_no):
                 status_counts[s.status] = status_counts.get(s.status, 0) + 1
@@ -2573,7 +2687,7 @@ def _build_submission_set_groups(user):
                             else (analysis.module_b_score if analysis else 'Terdapat ketidaksinkronan konsep atau penalaran.')
                         ),
                         'konsep_seharusnya': raw_student_fb.get('konsep_seharusnya') or (
-                            versions.get(s.question_version_id).model_answer if s.question_version_id in versions else ''
+                            version.model_answer
                         ),
                     }
 
@@ -2617,7 +2731,6 @@ def _build_submission_set_groups(user):
                     'evaluation': evaluation_payload,
                 })
 
-            latest_version = versions[sorted(subs, key=lambda x: x.attempt_no)[-1].question_version_id]
             questions_payload.append({
                 'question_id': str(qid),
                 'order_index': q.order_index,
@@ -2626,7 +2739,6 @@ def _build_submission_set_groups(user):
                 'prompt': latest_version.prompt,
                 'short_answer': latest_version.short_answer or '',
                 'model_answer': latest_version.model_answer,
-                'reference': {'short_answer': latest_version.short_answer or '', 'reason': latest_version.model_answer or ''},
                 'answered': True,
                 'attempts': attempts,
             })
@@ -2648,7 +2760,6 @@ def _build_submission_set_groups(user):
                 'prompt': v.prompt,
                 'short_answer': v.short_answer or '',
                 'model_answer': v.model_answer,
-                'reference': {'short_answer': v.short_answer or '', 'reason': v.model_answer or ''},
                 'answered': False,
                 'attempts': [],
             })
@@ -2657,7 +2768,7 @@ def _build_submission_set_groups(user):
         status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
 
         # Target 3: Kalkulasi Nilai Keseluruhan Paket Soal
-        total_questions = published_count.get(set_id, 0) or len(questions_payload)
+        total_questions = len(questions_payload)
         validated_questions_count = 0
         correct_questions_count = 0
 
@@ -2678,13 +2789,11 @@ def _build_submission_set_groups(user):
         )
 
         results.append({
-            'set_id': str(q_set.id),
-            'code': q_set.code,
-            'title': q_set.title,
-            'subject_id': str(q_set.subject_id),
-            'subject_name': q_set.subject.name,
-            'topic_id': str(q_set.topic_id) if q_set.topic_id else None,
-            'topic_name': q_set.topic.name if q_set.topic else None,
+            'package_id': str(package.id),
+            'code': package.code,
+            'title': package.title,
+            'subject_id': str(package.subject_id),
+            'subject_name': package.subject.name,
             'question_count': total_questions,
             'answered_count': sum(1 for item in questions_payload if item['answered']),
             'total_attempts': sum(status_counts.values()),
@@ -2702,28 +2811,28 @@ def _build_submission_set_groups(user):
     results.sort(key=lambda item: item['last_submitted_at'], reverse=True)
     return results
 
-class StudentSubmissionSetListView(APIView):
-    """Daftar pengumpulan mahasiswa dikelompokkan per bank soal (UC-01)."""
+class StudentSubmissionPackageListView(APIView):
+    """Daftar pengumpulan mahasiswa dikelompokkan per paket ujian."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(_build_submission_set_groups(request.user))
+        return Response(_build_submission_package_groups(request.user))
 
 
-class StudentSubmissionSetDetailView(APIView):
-    """Rincian satu bank soal: seluruh pertanyaan, jawaban, dan evaluasi."""
+class StudentSubmissionPackageDetailView(APIView):
+    """Rincian satu paket ujian milik mahasiswa yang sedang masuk."""
 
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        for group in _build_submission_set_groups(request.user):
-            if group['set_id'] == str(pk):
+        for group in _build_submission_package_groups(request.user):
+            if group['package_id'] == str(pk):
                 return Response(group)
         return Response(
-            {'detail': 'Pengumpulan untuk bank soal ini tidak ditemukan.'},
+            {'detail': 'Pengumpulan untuk paket ujian ini tidak ditemukan.'},
             status=status.HTTP_404_NOT_FOUND,
         )
 
@@ -2794,7 +2903,7 @@ class LecturerSubmissionsView(APIView):
                 'question_code': qset.code if qset else None,
                 'question_title': qset.title if qset else None,
                 'version_number': version.version_number if version else None,
-                'prompt_preview': (version.prompt[:240] + '…') if version and version.prompt else '',
+                'prompt_preview': plain_text_preview(version.prompt, 240) if version else '',
                 'answer': s.answer_text,
                 'status': s.status,
                 'submitted_at': s.submitted_at.isoformat() if s.submitted_at else None,
@@ -2881,3 +2990,36 @@ class LecturerSubmissionDetailView(APIView):
                 } if validation else None,
             } if analysis else None,
         })
+
+
+ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+class MediaUploadView(APIView):
+    """Generic authenticated image upload used by the rich text editor and subject cards."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({'detail': 'File tidak ditemukan.'}, status=status.HTTP_400_BAD_REQUEST)
+        if upload.size > MAX_UPLOAD_BYTES:
+            return Response({'detail': 'Ukuran file maksimal 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        extension = os.path.splitext(upload.name or '')[1].lower()
+        content_type = (upload.content_type or '').lower()
+        if extension not in ALLOWED_IMAGE_EXTENSIONS:
+            return Response(
+                {'detail': 'Hanya file gambar (PNG, JPG, GIF, WEBP) yang diizinkan.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if content_type and not content_type.startswith('image/') and content_type != 'application/octet-stream':
+            return Response(
+                {'detail': 'Hanya file gambar (PNG, JPG, GIF, WEBP) yang diizinkan.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        saved_path = default_storage.save(f'uploads/{uuid.uuid4().hex}{extension}', upload)
+        return Response({'url': f'{settings.MEDIA_URL}{saved_path}'}, status=status.HTTP_201_CREATED)

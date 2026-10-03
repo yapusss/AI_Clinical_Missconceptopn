@@ -20,6 +20,7 @@ import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
+import RichTextContent from "../../components/RichTextContent";
 import { apiFetch } from "../../lib/api";
 
 type MisconceptionMatch = {
@@ -385,27 +386,21 @@ export default function ValidationDetailPage() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                       Pertanyaan Konseptual
                     </h3>
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface font-medium leading-relaxed">
-                      {data.question.prompt}
-                    </p>
+                    <RichTextContent html={data.question.prompt} className="mt-1.5 text-sm font-medium leading-relaxed" />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                       Jawaban Singkat (Referensi)
                     </h3>
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface-variant leading-relaxed">
-                      {data.question.reference?.short_answer ?? data.question.short_answer ?? ''}
-                    </p>
+                    <RichTextContent html={data.question.reference?.short_answer ?? data.question.short_answer ?? ''} className="mt-1.5 text-sm text-on-surface-variant leading-relaxed" />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                       Alasan Referensi
                     </h3>
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface-variant leading-relaxed">
-                      {data.question.reference?.reason ?? data.question.model_answer ?? ''}
-                    </p>
+                    <RichTextContent html={data.question.reference?.reason ?? data.question.model_answer ?? ''} className="mt-1.5 text-sm text-on-surface-variant leading-relaxed" />
                   </div>
 
                   {/* Heuristic Warnings */}

@@ -28,6 +28,7 @@ from .views import (
     HelpArticleListView,
     LoginView,
     MeView,
+    MediaUploadView,
     QuestionDetailView,
     QuestionExportView,
     QuestionListCreateView,
@@ -45,8 +46,8 @@ from .views import (
     StudentPackageSubmissionCreateView,
     StudentSubmissionCreateView,
     StudentSubmissionListView,
-    StudentSubmissionSetDetailView,
-    StudentSubmissionSetListView,
+    StudentSubmissionPackageDetailView,
+    StudentSubmissionPackageListView,
     WebsiteSectionListView,
 )
 
@@ -54,6 +55,7 @@ urlpatterns = [
     path('auth/register', RegisterView.as_view(), name='auth-register'),
     path('auth/login', LoginView.as_view(), name='auth-login'),
     path('auth/me', MeView.as_view(), name='auth-me'),
+    path('uploads', MediaUploadView.as_view(), name='media-upload'),
     path('dashboard/summary', DashboardView.as_view(), name='dashboard-summary'),
     path('admin/users/<str:role>', AdminManagedUserListView.as_view(), name='admin-managed-user-list'),
     path('admin/users/<str:role>/<uuid:pk>', AdminManagedUserDetailView.as_view(), name='admin-managed-user-detail'),
@@ -91,8 +93,8 @@ urlpatterns = [
     path('student/sets/<uuid:pk>/submissions', StudentPackageSubmissionCreateView.as_view(), name='student-package-submission-create'),
     path('student/sets/<uuid:pk>/questions/<uuid:qid>/submissions', StudentSubmissionCreateView.as_view(), name='student-submission-create'),
     path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
-    path('student/submission-sets', StudentSubmissionSetListView.as_view(), name='student-submission-set-list'),
-    path('student/submission-sets/<uuid:pk>', StudentSubmissionSetDetailView.as_view(), name='student-submission-set-detail'),
+    path('student/submission-packages', StudentSubmissionPackageListView.as_view(), name='student-submission-package-list'),
+    path('student/submission-packages/<uuid:pk>', StudentSubmissionPackageDetailView.as_view(), name='student-submission-package-detail'),
 
     path('validations/queue', ValidationQueueView.as_view(), name='validation-queue'),
     path('validations/tiers', ValidationTiersView.as_view(), name='validation-tiers'),

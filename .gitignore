@@ -8,6 +8,7 @@ dhon-folder/
 # local dev artifacts (never commit)
 backend/venv/
 backend/db.sqlite3
+backend/media/
 
 # credentials & local-only helper scripts (never commit)
 scripts/env_local.sh
