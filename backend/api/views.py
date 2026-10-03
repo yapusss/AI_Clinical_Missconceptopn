@@ -2732,36 +2732,15 @@ def _build_submission_package_groups(user):
                 })
 
             questions_payload.append({
-                'question_id': str(qid),
-                'order_index': q.order_index,
-                'version_id': str(latest_version.id),
-                'version_number': latest_version.version_number,
-                'prompt': latest_version.prompt,
-                'short_answer': latest_version.short_answer or '',
-                'model_answer': latest_version.model_answer,
-                'answered': True,
+                'question_id': str(item.question_id),
+                'order_index': item.order_index,
+                'version_id': str(version.id),
+                'version_number': version.version_number,
+                'prompt': version.prompt,
+                'short_answer': version.short_answer or '',
+                'model_answer': version.model_answer,
+                'answered': bool(subs),
                 'attempts': attempts,
-            })
-
-        unanswered = Question.objects.filter(question_set_id=set_id).exclude(
-            id__in=list(question_map.keys())
-        ).order_by('order_index')
-        for q in unanswered:
-            v = QuestionVersion.objects.filter(
-                question=q, is_published=True
-            ).order_by('-version_number').first()
-            if not v:
-                continue
-            questions_payload.append({
-                'question_id': str(q.id),
-                'order_index': q.order_index,
-                'version_id': str(v.id),
-                'version_number': v.version_number,
-                'prompt': v.prompt,
-                'short_answer': v.short_answer or '',
-                'model_answer': v.model_answer,
-                'answered': False,
-                'attempts': [],
             })
 
         questions_payload.sort(key=lambda item: item['order_index'])
