@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Award,
   BrainCircuit,
   CheckCircle2,
   ChevronDown,
@@ -217,7 +216,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     } finally {
       setFetching(false);
     }
-  }, [setId, studentId]);
+  }, [setId, studentId, examPackage]);
 
   useEffect(() => {
     if (loading) return;
@@ -791,7 +790,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       )}
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
-                        {/* Status Biner: Benar / Salah */}
+                        {/* Status Biner: Benar / Salah (Softer, Refined Color Intensity) */}
                         <div>
                           <label className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
                             PENILAIAN BUTIR SOAL INI
@@ -800,10 +799,10 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                             <button
                               type="button"
                               onClick={() => setIsCorrect(true)}
-                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-bold font-mono-ui cursor-pointer transition-all ${
+                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
                                 isCorrect
-                                  ? "bg-emerald-500 text-white border-emerald-500 shadow-sm ring-2 ring-emerald-500/30"
-                                  : "bg-surface-container text-on-surface border-outline-variant/40 hover:bg-surface-container-high"
+                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50 font-bold ring-1 ring-emerald-500/25 shadow-sm"
+                                  : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
                               }`}
                             >
                               🟢 Benar
@@ -811,10 +810,10 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                             <button
                               type="button"
                               onClick={() => setIsCorrect(false)}
-                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-bold font-mono-ui cursor-pointer transition-all ${
+                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
                                 !isCorrect
-                                  ? "bg-rose-600 text-white border-rose-600 shadow-sm ring-2 ring-rose-600/30"
-                                  : "bg-surface-container text-on-surface border-outline-variant/40 hover:bg-surface-container-high"
+                                  ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50 font-bold ring-1 ring-rose-500/25 shadow-sm"
+                                  : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
                               }`}
                             >
                               🔴 Salah
