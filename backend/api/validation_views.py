@@ -208,7 +208,9 @@ class ValidationDetailView(APIView):
                 'version_id': str(v.id),
                 'version_number': v.version_number,
                 'prompt': v.prompt,
+                'short_answer': v.short_answer or '',
                 'model_answer': v.model_answer,
+                'reference': {'short_answer': v.short_answer or '', 'reason': v.model_answer or ''},
             },
             'answer': {
                 'text': sub.answer_text,

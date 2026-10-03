@@ -34,7 +34,7 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = 'four-tier-v2.7'
+PROMPT_VERSION = 'four-tier-v2.8'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
@@ -158,6 +158,8 @@ class FourTierContext:
     question_prompt: str
     short_answer: str
     model_answer: str
+    reference_short_answer: str
+    reference_reason: str
     set_title: str
     misconceptions: list      # [{id, label, description}]
     rejection_notes: str
@@ -212,6 +214,34 @@ def load_context(submission_id: str) -> FourTierContext:
             [submission_id],
         )
         prior = cur.fetchone() or ('', '')
+        
+        # Load reference answers for this question version
+        # Get question version id from the first query result
+        cur.execute(
+            """
+            SELECT qv.id, qv.short_answer, qv.model_answer
+            FROM submissions s
+            JOIN question_versions qv ON qv.id = s.question_version_id
+            WHERE s.id = %s
+            """,
+            [submission_id],
+        )
+        qv_row = cur.fetchone()
+        qv_id, qv_short_answer, qv_model_answer = qv_row
+        
+        cur.execute(
+            """
+            SELECT answer_key, answer_text
+            FROM reference_answers
+            WHERE question_version_id = %s AND answer_key IN ('JAWABAN_SINGKAT', 'ALASAN')
+            """,
+            [qv_id],
+        )
+        ref_answers = {r[0]: r[1] for r in cur.fetchall()}
+        
+        # Use reference_answers as primary source, fall back to question_versions columns
+        reference_short_answer = (qv_short_answer or '').strip() or ref_answers.get('JAWABAN_SINGKAT', '').strip() or ''
+        reference_reason = (qv_model_answer or '').strip() or ref_answers.get('ALASAN', '').strip() or ''
 
     flags = row[7] if isinstance(row[7], list) else []
 
@@ -227,6 +257,8 @@ def load_context(submission_id: str) -> FourTierContext:
         question_prompt=row[8],
         model_answer=row[9],
         short_answer=row[10],
+        reference_short_answer=reference_short_answer,
+        reference_reason=reference_reason,
         set_title=row[11],
         misconceptions=misconceptions,
         rejection_notes=(prior[0] or '')[:2000],
@@ -298,7 +330,7 @@ def run_module_a(ctx: FourTierContext) -> tuple[str, str]:
     )
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
-        f"Jawaban Singkat Acuan (Kunci):\n{ctx.short_answer or ctx.model_answer}\n\n"
+        f"Jawaban Singkat Acuan (Kunci):\n{ctx.reference_short_answer or ctx.reference_reason or ''}\n\n"
         f"Jawaban Singkat Mahasiswa (Tier 1):\n{ctx.tier1_answer}"
     )
     if ctx.rejection_notes:
@@ -340,7 +372,7 @@ def run_module_b(ctx: FourTierContext) -> tuple[str, str, dict]:
     )
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
-        f"Jawaban Model (Acuan Kebenaran Sains):\n{ctx.model_answer}\n\n"
+        f"Jawaban Model (Acuan Kebenaran Sains):\nJawaban Singkat Referensi: {ctx.reference_short_answer or ctx.model_answer}\nAlasan Referensi: {ctx.reference_reason or ctx.model_answer}\n\n"
         f"Kesimpulan Mahasiswa di Tier 1:\n\"{ctx.tier1_answer}\"\n\n"
         f"Alasan/Penalaran Mahasiswa di Tier 3:\n\"{ctx.tier3_reason}\""
     )
@@ -364,7 +396,7 @@ def run_module_b(ctx: FourTierContext) -> tuple[str, str, dict]:
         student_feedback = {
             'poin_tepat': 'Telah menyajikan kesimpulan dan alasan.' if score == 'SALAH' else 'Kesimpulan dan alasan sudah selaras.',
             'letak_kekeliruan': reasoning if score == 'SALAH' else '-',
-            'konsep_seharusnya': ctx.model_answer,
+            'konsep_seharusnya': ctx.reference_reason or ctx.model_answer,
         }
 
     return score, reasoning, student_feedback
@@ -401,6 +433,8 @@ def run_module_c(ctx: FourTierContext) -> tuple[str, str, float, str]:
     )
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
+        f"Jawaban Referensi (Singkat): {ctx.reference_short_answer or ''}\n"
+        f"Alasan Referensi: {ctx.reference_reason or ''}\n\n"
         f"Teks Gabungan Mahasiswa:\n"
         f"Jawaban (Tier 1): {ctx.tier1_answer}\n"
         f"Alasan (Tier 3): {ctx.tier3_reason}"
@@ -476,7 +510,7 @@ def analyze_submission(submission_id: str) -> str:
             student_feedback = {
                 'poin_tepat': 'Kesimpulan jawaban telah disampaikan.' if mod_a_score == 'BENAR' else 'Belum ada poin jawaban yang lengkap.',
                 'letak_kekeliruan': 'Kolom alasan (Tier 3) belum diisi atau terlalu singkat (kurang dari 5 kata) sehingga dasar pemikiran belum dapat dinilai.',
-                'konsep_seharusnya': f'Penalaran konseptual yang diharapkan: {ctx.model_answer}',
+                'konsep_seharusnya': f'Penalaran konseptual yang diharapkan: {ctx.reference_reason or ctx.model_answer}',
             }
             mod_c_code = None
             mod_c_label = None

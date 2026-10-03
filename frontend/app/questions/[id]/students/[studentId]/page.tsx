@@ -68,7 +68,9 @@ type QuestionReviewItem = {
   question_id: string;
   order_index: number;
   prompt: string;
+  short_answer?: string;
   model_answer: string;
+  reference?: { short_answer: string; reason: string };
   status: string;
   attempts: AttemptItem[];
 };
@@ -538,10 +540,19 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
 
                   <div className="border-t border-outline-variant/20 pt-2.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
-                      Jawaban Referensi (Kebenaran Ilmiah)
+                      Jawaban Singkat (Referensi)
                     </span>
                     <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20">
-                      {activeQuestion.model_answer}
+                      {activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ''}
+                    </p>
+                  </div>
+
+                  <div className="border-t border-outline-variant/20 pt-2.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
+                      Alasan Referensi
+                    </span>
+                    <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20">
+                      {activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ''}
                     </p>
                   </div>
                 </div>

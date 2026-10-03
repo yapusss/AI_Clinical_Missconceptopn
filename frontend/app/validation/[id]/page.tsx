@@ -43,7 +43,9 @@ type Detail = {
     version_id: string;
     version_number: number;
     prompt: string;
+    short_answer?: string;
     model_answer: string;
+    reference?: { short_answer: string; reason: string };
   };
   answer: {
     text: string;
@@ -390,10 +392,19 @@ export default function ValidationDetailPage() {
 
                   <div className="border-t border-outline-variant/20 pt-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                      Jawaban Referensi (Model Answer)
+                      Jawaban Singkat (Referensi)
                     </h3>
                     <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface-variant leading-relaxed">
-                      {data.question.model_answer}
+                      {data.question.reference?.short_answer ?? data.question.short_answer ?? ''}
+                    </p>
+                  </div>
+
+                  <div className="border-t border-outline-variant/20 pt-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                      Alasan Referensi
+                    </h3>
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-on-surface-variant leading-relaxed">
+                      {data.question.reference?.reason ?? data.question.model_answer ?? ''}
                     </p>
                   </div>
 

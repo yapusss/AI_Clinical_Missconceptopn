@@ -53,6 +53,31 @@ from .serializers import (
 )
 
 
+def _sync_reference_answers(question_version, short_answer, model_answer):
+    """Helper to create/update the two-row reference_answers mirror."""
+    # Delete existing reference answers for this version to avoid duplicates
+    ReferenceAnswer.objects.filter(question_version=question_version).delete()
+    
+    # Create the two required rows
+    ReferenceAnswer.objects.create(
+        id=uuid.uuid4(),
+        question_version=question_version,
+        answer_key='JAWABAN_SINGKAT',
+        answer_text=short_answer or '',
+        answer_type='CANONICAL',
+        is_primary=True,
+    )
+    
+    ReferenceAnswer.objects.create(
+        id=uuid.uuid4(),
+        question_version=question_version,
+        answer_key='ALASAN',
+        answer_text=model_answer or '',
+        answer_type='REASON',
+        is_primary=False,
+    )
+
+
 class RegisterView(APIView):
     authentication_classes = []
 
@@ -1172,11 +1197,7 @@ class QuestionImportCommitView(APIView):
                     prompt=raw['prompt'], short_answer=short_answer, model_answer=alasan,
                     is_published=False, created_by=request.user,
                 )
-                ReferenceAnswer.objects.create(
-                    id=uuid.uuid4(), question_version=version,
-                    answer_key=raw.get('answer_key') or row.question_key,
-                    answer_text=short_answer or alasan, answer_type='CANONICAL', is_primary=True,
-                )
+                _sync_reference_answers(version, short_answer, alasan)
             job.status = 'IMPORTED'
             job.completed_at = timezone.now()
             job.save(update_fields=['status', 'completed_at'])
@@ -1340,14 +1361,7 @@ class QuestionListCreateView(APIView):
                     created_by=request.user,
                 )
 
-                ReferenceAnswer.objects.create(
-                    id=uuid.uuid4(),
-                    question_version=qv,
-                    answer_key=f"ANS-{q_idx:03d}",
-                    answer_text=q_item.get('short_answer') or q_item['model_answer'],
-                    answer_type='CANONICAL',
-                    is_primary=True,
-                )
+                _sync_reference_answers(qv, q_item.get('short_answer'), q_item['model_answer'])
 
                 if data.get('publish', False):
                     with connection.cursor() as cursor:
@@ -1414,6 +1428,7 @@ class QuestionDetailView(APIView):
                     'prompt': version.prompt,
                     'short_answer': version.short_answer or '',
                     'model_answer': version.model_answer,
+                    'reference': {'short_answer': version.short_answer or '', 'reason': version.model_answer or ''},
                     'is_published': version.is_published,
                     'created_at': version.created_at,
                     'reference_answers': ref_answers,
@@ -1485,33 +1500,14 @@ class QuestionDetailView(APIView):
                     is_published=False,
                     created_by=request.user,
                 )
-                ReferenceAnswer.objects.create(
-                    id=uuid.uuid4(),
-                    question_version=target_v,
-                    answer_key='CANONICAL',
-                    answer_text=canonical_text,
-                    answer_type='CANONICAL',
-                    is_primary=True,
-                )
+                _sync_reference_answers(target_v, short_answer, model_answer)
             elif latest_v:
                 latest_v.prompt = prompt
                 latest_v.short_answer = short_answer
                 latest_v.model_answer = model_answer
                 latest_v.save()
                 target_v = latest_v
-                ref = ReferenceAnswer.objects.filter(question_version=target_v, is_primary=True).first()
-                if ref:
-                    ref.answer_text = canonical_text
-                    ref.save(update_fields=['answer_text'])
-                else:
-                    ReferenceAnswer.objects.create(
-                        id=uuid.uuid4(),
-                        question_version=target_v,
-                        answer_key='CANONICAL',
-                        answer_text=canonical_text,
-                        answer_type='CANONICAL',
-                        is_primary=True,
-                    )
+                _sync_reference_answers(target_v, short_answer, model_answer)
             else:
                 target_v = QuestionVersion.objects.create(
                     id=uuid.uuid4(),
@@ -1523,14 +1519,7 @@ class QuestionDetailView(APIView):
                     is_published=False,
                     created_by=request.user,
                 )
-                ReferenceAnswer.objects.create(
-                    id=uuid.uuid4(),
-                    question_version=target_v,
-                    answer_key='CANONICAL',
-                    answer_text=canonical_text,
-                    answer_type='CANONICAL',
-                    is_primary=True,
-                )
+                _sync_reference_answers(target_v, short_answer, model_answer)
 
             if data.get('publish', False) and not target_v.is_published:
                 with connection.cursor() as cursor:
@@ -1768,6 +1757,7 @@ class QuestionSetStudentReviewView(APIView):
                 'prompt': version.prompt,
                 'short_answer': version.short_answer or '',
                 'model_answer': version.model_answer,
+                'reference': {'short_answer': version.short_answer or '', 'reason': version.model_answer or ''},
                 'status': attempts_payload[0]['status'] if attempts_payload else 'UNANSWERED',
                 'attempts': attempts_payload,
             })
@@ -2132,6 +2122,7 @@ class ExamPackageStudentReviewView(APIView):
             rows.append({'question_id': str(item.question_id), 'order_index': item.order_index,
                          'version_id': str(item.question_version_id), 'version_number': item.question_version.version_number,
                          'prompt': item.question_version.prompt, 'model_answer': item.question_version.model_answer,
+                         'reference': {'short_answer': item.question_version.short_answer or '', 'reason': item.question_version.model_answer or ''},
                          'status': attempts[0]['status'] if attempts else 'UNANSWERED', 'attempts': attempts})
 
         validated = [row['attempts'][0] for row in rows if row['attempts'] and row['attempts'][0]['status'] == 'VALIDATED']
@@ -2635,6 +2626,7 @@ def _build_submission_set_groups(user):
                 'prompt': latest_version.prompt,
                 'short_answer': latest_version.short_answer or '',
                 'model_answer': latest_version.model_answer,
+                'reference': {'short_answer': latest_version.short_answer or '', 'reason': latest_version.model_answer or ''},
                 'answered': True,
                 'attempts': attempts,
             })
@@ -2656,6 +2648,7 @@ def _build_submission_set_groups(user):
                 'prompt': v.prompt,
                 'short_answer': v.short_answer or '',
                 'model_answer': v.model_answer,
+                'reference': {'short_answer': v.short_answer or '', 'reason': v.model_answer or ''},
                 'answered': False,
                 'attempts': [],
             })
@@ -2860,6 +2853,7 @@ class LecturerSubmissionDetailView(APIView):
                 'prompt': version.prompt,
                 'short_answer': version.short_answer or '',
                 'model_answer': version.model_answer,
+                'reference': {'short_answer': version.short_answer or '', 'reason': version.model_answer or ''},
                 'reference_answers': [
                     {'id': str(answer.id), 'answer_key': answer.answer_key, 'text': answer.answer_text}
                     for answer in ReferenceAnswer.objects.filter(question_version=version).order_by('-is_primary', 'created_at')

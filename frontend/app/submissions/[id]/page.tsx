@@ -21,7 +21,9 @@ type SubmissionDetail = {
   question: {
     version_number: number;
     prompt: string;
+    short_answer?: string;
     model_answer: string;
+    reference?: { short_answer: string; reason: string };
     reference_answers: { id: string; answer_key: string | null; text: string }[];
   };
   answer_text: string;
@@ -72,7 +74,13 @@ export default function SubmissionDetailPage() {
     {error && <div role="alert" className="mt-6 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"><TriangleAlert size={20} />{error}</div>}
     {fetching ? <p className="mt-8 text-sm text-on-surface-variant">Memuat jawaban mahasiswa...</p> : data && <div className="mt-8 space-y-5">
       <section className="glass-card rounded-xl p-5"><p className="text-sm text-on-surface-variant">{data.student.email} · Percobaan {data.attempt_no}</p><h2 className="mt-4 text-base font-bold text-on-surface">Soal</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-on-surface">{data.question.prompt}</p><h2 className="mt-6 text-base font-bold text-on-surface">Jawaban mahasiswa</h2><p className="mt-2 whitespace-pre-wrap rounded-lg border border-outline-variant/40 bg-surface-container-low p-4 text-sm leading-6 text-on-surface">{data.answer_text || "Tidak ada teks jawaban."}</p></section>
-      <section className="glass-card rounded-xl p-5"><h2 className="text-base font-bold text-on-surface">Jawaban referensi</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-on-surface">{data.question.model_answer}</p></section>
+      <section className="glass-card rounded-xl p-5">
+        <h2 className="text-base font-bold text-on-surface">Jawaban Singkat (Referensi)</h2>
+        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-on-surface">{data.question.reference?.short_answer ?? data.question.short_answer ?? ''}</p>
+        
+        <h2 className="mt-4 text-base font-bold text-on-surface">Alasan Referensi</h2>
+        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-on-surface">{data.question.reference?.reason ?? data.question.model_answer ?? ''}</p>
+      </section>
       <section className="rounded-xl border border-outline-variant/40 bg-surface-container-low p-5"><div className="flex items-start gap-3"><BrainCircuit className="mt-0.5 text-primary" size={20} /><div className="min-w-0 flex-1"><h2 className="text-base font-bold text-on-surface">Analisis AI</h2>{data.current_analysis ? <><p className="mt-2 text-sm text-on-surface-variant">Skor {Number(data.current_analysis.percentage_correct).toFixed(1)}% · {data.current_analysis.tier_label} · Kepercayaan {(Number(data.current_analysis.confidence) * 100).toFixed(0)}%</p>{data.current_analysis.validation && <p className="mt-1 text-sm text-on-surface-variant">Validasi: {data.current_analysis.validation.status} oleh {data.current_analysis.validation.lecturer_name}</p>}<Link href={`/validation/${data.current_analysis.id}`} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-primary no-underline hover:underline">Buka detail validasi <ArrowRight size={15} /></Link></> : <p className="mt-2 text-sm text-on-surface-variant">{analysisMessage}</p>}</div></div></section>
     </div>}
   </PageContainer>;
