@@ -33,6 +33,7 @@ type ExistingPackage = {
   closes_at: string | null;
   duration_minutes: number | null;
   max_attempts: number | null;
+  score_policy: "HIGHEST" | "AVERAGE" | "LAST_ATTEMPT";
   is_active: boolean;
 };
 
@@ -64,6 +65,7 @@ export default function ExamPackageForm({
   const [closesAt, setClosesAt] = useState("");
   const [durationHours, setDurationHours] = useState("");
   const [maxAttempts, setMaxAttempts] = useState("");
+  const [scorePolicy, setScorePolicy] = useState<ExistingPackage["score_policy"]>("LAST_ATTEMPT");
   const [password, setPassword] = useState("");
   const [questionIds, setQuestionIds] = useState<string[]>([]);
   const [collapsedTopics, setCollapsedTopics] = useState<string[]>([]);
@@ -103,6 +105,7 @@ export default function ExamPackageForm({
               : "",
           );
           setMaxAttempts(item.max_attempts?.toString() ?? "");
+          setScorePolicy(item.score_policy);
         }
       })
       .catch((caught) =>
@@ -162,6 +165,7 @@ export default function ExamPackageForm({
       closes_at: isoOrNull(closesAt),
       duration_minutes: durationHours ? Number(durationHours) * 60 : null,
       max_attempts: maxAttempts ? Number(maxAttempts) : null,
+      score_policy: scorePolicy,
     };
     if (password) payload.password = password;
     try {
@@ -338,6 +342,30 @@ export default function ExamPackageForm({
                     className="form-input"
                   />
                 </div>
+                {Number(maxAttempts) > 1 && (
+                  <div>
+                    <label
+                      htmlFor="score-policy"
+                      className="mb-1.5 block text-sm font-medium"
+                    >
+                      Nilai yang diambil
+                    </label>
+                    <select
+                      id="score-policy"
+                      value={scorePolicy}
+                      onChange={(event) =>
+                        setScorePolicy(
+                          event.target.value as ExistingPackage["score_policy"],
+                        )
+                      }
+                      className="form-input"
+                    >
+                      <option value="HIGHEST">Nilai tertinggi</option>
+                      <option value="AVERAGE">Nilai rata-rata</option>
+                      <option value="LAST_ATTEMPT">Nilai percobaan terakhir</option>
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label
                     htmlFor="package-password"

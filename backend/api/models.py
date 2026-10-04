@@ -176,6 +176,11 @@ class QuestionSet(models.Model):
 
 
 class ExamPackage(models.Model):
+    class ScorePolicy(models.TextChoices):
+        HIGHEST = 'HIGHEST', 'Nilai tertinggi'
+        AVERAGE = 'AVERAGE', 'Nilai rata-rata'
+        LAST_ATTEMPT = 'LAST_ATTEMPT', 'Nilai percobaan terakhir'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
     created_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='created_by')
@@ -187,6 +192,7 @@ class ExamPackage(models.Model):
     closes_at = models.DateTimeField(null=True, blank=True)
     duration_minutes = models.PositiveIntegerField(null=True, blank=True)
     max_attempts = models.PositiveIntegerField(null=True, blank=True)
+    score_policy = models.CharField(max_length=20, choices=ScorePolicy, default=ScorePolicy.LAST_ATTEMPT)
     password_hash = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

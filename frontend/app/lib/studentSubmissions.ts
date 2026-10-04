@@ -72,6 +72,7 @@ export type StudentPackageGroup = {
   correct_count?: number;
   validated_count?: number;
   is_fully_validated?: boolean;
+  score_policy?: "HIGHEST" | "AVERAGE" | "LAST_ATTEMPT";
   questions: StudentQuestionGroup[];
 };
 

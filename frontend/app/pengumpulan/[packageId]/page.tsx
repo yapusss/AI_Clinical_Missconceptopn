@@ -71,6 +71,12 @@ const fmtPct = (num: number) => {
   return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
 };
 
+const SCORE_POLICY_LABEL: Record<string, string> = {
+  HIGHEST: "Nilai Tertinggi",
+  AVERAGE: "Nilai Rata-rata",
+  LAST_ATTEMPT: "Nilai Percobaan Terakhir",
+};
+
 export default function SubmissionPackageDetailPage() {
   return (
     <Suspense fallback={null}>
@@ -544,7 +550,7 @@ function SubmissionPackageDetailPageContent() {
               {/* 2. KARTU NILAI AKHIR PAKET (PERSENTASE BERSIH: 100%, 75%, 50%, ETC) TEPAT DI BAWAH KOTAK DAFTAR SOAL */}
               <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4 shadow-sm">
                 <span className="text-sm font-bold uppercase tracking-wider text-on-surface-variant block">
-                  Nilai Akhir:
+                  {SCORE_POLICY_LABEL[group.score_policy ?? "LAST_ATTEMPT"]}:
                 </span>
                 <span className="font-mono-ui text-3xl font-black text-on-surface mt-1.5 block">
                   {fmtPct(group.overall_score ?? 0)}

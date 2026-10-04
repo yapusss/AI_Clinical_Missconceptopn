@@ -156,6 +156,7 @@ CREATE TABLE exam_packages (
     closes_at TIMESTAMPTZ,
     duration_minutes INTEGER CHECK (duration_minutes IS NULL OR duration_minutes > 0),
     max_attempts INTEGER CHECK (max_attempts IS NULL OR max_attempts > 0),
+    score_policy VARCHAR(20) NOT NULL DEFAULT 'LAST_ATTEMPT' CHECK (score_policy IN ('HIGHEST', 'AVERAGE', 'LAST_ATTEMPT')),
     password_hash VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -676,7 +676,8 @@ class ExamPackageDuplicateTests(TransactionTestCase):
             id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer,
             code='DUPLICATE-PACKAGE', title='Paket Asli', description='Deskripsi asli', is_active=True,
             opens_at=timezone.now(), closes_at=timezone.now() + timedelta(hours=1),
-            duration_minutes=45, max_attempts=2, password_hash='stored-password-hash',
+            duration_minutes=45, max_attempts=2, score_policy=ExamPackage.ScorePolicy.HIGHEST,
+            password_hash='stored-password-hash',
         )
         ExamPackage.objects.create(
             id=uuid.uuid4(), subject=self.subject, created_by=self.lecturer,
@@ -705,6 +706,7 @@ class ExamPackageDuplicateTests(TransactionTestCase):
         self.assertEqual(duplicate.closes_at, self.package.closes_at)
         self.assertEqual(duplicate.duration_minutes, self.package.duration_minutes)
         self.assertEqual(duplicate.max_attempts, self.package.max_attempts)
+        self.assertEqual(duplicate.score_policy, self.package.score_policy)
         self.assertEqual(duplicate.password_hash, self.package.password_hash)
         item = ExamPackageQuestion.objects.get(exam_package=duplicate)
         self.assertEqual(item.question_id, self.question.id)
