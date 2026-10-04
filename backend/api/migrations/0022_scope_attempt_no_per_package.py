@@ -38,9 +38,13 @@ WHERE s.id = r.id
 """
 
 ADD_CONSTRAINT = """
-ALTER TABLE submissions
-    ADD CONSTRAINT uq_student_question_attempt
-    UNIQUE NULLS NOT DISTINCT (student_id, question_version_id, exam_package_id, attempt_no);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_student_question_attempt') THEN
+        ALTER TABLE submissions
+            ADD CONSTRAINT uq_student_question_attempt
+            UNIQUE NULLS NOT DISTINCT (student_id, question_version_id, exam_package_id, attempt_no);
+    END IF;
+END $$;
 """
 
 PROC = """
@@ -130,7 +134,7 @@ $$;
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0020_merge_exam_package_lifecycle_and_subject_image_url'),
+        ('api', '0021_exam_package_score_policy'),
     ]
 
     operations = [
