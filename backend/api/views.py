@@ -2531,7 +2531,10 @@ class StudentSetLookupView(APIView):
         )
 
         items = []
-        for item in ExamPackageQuestion.objects.select_related('question', 'question_version').filter(exam_package=package).order_by('order_index'):
+        for position, item in enumerate(
+            ExamPackageQuestion.objects.select_related('question', 'question_version').filter(exam_package=package).order_by('order_index'),
+            start=1,
+        ):
             q = item.question
             version = item.question_version
             latest_sub = Submission.objects.filter(
@@ -2539,7 +2542,7 @@ class StudentSetLookupView(APIView):
             ).order_by('-attempt_no').first()
             items.append({
                 'question_id': str(q.id),
-                'order_index': q.order_index,
+                'order_index': position,
                 'version_id': str(version.id),
                 'version_number': version.version_number,
                 'prompt': version.prompt,

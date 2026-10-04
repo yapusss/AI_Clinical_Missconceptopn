@@ -233,7 +233,7 @@ function AnswerSetContent() {
       );
       if (incomplete) {
         setError(
-          `Pertanyaan nomor ${incomplete.order_index} belum diselesaikan secara lengkap.`,
+          `Pertanyaan nomor ${data.questions.indexOf(incomplete) + 1} belum diselesaikan secara lengkap.`
         );
         setActiveIndex(data.questions.indexOf(incomplete));
         return;
