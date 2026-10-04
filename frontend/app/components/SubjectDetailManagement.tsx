@@ -169,6 +169,7 @@ export default function SubjectDetailManagement({
     }
   };
   const removeTopic = async (topic: Topic) => {
+    setDeleting(null);
     const response = await fetch(`/api/admin/topics/${topic.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
@@ -177,7 +178,6 @@ export default function SubjectDetailManagement({
       setError(await message(response));
       return;
     }
-    setDeleting(null);
     await load();
   };
   const removeSet = async (set: BankSet) => {

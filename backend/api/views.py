@@ -694,7 +694,30 @@ class AdminTopicDetailView(APIView):
             return Response({'detail': 'Topik tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
         if not require_admin(request) and not is_lecturer_for_subject(request.user, topic.subject_id):
             return Response({'detail': 'Anda tidak memiliki akses ke topik ini.'}, status=status.HTTP_403_FORBIDDEN)
-        topic.delete()
+
+        q_sets = QuestionSet.objects.filter(topic=topic)
+        if q_sets.exists():
+            question_ids = list(Question.objects.filter(question_set__in=q_sets).values_list('id', flat=True))
+            version_ids = list(QuestionVersion.objects.filter(question_id__in=question_ids).values_list('id', flat=True))
+
+            worked_on = Submission.objects.filter(question_version_id__in=version_ids).exists()
+            in_published_package = ExamPackageQuestion.objects.filter(
+                question_id__in=question_ids, exam_package__is_active=True
+            ).exists()
+
+            if worked_on or in_published_package:
+                return Response(
+                    {'detail': f'Topik "{topic.name}" tidak dapat dihapus karena memuat bank soal yang sudah dikerjakan mahasiswa atau digunakan dalam paket ujian aktif.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                ExamPackageQuestion.objects.filter(question_id__in=question_ids).delete()
+                q_sets.delete()
+                topic.delete()
+        else:
+            topic.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
