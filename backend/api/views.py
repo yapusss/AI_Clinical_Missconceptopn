@@ -2613,7 +2613,8 @@ class StudentSubmissionCreateView(APIView):
                         """
                         CALL sp_submit_conceptual_answer(
                             %s::uuid, %s::uuid, %s::varchar, %s::smallint,
-                            %s::text, %s::smallint, %s::jsonb, NULL
+                            %s::text, %s::smallint, %s::jsonb, NULL,
+                            p_exam_package_id => %s::uuid
                         );
                         """,
                         [
@@ -2624,6 +2625,7 @@ class StudentSubmissionCreateView(APIView):
                             t3_reason,
                             t4_conf,
                             json.dumps([]),
+                            str(package.id),
                         ],
                     )
                     row = cursor.fetchone()
@@ -2724,7 +2726,8 @@ class StudentPackageSubmissionCreateView(APIView):
                             """
                             CALL sp_submit_conceptual_answer(
                                 %s::uuid, %s::uuid, %s::varchar, %s::smallint,
-                                %s::text, %s::smallint, %s::jsonb, NULL
+                                %s::text, %s::smallint, %s::jsonb, NULL,
+                                p_exam_package_id => %s::uuid
                             );
                             """,
                             [
@@ -2735,6 +2738,7 @@ class StudentPackageSubmissionCreateView(APIView):
                                 item['tier3_reason'],
                                 item['tier4_confidence'],
                                 json.dumps([]),  # initial heuristic flags, enriched by worker
+                                str(package.id),
                             ],
                         )
                         row = cursor.fetchone()
