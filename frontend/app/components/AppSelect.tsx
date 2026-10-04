@@ -50,7 +50,7 @@ export default function AppSelect({
       <button
         id={id}
         type="button"
-        className="app-select-trigger cursor-pointer"
+        className={`app-select-trigger ${disabled ? "cursor-not-allowed opacity-75" : "cursor-pointer"}`}
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}

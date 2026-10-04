@@ -12,7 +12,6 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
 import PageContainer from "./PageContainer";
 import RichTextEditor from "./RichTextEditor";
@@ -464,14 +463,6 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
               {qIndex + 1}
             </span>
             <h3 className="font-semibold text-on-surface">Pertanyaan Nomor {qIndex + 1}</h3>
-            {q.id && (
-              <span
-                className="font-mono-ui text-[11px] font-semibold text-on-surface-variant bg-surface-container px-2 py-0.5 rounded border border-outline-variant/40"
-                title={`ID Soal: ${q.id}`}
-              >
-                #{q.id.slice(0, 8)}
-              </span>
-            )}
           </div>
           {questions.length > 1 && !isEditing && !isReadOnly && (
             <button
@@ -575,15 +566,11 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                   <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                     Mata Kuliah
                   </label>
-                  <AppSelect
-                    value={subjectId}
-                    onValueChange={() => {}}
+                  <input
+                    value={subjects.find((s) => s.id === subjectId)?.name || subjectId}
+                    readOnly
                     disabled
-                    showChevron={false}
-                    className="mt-1 w-full"
-                    ariaLabel="Mata Kuliah"
-                    placeholder="Mata kuliah"
-                    options={subjects.map((s) => ({ value: s.id, label: s.name }))}
+                    className="form-input mt-1 w-full cursor-not-allowed bg-surface-container disabled:opacity-80"
                   />
                 </div>
 
@@ -755,7 +742,7 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       <ConfirmDialog
         open={showSubmitModal}
         title={isEditing ? "Perbarui Bank Soal?" : "Simpan Bank Soal?"}
-        description="Apakah Anda yakin ingin menyimpan bank soal ini? Bank soal akan langsung diterbitkan agar dapat dipakai pada paket ujian."
+        description="Apakah Anda yakin ingin menyimpan bank soal ini?"
         confirmLabel={isEditing ? "Ya, Perbarui" : "Ya, Simpan"}
         onCancel={() => setShowSubmitModal(false)}
         onConfirm={() => {
