@@ -796,7 +796,8 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                 }}
                 className="btn-primary text-xs cursor-pointer"
               >
-                Simpan &amp; Terbitkan
+                Simpan
+
               </button>
             </div>
           </div>
