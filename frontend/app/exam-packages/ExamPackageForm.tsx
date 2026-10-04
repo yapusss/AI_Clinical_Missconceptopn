@@ -342,30 +342,29 @@ export default function ExamPackageForm({
                     className="form-input"
                   />
                 </div>
-                {Number(maxAttempts) > 1 && (
-                  <div>
-                    <label
-                      htmlFor="score-policy"
-                      className="mb-1.5 block text-sm font-medium"
-                    >
-                      Nilai yang diambil
-                    </label>
-                    <select
-                      id="score-policy"
-                      value={scorePolicy}
-                      onChange={(event) =>
-                        setScorePolicy(
-                          event.target.value as ExistingPackage["score_policy"],
-                        )
-                      }
-                      className="form-input"
-                    >
-                      <option value="HIGHEST">Nilai tertinggi</option>
-                      <option value="AVERAGE">Nilai rata-rata</option>
-                      <option value="LAST_ATTEMPT">Nilai percobaan terakhir</option>
-                    </select>
-                  </div>
-                )}
+                <div>
+                  <label
+                    htmlFor="score-policy"
+                    className="mb-1.5 block text-sm font-medium"
+                  >
+                    Nilai yang diambil
+                  </label>
+                  <select
+                    id="score-policy"
+                    value={scorePolicy}
+                    disabled={Number(maxAttempts) <= 1}
+                    onChange={(event) =>
+                      setScorePolicy(
+                        event.target.value as ExistingPackage["score_policy"],
+                      )
+                    }
+                    className="form-input disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="HIGHEST">Nilai tertinggi</option>
+                    <option value="AVERAGE">Nilai rata-rata</option>
+                    <option value="LAST_ATTEMPT">Nilai percobaan terakhir</option>
+                  </select>
+                </div>
                 <div>
                   <label
                     htmlFor="package-password"
