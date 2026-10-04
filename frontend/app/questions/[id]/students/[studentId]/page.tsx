@@ -959,28 +959,31 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                     <span className="text-on-surface-variant text-xs font-semibold uppercase tracking-wide">
                       Percobaan:
                     </span>
-                    <AppSelect
-                      value={currentAttempt ? String(currentAttempt.attempt_no) : ""}
-                      onValueChange={(val) => {
-                        if (val)
-                          handleSelectAttempt(
-                            activeQuestion.question_id,
-                            Number.parseInt(val, 10)
-                          );
-                      }}
-                      ariaLabel="Pilih Percobaan"
-                      disabled={attemptsDesc.length === 0}
-                      placeholder={
-                        attemptsDesc.length === 0
+                    {attemptsDesc.length <= 1 ? (
+                      <span className="inline-flex min-w-[95px] items-center justify-center rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs font-semibold text-on-surface-variant">
+                        {attemptsDesc.length === 0
                           ? "Belum ada"
-                          : `Ke-${currentAttempt?.attempt_no ?? 1}`
-                      }
-                      className="min-w-[95px] text-xs"
-                      options={attemptsDesc.map((att) => ({
-                        value: String(att.attempt_no),
-                        label: `Ke-${att.attempt_no}`,
-                      }))}
-                    />
+                          : `Ke-${currentAttempt?.attempt_no ?? 1}`}
+                      </span>
+                    ) : (
+                      <AppSelect
+                        value={currentAttempt ? String(currentAttempt.attempt_no) : ""}
+                        onValueChange={(val) => {
+                          if (val)
+                            handleSelectAttempt(
+                              activeQuestion.question_id,
+                              Number.parseInt(val, 10)
+                            );
+                        }}
+                        ariaLabel="Pilih Percobaan"
+                        placeholder={`Ke-${currentAttempt?.attempt_no ?? 1}`}
+                        className="min-w-[95px] text-xs"
+                        options={attemptsDesc.map((att) => ({
+                          value: String(att.attempt_no),
+                          label: `Ke-${att.attempt_no}`,
+                        }))}
+                      />
+                    )}
                   </div>
 
                   {currentAttempt ? (
