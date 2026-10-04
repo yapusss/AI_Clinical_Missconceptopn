@@ -10,6 +10,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useAuth } from "../components/AuthProvider";
+import AppSelect from "../components/AppSelect";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
 
@@ -148,8 +149,8 @@ export default function ExamPackageForm({
     code.trim().length >= 3 &&
     title.trim() &&
     (!opensAt || !closesAt || new Date(opensAt) < new Date(closesAt)) &&
-    (!durationHours || Number(durationHours) > 0) &&
-    (!maxAttempts || Number(maxAttempts) > 0);
+    Number(durationHours) >= 0.5 &&
+    Number(maxAttempts) >= 1;
 
   const save = async (isActive: boolean) => {
     if (!token || !validStepOne || (isActive && !questionIds.length)) return;
@@ -163,8 +164,8 @@ export default function ExamPackageForm({
       is_active: isActive,
       opens_at: isoOrNull(opensAt),
       closes_at: isoOrNull(closesAt),
-      duration_minutes: durationHours ? Number(durationHours) * 60 : null,
-      max_attempts: maxAttempts ? Number(maxAttempts) : null,
+      duration_minutes: Number(durationHours) * 60,
+      max_attempts: Number(maxAttempts),
       score_policy: scorePolicy,
     };
     if (password) payload.password = password;
@@ -310,6 +311,7 @@ export default function ExamPackageForm({
                     step="0.5"
                     value={durationHours}
                     onChange={(event) => setDurationHours(event.target.value)}
+                    placeholder="0"
                     className="form-input"
                   />
                 </div>
@@ -325,7 +327,7 @@ export default function ExamPackageForm({
               <p className="mt-1 text-sm text-on-surface-variant">
                 Atur batas percobaan dan password bila akses perlu dibatasi.
               </p>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="mt-4 grid gap-4 sm:grid-cols-4">
                 <div>
                   <label
                     htmlFor="max-attempts"
@@ -339,6 +341,7 @@ export default function ExamPackageForm({
                     min="1"
                     value={maxAttempts}
                     onChange={(event) => setMaxAttempts(event.target.value)}
+                    placeholder="0"
                     className="form-input"
                   />
                 </div>
@@ -349,23 +352,23 @@ export default function ExamPackageForm({
                   >
                     Nilai yang diambil
                   </label>
-                  <select
-                    id="score-policy"
+                  <AppSelect
                     value={scorePolicy}
                     disabled={Number(maxAttempts) <= 1}
-                    onChange={(event) =>
+                    onValueChange={(value) =>
                       setScorePolicy(
-                        event.target.value as ExistingPackage["score_policy"],
+                        value as ExistingPackage["score_policy"],
                       )
                     }
-                    className="form-input disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="HIGHEST">Nilai tertinggi</option>
-                    <option value="AVERAGE">Nilai rata-rata</option>
-                    <option value="LAST_ATTEMPT">Nilai percobaan terakhir</option>
-                  </select>
+                    ariaLabel="Nilai yang diambil"
+                    options={[
+                      { value: "HIGHEST", label: "Nilai tertinggi" },
+                      { value: "AVERAGE", label: "Nilai rata-rata" },
+                      { value: "LAST_ATTEMPT", label: "Nilai percobaan terakhir" },
+                    ]}
+                  />
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <label
                     htmlFor="package-password"
                     className="mb-1.5 block text-sm font-medium"
@@ -533,7 +536,7 @@ export default function ExamPackageForm({
             type="button"
             onClick={() => {
               if (!validStepOne) {
-                setError("Lengkapi pengaturan paket dengan benar.");
+                setError("Batas durasi minimal 0,5 jam dan maksimal percobaan minimal 1.");
                 return;
               }
               setError("");

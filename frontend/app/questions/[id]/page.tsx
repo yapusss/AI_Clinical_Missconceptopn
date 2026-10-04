@@ -49,6 +49,7 @@ type QuestionSetReview = {
 };
 
 type ValidationTabId = "PENDING" | "VALIDATED" | "ALL";
+const STUDENTS_PER_PAGE = 10;
 
 const VALIDATION_TABS: { id: ValidationTabId; label: string }[] = [
   { id: "PENDING", label: "Belum Divalidasi" },
@@ -61,6 +62,16 @@ function resolveValidationState(student: StudentProgress): "PENDING" | "VALIDATE
   const submissions = student.all_submissions;
   if (!submissions.length) return "PENDING";
   return submissions.every((submission) => submission.validation_status === "VALIDATED") ? "VALIDATED" : "PENDING";
+}
+
+function resolvePackageStatus(student: StudentProgress): string {
+  const statuses = student.all_submissions.map((submission) => submission.status);
+  if (resolveValidationState(student) === "VALIDATED") return "VALIDATED";
+  if (statuses.includes("PENDING_VALIDATION")) return "PENDING_VALIDATION";
+  if (statuses.includes("ANALYZING")) return "ANALYZING";
+  if (statuses.includes("SUBMITTED")) return "SUBMITTED";
+  if (statuses.includes("ANALYSIS_FAILED")) return "ANALYSIS_FAILED";
+  return statuses[0] ?? "SUBMITTED";
 }
 
 function isRosterMember(student: StudentProgress): boolean {
@@ -85,6 +96,7 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<ValidationTabId>("PENDING");
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     if (!setId) return;
@@ -120,6 +132,12 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
     VALIDATED: validatedStudents.length,
     ALL: students.length,
   };
+  const totalPages = Math.max(1, Math.ceil(visibleStudents.length / STUDENTS_PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const pageStudents = visibleStudents.slice(
+    (safePage - 1) * STUDENTS_PER_PAGE,
+    safePage * STUDENTS_PER_PAGE,
+  );
 
   return (
     <PageContainer>
@@ -148,7 +166,10 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setPage(1);
+                  }}
                   aria-pressed={active}
                   className={`inline-flex cursor-pointer items-center justify-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${active ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
                 >
@@ -177,45 +198,64 @@ export default function QuestionSetReviewPage({ examPackage = false }: { examPac
                     ? "Belum ada mahasiswa yang tervalidasi."
                     : "Tidak ada mahasiswa pada paket ini."}
             </div>
-          ) : visibleStudents.map((student) => {
-            const counts = student.all_submissions.reduce<Record<string, number>>((acc, sub) => {
-              acc[sub.status] = (acc[sub.status] ?? 0) + 1;
-              return acc;
-            }, {});
-
-            return (
-              <article key={student.student_id} className="glass-card rounded-xl p-5">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <h2 className="font-display text-lg font-bold text-on-surface">{student.student_name}</h2>
-                    <p className="mt-1 text-sm text-on-surface-variant">{student.student_email}</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="badge badge-role font-mono-ui">
-                      {student.total_attempts_count} Percobaan Total
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-outline-variant/20 pt-4">
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(counts).map(([status, count]) => {
-                      const meta = STATUS_META[status] ?? { label: status, badge: "badge-role" };
+          ) : (
+            <section className="overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="bg-surface-container-low text-xs font-semibold uppercase text-on-surface-variant">
+                    <tr>
+                      <th className="px-5 py-3">Mahasiswa</th>
+                      <th className="px-5 py-3">Jawaban</th>
+                      <th className="px-5 py-3">Status</th>
+                      <th className="px-5 py-3">Percobaan</th>
+                      <th className="px-5 py-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant/30">
+                    {pageStudents.map((student) => {
+                      const packageStatus = resolvePackageStatus(student);
+                      const statusMeta = STATUS_META[packageStatus] ?? { label: packageStatus, badge: "badge-role" };
                       return (
-                        <span key={status} className={`badge ${meta.badge}`}>
-                          {count} {meta.label}
-                        </span>
+                        <tr key={student.student_id} className="transition-colors hover:bg-surface-container-low">
+                          <td className="px-5 py-4">
+                            <p className="font-semibold text-on-surface">{student.student_name}</p>
+                            <p className="mt-1 text-xs text-on-surface-variant">{student.student_email}</p>
+                          </td>
+                          <td className="px-5 py-4 font-mono-ui text-on-surface">
+                            {student.answered_count}/{student.published_question_count}
+                          </td>
+                          <td className="px-5 py-4">
+                            <span className={`badge ${statusMeta.badge}`}>{statusMeta.label}</span>
+                          </td>
+                          <td className="px-5 py-4">
+                            <span className="badge badge-role font-mono-ui">{student.total_attempts_count}</span>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <Link href={`/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${student.student_id}`} className="btn-primary inline-flex !px-3 !py-2 text-xs font-semibold">
+                              Tinjau <ArrowRight size={15} />
+                            </Link>
+                          </td>
+                        </tr>
                       );
                     })}
-                  </div>
-
-                  <Link href={`/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${student.student_id}`} className="btn-primary !py-2 !px-4 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm">
-                    Tinjau &amp; Validasi Jawaban <ArrowRight size={15} />
-                  </Link>
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-outline-variant/30 px-5 py-3">
+                <span className="text-xs text-on-surface-variant">
+                  Halaman {safePage}/{totalPages} · menampilkan {pageStudents.length} dari {visibleStudents.length} mahasiswa
+                </span>
+                <div className="flex gap-2">
+                  <button type="button" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)} className="btn-secondary !px-3 !py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40">
+                    Sebelumnya
+                  </button>
+                  <button type="button" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)} className="btn-secondary !px-3 !py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40">
+                    Berikutnya
+                  </button>
                 </div>
-              </article>
-            );
-          })}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </PageContainer>

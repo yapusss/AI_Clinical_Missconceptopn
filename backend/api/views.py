@@ -2385,7 +2385,8 @@ class ExamPackageReviewView(APIView):
             rows.append({
                 'student_id': str(student.id), 'student_name': student.full_name, 'student_email': student.email,
                 'answered_count': len({submission.question_version_id for submission in student_submissions}),
-                'published_question_count': len(items), 'total_attempts_count': len(student_submissions),
+                'published_question_count': len(items),
+                'total_attempts_count': len({submission.attempt_no for submission in student_submissions}),
                 'all_submissions': all_submissions,
             })
         return Response({

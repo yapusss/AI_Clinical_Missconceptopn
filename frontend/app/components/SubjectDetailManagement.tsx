@@ -294,6 +294,7 @@ export default function SubjectDetailManagement({
       )}
       {lecturerView ? (
         <LecturerWorkspace
+          subjectId={subjectId}
           topics={topics}
           bankSets={bankSets}
           packages={packages}
@@ -305,7 +306,7 @@ export default function SubjectDetailManagement({
           onAddQuestion={(topic) => setChooserTopic(topic)}
           onEditTopic={openTopicForm}
           onDeleteTopic={setDeleting}
-          onEditSet={(set) => router.push(`/questions/${set.id}/edit`)}
+          onEditSet={(set) => router.push(`/questions/${set.id}/edit?subject_id=${subjectId}`)}
           onDeleteSet={setDeletingSet}
           onCreatePackage={() =>
             router.push(`/exam-packages/create?subject_id=${subjectId}`)
@@ -537,6 +538,7 @@ export default function SubjectDetailManagement({
 }
 
 function LecturerWorkspace({
+  subjectId,
   topics,
   bankSets,
   packages,
@@ -555,6 +557,7 @@ function LecturerWorkspace({
   onDuplicatePackage,
   duplicatingPackageId,
 }: {
+  subjectId: string;
   topics: Topic[];
   bankSets: BankSet[];
   packages: ExamPackage[];
@@ -679,11 +682,11 @@ function LecturerWorkspace({
                       tabIndex={0}
                       role="link"
                       aria-label={`Tinjau mahasiswa paket ${item.code}`}
-                      onClick={() => router.push(`/exam-packages/${item.id}`)}
+                       onClick={() => router.push(`/exam-packages/${item.id}?subject_id=${item.subject_id}`)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          router.push(`/exam-packages/${item.id}`);
+                           router.push(`/exam-packages/${item.id}?subject_id=${item.subject_id}`);
                         }
                       }}
                       className="cursor-pointer transition-colors hover:bg-surface-container"
@@ -869,7 +872,7 @@ function LecturerWorkspace({
                       sets.map((set) => (
                         <div key={set.id} className="flex items-center gap-2 py-4">
                         <Link
-                          href={`/questions/${set.id}/view`}
+                           href={`/questions/${set.id}/view?subject_id=${subjectId}`}
                           className="flex min-w-0 flex-1 items-center gap-3 no-underline hover:text-primary"
                         >
                           <FileText size={17} className="text-secondary" />

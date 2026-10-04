@@ -742,7 +742,7 @@ class ExamPackageReviewScopingTests(TransactionTestCase):
         self.other_question, self.other_version = self._question(question_set, 2)
         self.package = self._package('PACKAGE-A', self.package_question, self.package_version)
         self.other_package = self._package('PACKAGE-B', self.other_question, self.other_version)
-        Submission.objects.create(id=uuid.uuid4(), student=self.student, subject=self.subject, question_version_id=self.package_version.id, answer_text='In package', status='SUBMITTED', attempt_no=1)
+        Submission.objects.create(id=uuid.uuid4(), student=self.student, subject=self.subject, exam_package=self.package, question_version_id=self.package_version.id, answer_text='In package', status='SUBMITTED', attempt_no=1)
         Submission.objects.create(id=uuid.uuid4(), student=self.other_student, subject=self.subject, question_version_id=self.other_version.id, answer_text='Other package', status='SUBMITTED', attempt_no=1)
         token = AuthToken.generate(self.lecturer)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token.key}')
@@ -763,6 +763,25 @@ class ExamPackageReviewScopingTests(TransactionTestCase):
         body = response.json()
         self.assertEqual([student['student_id'] for student in body['students']], [str(self.student.id)])
         self.assertEqual(body['students'][0]['all_submissions'][0]['question_id'], str(self.package_question.id))
+
+    def test_review_list_counts_attempts_per_package_not_per_question(self):
+        second_question, second_version = self._question(
+            QuestionSet.objects.get(pk=self.package_question.question_set_id), 3,
+        )
+        ExamPackageQuestion.objects.create(
+            id=uuid.uuid4(), exam_package=self.package, question=second_question,
+            question_version=second_version, order_index=2,
+        )
+        Submission.objects.create(
+            id=uuid.uuid4(), student=self.student, subject=self.subject,
+            exam_package=self.package, question_version_id=second_version.id,
+            answer_text='Jawaban kedua', status='SUBMITTED', attempt_no=1,
+        )
+
+        response = self.client.get(reverse('exam-package-review', kwargs={'pk': self.package.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['students'][0]['total_attempts_count'], 1)
 
     def test_student_review_rejects_student_without_submission_in_package(self):
         response = self.client.get(reverse('exam-package-student-review', kwargs={'pk': self.package.id, 'student_id': self.other_student.id}))
