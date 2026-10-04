@@ -169,6 +169,7 @@ export default function SubjectDetailManagement({
     }
   };
   const removeTopic = async (topic: Topic) => {
+    setDeleting(null);
     const response = await fetch(`/api/admin/topics/${topic.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
@@ -177,7 +178,6 @@ export default function SubjectDetailManagement({
       setError(await message(response));
       return;
     }
-    setDeleting(null);
     await load();
   };
   const removeSet = async (set: BankSet) => {
@@ -880,19 +880,6 @@ function LecturerWorkspace({
                             <span className="text-xs text-on-surface-variant">
                               {set.question_count} soal
                             </span>
-                            {set.latest_versions.length > 0 && (
-                              <span className="mt-1 flex flex-wrap gap-1.5">
-                                {set.latest_versions.map((v) => (
-                                  <span
-                                    key={v.question_id}
-                                    className="font-mono-ui text-[10px] font-semibold text-on-surface-variant bg-surface-container px-1.5 py-0.5 rounded border border-outline-variant/40"
-                                    title={`ID Soal: ${v.question_id}`}
-                                  >
-                                    #{v.question_id.slice(0, 8)}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
                           </span>
                         </Link>
                         <RowMenu

@@ -3,7 +3,7 @@ import re
 from django.contrib.auth.hashers import check_password, make_password
 from rest_framework import serializers
 
-from .models import User, UserRole
+from .models import ExamPackage, User, UserRole
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -151,6 +151,11 @@ class ExamPackageCreateSerializer(serializers.Serializer):
     closes_at = serializers.DateTimeField(required=False, allow_null=True)
     duration_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     max_attempts = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    score_policy = serializers.ChoiceField(
+        choices=ExamPackage.ScorePolicy.values,
+        required=False,
+        default=ExamPackage.ScorePolicy.LAST_ATTEMPT,
+    )
     password = serializers.CharField(required=False, allow_blank=True, write_only=True, max_length=255)
 
     def validate_code(self, value):

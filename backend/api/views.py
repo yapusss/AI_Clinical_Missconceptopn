@@ -694,7 +694,30 @@ class AdminTopicDetailView(APIView):
             return Response({'detail': 'Topik tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
         if not require_admin(request) and not is_lecturer_for_subject(request.user, topic.subject_id):
             return Response({'detail': 'Anda tidak memiliki akses ke topik ini.'}, status=status.HTTP_403_FORBIDDEN)
-        topic.delete()
+
+        q_sets = QuestionSet.objects.filter(topic=topic)
+        if q_sets.exists():
+            question_ids = list(Question.objects.filter(question_set__in=q_sets).values_list('id', flat=True))
+            version_ids = list(QuestionVersion.objects.filter(question_id__in=question_ids).values_list('id', flat=True))
+
+            worked_on = Submission.objects.filter(question_version_id__in=version_ids).exists()
+            in_published_package = ExamPackageQuestion.objects.filter(
+                question_id__in=question_ids, exam_package__is_active=True
+            ).exists()
+
+            if worked_on or in_published_package:
+                return Response(
+                    {'detail': f'Topik "{topic.name}" tidak dapat dihapus karena memuat bank soal yang sudah dikerjakan mahasiswa atau digunakan dalam paket ujian aktif.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                ExamPackageQuestion.objects.filter(question_id__in=question_ids).delete()
+                q_sets.delete()
+                topic.delete()
+        else:
+            topic.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -2043,6 +2066,7 @@ def exam_package_payload(package, question_count=0, question_ids=None):
         'is_active': package.is_active, 'question_count': question_count,
         'opens_at': package.opens_at, 'closes_at': package.closes_at,
         'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
+        'score_policy': package.score_policy,
         'password_required': bool(package.password_hash), 'created_at': package.created_at,
     }
     if question_ids is not None:
@@ -2164,6 +2188,7 @@ class ExamPackageListCreateView(APIView):
                 code=data['code'], title=data['title'], is_active=data['is_active'],
                 opens_at=data.get('opens_at'), closes_at=data.get('closes_at'),
                 duration_minutes=data.get('duration_minutes'), max_attempts=data.get('max_attempts'),
+                score_policy=data['score_policy'],
                 password_hash=make_password(data['password']) if data.get('password') else None,
             )
             for order_index, question_id in enumerate(data['question_ids'], start=1):
@@ -2206,6 +2231,7 @@ class ExamPackageDetailView(APIView):
             'question_ids': list(ExamPackageQuestion.objects.filter(exam_package=package).order_by('order_index').values_list('question_id', flat=True)),
             'is_active': package.is_active, 'opens_at': package.opens_at, 'closes_at': package.closes_at,
             'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
+            'score_policy': package.score_policy,
         }
         merged.update(request.data)
         serializer = ExamPackageCreateSerializer(data=merged)
@@ -2228,6 +2254,7 @@ class ExamPackageDetailView(APIView):
             package.closes_at = data.get('closes_at')
             package.duration_minutes = data.get('duration_minutes')
             package.max_attempts = data.get('max_attempts')
+            package.score_policy = data['score_policy']
             if 'password' in request.data:
                 package.password_hash = make_password(data['password']) if data.get('password') else None
             package.save()
@@ -2289,6 +2316,7 @@ class ExamPackageDuplicateView(APIView):
                 closes_at=package.closes_at,
                 duration_minutes=package.duration_minutes,
                 max_attempts=package.max_attempts,
+                score_policy=package.score_policy,
                 # Copy the existing one-way hash; never expose it in the response.
                 password_hash=package.password_hash,
             )
@@ -2971,26 +2999,49 @@ def _build_submission_package_groups(user):
         questions_payload.sort(key=lambda item: item['order_index'])
         status_summary = next(iter(status_counts)) if len(status_counts) == 1 else 'MIXED'
 
-        # Target 3: Kalkulasi Nilai Keseluruhan Paket Soal
+        # Calculate one score per completed attempt so the package policy is
+        # applied to whole attempts, never a mix of different attempts.
         total_questions = len(questions_payload)
-        validated_questions_count = 0
-        correct_questions_count = 0
+        attempt_numbers = sorted({
+            attempt['attempt_no']
+            for question in questions_payload
+            for attempt in question['attempts']
+        })
+        scored_attempts = []
+        for attempt_number in attempt_numbers:
+            answers = [
+                next((attempt for attempt in question['attempts'] if attempt['attempt_no'] == attempt_number), None)
+                for question in questions_payload
+            ]
+            if not total_questions or any(answer is None or answer['status'] != 'VALIDATED' for answer in answers):
+                continue
+            correct_count = sum(
+                float((answer.get('evaluation') or {}).get('percentage_correct', 0)) >= 99.9
+                for answer in answers
+            )
+            scored_attempts.append({
+                'attempt_no': attempt_number,
+                'correct_count': correct_count,
+                'score': round(correct_count / total_questions * 100.0, 1),
+            })
 
-        for q_item in questions_payload:
-            if q_item['answered'] and q_item['attempts']:
-                latest_att = q_item['attempts'][-1]
-                if latest_att['status'] == 'VALIDATED':
-                    validated_questions_count += 1
-                    eval_d = latest_att.get('evaluation')
-                    if eval_d and float(eval_d.get('percentage_correct', 0)) >= 99.9:
-                        correct_questions_count += 1
+        policy = package.score_policy
+        selected_attempt = None
+        if scored_attempts:
+            if policy == ExamPackage.ScorePolicy.HIGHEST:
+                selected_attempt = max(scored_attempts, key=lambda attempt: (attempt['score'], attempt['attempt_no']))
+                overall_score = selected_attempt['score']
+            elif policy == ExamPackage.ScorePolicy.AVERAGE:
+                overall_score = round(sum(attempt['score'] for attempt in scored_attempts) / len(scored_attempts), 1)
+            else:
+                selected_attempt = scored_attempts[-1]
+                overall_score = selected_attempt['score']
+        else:
+            overall_score = 0.0
 
-        is_fully_validated = (validated_questions_count == total_questions and total_questions > 0)
-        overall_score = (
-            round((correct_questions_count / total_questions) * 100.0, 1)
-            if total_questions > 0
-            else 0.0
-        )
+        selected_correct_count = selected_attempt['correct_count'] if selected_attempt else 0
+        selected_validated_count = total_questions if selected_attempt else 0
+        is_fully_validated = bool(attempt_numbers) and len(scored_attempts) == len(attempt_numbers)
 
         results.append({
             'package_id': str(package.id),
@@ -3005,9 +3056,10 @@ def _build_submission_package_groups(user):
             'status_summary': status_summary,
             'status_counts': status_counts,
             'last_submitted_at': last_submitted,
+            'score_policy': policy,
             'overall_score': overall_score,
-            'correct_count': correct_questions_count,
-            'validated_count': validated_questions_count,
+            'correct_count': selected_correct_count,
+            'validated_count': selected_validated_count,
             'is_fully_validated': is_fully_validated,
             'questions': questions_payload,
         })
