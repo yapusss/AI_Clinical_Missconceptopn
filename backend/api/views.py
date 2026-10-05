@@ -272,14 +272,179 @@ class DashboardView(APIView):
             })
 
         if 'LECTURER' in role_set or user.is_superuser:
-            in_scope = Q(subject_id__in=my_subjects_ids) if my_subjects_ids else Q()
+            scoped_subject_ids = (
+                list(Subject.objects.values_list('id', flat=True))
+                if user.is_superuser else my_subjects_ids
+            )
+            in_scope = Q(subject_id__in=scoped_subject_ids)
+            subject_rows = []
+            question_set_counts = {
+                row['subject_id']: row['count']
+                for row in QuestionSet.objects.filter(in_scope).values('subject_id').annotate(count=Count('id'))
+            }
+            active_package_counts = {
+                row['subject_id']: row['count']
+                for row in ExamPackage.objects.filter(in_scope, is_active=True).values('subject_id').annotate(count=Count('id'))
+            }
+            submission_counts = {
+                row['subject_id']: row['count']
+                for row in Submission.objects.filter(in_scope).values('subject_id').annotate(count=Count('id'))
+            }
+            pending_counts = {
+                row['subject_id']: row['count']
+                for row in Submission.objects.filter(in_scope, status='PENDING_VALIDATION').values('subject_id').annotate(count=Count('student_id', distinct=True))
+            }
+            score_by_subject = {
+                row['subject_id']: row['score']
+                for row in Validation.objects.filter(
+                    subject_id__in=scoped_subject_ids,
+                    status__in=['ACCEPTED', 'EDITED'],
+                    final_percentage__isnull=False,
+                ).values('subject_id').annotate(score=Avg('final_percentage'))
+            }
+            for subject in Subject.objects.filter(id__in=scoped_subject_ids).order_by('name'):
+                average_score = score_by_subject.get(subject.id)
+                subject_rows.append({
+                    'id': str(subject.id),
+                    'name': subject.name,
+                    'slug': subject.slug,
+                    'question_sets': question_set_counts.get(subject.id, 0),
+                    'active_packages': active_package_counts.get(subject.id, 0),
+                    'submissions': submission_counts.get(subject.id, 0),
+                    'pending_validations': pending_counts.get(subject.id, 0),
+                    'average_score': round(float(average_score), 1) if average_score is not None else None,
+                })
+
+            pending_analyses = list(
+                LlmAnalysis.objects.filter(
+                    subject_id__in=scoped_subject_ids,
+                    is_current=True,
+                    submission__status='PENDING_VALIDATION',
+                ).select_related('submission__student', 'subject').order_by('submission__submitted_at')[:5]
+            )
+            validation_queue = [{
+                'analysis_id': str(analysis.id),
+                'student_name': analysis.submission.student.full_name,
+                'subject_name': analysis.subject.name,
+                'score': round(float(analysis.percentage_correct), 1),
+                'submitted_at': analysis.submission.submitted_at,
+            } for analysis in pending_analyses]
+
+            active_packages = list(
+                ExamPackage.objects.filter(subject_id__in=scoped_subject_ids, is_active=True)
+                .select_related('subject')
+                .annotate(question_count=Count('items', distinct=True), participant_count=Count('exampackageattempt__student_id', distinct=True))
+                .order_by('closes_at', '-updated_at')[:5]
+            )
+            package_rows = [{
+                'id': str(package.id),
+                'code': package.code,
+                'title': package.title,
+                'subject_name': package.subject.name,
+                'opens_at': package.opens_at,
+                'closes_at': package.closes_at,
+                'question_count': package.question_count,
+                'participant_count': package.participant_count,
+            } for package in active_packages]
+
+            risk_levels = list(
+                LlmAnalysis.objects.filter(subject_id__in=scoped_subject_ids, is_current=True)
+                .exclude(risk_level__isnull=True).exclude(risk_level='')
+                .values('risk_level').annotate(count=Count('id')).order_by('-count', 'risk_level')
+            )
+            packages_pending_validation = list(
+                ExamPackage.objects.filter(
+                    subject_id__in=scoped_subject_ids,
+                    submission__status='PENDING_VALIDATION',
+                ).select_related('subject').annotate(
+                    pending_validation_count=Count('submission__student_id', distinct=True),
+                ).order_by('-pending_validation_count', 'title')[:6]
+            )
+            student_package_scores = list(
+                Validation.objects.filter(
+                    subject_id__in=scoped_subject_ids,
+                    status__in=['ACCEPTED', 'EDITED'],
+                    final_percentage__isnull=False,
+                    analysis__submission__exam_package__isnull=False,
+                ).values(
+                    'analysis__submission__exam_package_id',
+                    'analysis__submission__student_id',
+                ).annotate(score=Avg('final_percentage'))
+            )
+            recommendation_package_ids = {
+                row['analysis__submission__exam_package_id']
+                for row in student_package_scores
+            }
+            recommendation_packages = {
+                package.id: package
+                for package in ExamPackage.objects.filter(id__in=recommendation_package_ids).select_related('subject')
+            }
+            package_student_scores = {}
+            for row in student_package_scores:
+                package_student_scores.setdefault(
+                    row['analysis__submission__exam_package_id'], [],
+                ).append(float(row['score']))
+            package_recommendations = []
+            for package_id, student_scores in package_student_scores.items():
+                package = recommendation_packages.get(package_id)
+                if not package:
+                    continue
+                average_score = round(sum(student_scores) / len(student_scores), 1)
+                if average_score < 60:
+                    recommendation = 'Prioritaskan remedial konsep inti dan berikan umpan balik terarah sebelum evaluasi berikutnya.'
+                elif average_score < 80:
+                    recommendation = 'Lakukan penguatan materi melalui latihan terarah untuk memperbaiki pemahaman yang belum konsisten.'
+                else:
+                    recommendation = 'Capaian sudah baik; lanjutkan dengan pengayaan atau soal aplikasi yang lebih menantang.'
+                package_recommendations.append({
+                    'id': str(package.id),
+                    'title': package.title,
+                    'subject_name': package.subject.name,
+                    'average_score': average_score,
+                    'student_count': len(student_scores),
+                    'recommendation': recommendation,
+                })
+            package_recommendations.sort(key=lambda item: item['average_score'])
+            recent_activity = []
+            for submission in Submission.objects.filter(in_scope).select_related('student', 'subject').order_by('-submitted_at')[:5]:
+                recent_activity.append({
+                    'label': f'{submission.student.full_name} mengumpulkan jawaban',
+                    'subject_name': submission.subject.name,
+                    'timestamp': submission.submitted_at,
+                    'type': 'SUBMISSION',
+                })
+            for validation in Validation.objects.filter(subject_id__in=scoped_subject_ids, validated_at__isnull=False).select_related('lecturer', 'subject').order_by('-validated_at')[:5]:
+                recent_activity.append({
+                    'label': f'{validation.lecturer.full_name} menyelesaikan validasi',
+                    'subject_name': validation.subject.name,
+                    'timestamp': validation.validated_at,
+                    'type': 'VALIDATION',
+                })
+            recent_activity.sort(key=lambda item: item['timestamp'], reverse=True)
+
             summary.update({
                 'my_question_sets': QuestionSet.objects.filter(created_by=user).count(),
                 'subject_question_sets': QuestionSet.objects.filter(in_scope).count(),
                 'subject_submissions': Submission.objects.filter(in_scope).count(),
                 'pending_validations': Submission.objects.filter(
                     in_scope & Q(status='PENDING_VALIDATION')
-                ).count(),
+                ).values('student_id').distinct().count(),
+                'lecturer_dashboard': {
+                    'pending_validation_count': sum(pending_counts.values()),
+                    'validation_queue': validation_queue,
+                    'active_packages': package_rows,
+                    'subjects': subject_rows,
+                    'risk_levels': risk_levels,
+                    'package_recommendations': package_recommendations[:4],
+                    'packages_pending_validation': [{
+                        'id': str(package.id),
+                        'code': package.code,
+                        'title': package.title,
+                        'subject_name': package.subject.name,
+                        'pending_validation_count': package.pending_validation_count,
+                    } for package in packages_pending_validation],
+                    'recent_activity': recent_activity[:8],
+                },
             })
 
         return Response({

@@ -7,6 +7,7 @@ dhon-folder/
 
 # local dev artifacts (never commit)
 backend/venv/
+.env
 backend/db.sqlite3
 backend/media/
 
