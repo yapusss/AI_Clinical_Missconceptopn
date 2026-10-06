@@ -25,6 +25,7 @@ import PageHeader from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
 import AdminDashboard from "../components/AdminDashboard";
 import LecturerDashboard from "../components/LecturerDashboard";
+import StudentDashboard from "../components/StudentDashboard";
 
 type Role = { role: string; subject_slug: string; subject_name: string };
 type SubjectSummary = { id: string; slug: string; name: string; image_url?: string };
@@ -117,6 +118,7 @@ export default function DashboardPage() {
   const meta = ROLE_META[primaryRole] ?? ROLE_META.GENERAL;
   const summary = data?.summary ?? {};
   const adminDashboard = summary.admin_dashboard as unknown as React.ComponentProps<typeof AdminDashboard>["dashboard"] | undefined;
+  const studentDashboard = summary.student_dashboard as unknown as React.ComponentProps<typeof StudentDashboard>["dashboard"] | undefined;
   const mySubjects = (summary.my_subjects as SubjectSummary[]) ?? [];
   const lecturerDashboard = summary.lecturer_dashboard as unknown as React.ComponentProps<typeof LecturerDashboard>["dashboard"] | undefined;
 
@@ -194,7 +196,7 @@ export default function DashboardPage() {
         <p style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>Memproses...</p>
       ) : (
         <>
-          {primaryRole === "ADMIN" && adminDashboard ? <AdminDashboard dashboard={adminDashboard} /> : primaryRole === "LECTURER" && lecturerDashboard ? <LecturerDashboard dashboard={lecturerDashboard} /> : <><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+          {primaryRole === "ADMIN" && adminDashboard ? <AdminDashboard dashboard={adminDashboard} /> : primaryRole === "LECTURER" && lecturerDashboard ? <LecturerDashboard dashboard={lecturerDashboard} /> : primaryRole === "STUDENT" && studentDashboard ? <StudentDashboard dashboard={studentDashboard} /> : <><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
             {cards.map((card) => (
               <StatCard
                 key={card.label}

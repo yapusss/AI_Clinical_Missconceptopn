@@ -270,6 +270,7 @@ class DashboardView(APIView):
                 'my_validated': mine.filter(status__in=['VALIDATED', 'PENDING_VALIDATION']).count(),
                 'my_avg_score': round(float(avg), 2) if avg is not None else None,
             })
+            summary['student_dashboard'] = self._student_dashboard(user, mine, avg)
 
         if 'LECTURER' in role_set or user.is_superuser:
             scoped_subject_ids = (
@@ -452,6 +453,131 @@ class DashboardView(APIView):
             'is_superuser': user.is_superuser,
             'summary': summary,
         })
+
+    @staticmethod
+    def _student_dashboard(user, mine, avg):
+        """Aggregate the student dashboard payload.
+
+        The exam package code is intentionally never exposed here; students keep
+        entering it through /code. Only already-started attempts are surfaced so
+        they can be resumed.
+        """
+        now = timezone.now()
+
+        active_exams = []
+        attempts = (
+            ExamPackageAttempt.objects
+            .filter(student=user, submitted_at__isnull=True)
+            .select_related('exam_package__subject')
+            .order_by('-started_at')
+        )
+        for attempt in attempts:
+            package = attempt.exam_package
+            if package is None:
+                continue
+            if package.closes_at and now >= package.closes_at:
+                continue
+            if package.duration_minutes:
+                deadline = attempt.started_at + timedelta(minutes=package.duration_minutes)
+                if now >= deadline:
+                    continue
+            active_exams.append({
+                'package_id': str(package.id),
+                'package_code': package.code,
+                'package_title': package.title,
+                'subject_name': package.subject.name if package.subject else '',
+                'started_at': attempt.started_at.isoformat(),
+                'duration_minutes': package.duration_minutes,
+            })
+
+        distribution = {'SC': 0, 'LK': 0, 'FP': 0, 'FN': 0, 'MSC': 0}
+        category_rows = (
+            LlmAnalysis.objects
+            .filter(submission__student=user, is_current=True)
+            .exclude(four_tier_category__isnull=True)
+            .values('four_tier_category')
+            .annotate(count=Count('id'))
+        )
+        for row in category_rows:
+            category = row['four_tier_category']
+            if category in distribution:
+                distribution[category] = row['count']
+
+        validations = list(
+            Validation.objects
+            .filter(
+                analysis__submission__student=user,
+                analysis__is_current=True,
+                analysis__submission__status='VALIDATED',
+            )
+            .select_related('analysis', 'analysis__submission__exam_package', 'lecturer')
+            .order_by('-validated_at', '-id')
+        )
+        version_ids = {
+            v.analysis.submission.question_version_id
+            for v in validations if v.analysis and v.analysis.submission_id
+        }
+        versions = {
+            version.id: version
+            for version in QuestionVersion.objects
+            .filter(id__in=version_ids)
+            .select_related('question__question_set')
+        }
+
+        needs_remediation = []
+        recent_validated = []
+        for validation in validations:
+            analysis = validation.analysis
+            submission = analysis.submission if analysis else None
+            if submission is None:
+                continue
+            package = submission.exam_package
+            version = versions.get(submission.question_version_id)
+            category = getattr(analysis, 'four_tier_category', None)
+            fallback_title = (
+                version.question.question_set.title
+                if version and version.question and version.question.question_set
+                else ''
+            )
+            package_title = package.title if package else fallback_title
+
+            score = validation.final_percentage
+            if score is None:
+                score = analysis.percentage_correct
+
+            if len(recent_validated) < 4:
+                recent_validated.append({
+                    'submission_id': str(submission.id),
+                    'package_id': str(package.id) if package else None,
+                    'package_title': package_title,
+                    'score': round(float(score), 2) if score is not None else None,
+                    'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
+                    'lecturer_name': validation.lecturer.full_name if validation.lecturer else '',
+                })
+
+            if category in ('MSC', 'FP') and len(needs_remediation) < 3:
+                feedback_source = validation.final_feedback or analysis.explanation or ''
+                needs_remediation.append({
+                    'submission_id': str(submission.id),
+                    'package_id': str(package.id) if package else None,
+                    'package_title': package_title,
+                    'question_prompt_preview': plain_text_preview(version.prompt, 140) if version else '',
+                    'category': category,
+                    'feedback_preview': plain_text_preview(feedback_source, 160),
+                })
+
+        return {
+            'active_exams': active_exams,
+            'diagnostic_distribution': distribution,
+            'needs_remediation': needs_remediation,
+            'recent_validated': recent_validated,
+            'stats': {
+                'avg_score': round(float(avg), 2) if avg is not None else None,
+                'validated': mine.filter(status='VALIDATED').count(),
+                'in_progress': mine.filter(status__in=['ANALYZING', 'PENDING_VALIDATION']).count(),
+                'misconceptions': distribution['MSC'] + distribution['FP'],
+            },
+        }
 
 
 def require_admin(request):
