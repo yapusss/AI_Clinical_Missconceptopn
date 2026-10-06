@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -9,10 +10,13 @@ import {
   CheckCircle2,
   Clock3,
   Lightbulb,
+  LineChart,
   Play,
   Target,
   TrendingUp,
 } from "lucide-react";
+
+import AppSelect from "./AppSelect";
 
 export type StudentActiveExam = {
   package_id: string;
@@ -41,11 +45,26 @@ export type StudentValidated = {
   lecturer_name: string;
 };
 
+export type StudentExamTrendPoint = {
+  package_id: string;
+  package_code: string;
+  package_title: string;
+  date: string | null;
+  score: number | null;
+};
+
+export type StudentSubjectExamTrend = {
+  subject_id: string;
+  subject_name: string;
+  exams: StudentExamTrendPoint[];
+};
+
 export type StudentDashboardData = {
   active_exams: StudentActiveExam[];
   diagnostic_distribution: Record<string, number>;
   needs_remediation: StudentRemediation[];
   recent_validated: StudentValidated[];
+  subject_exam_trends?: StudentSubjectExamTrend[];
   stats?: {
     avg_score: number | null;
     validated: number;
@@ -88,6 +107,297 @@ const fmtDateTime = (value: string | null) => {
 
 const fmtPercent = (value: number | null) =>
   typeof value === "number" ? `${value.toFixed(1).replace(/\.?0+$/, "")}%` : "-";
+
+const fmtDate = (value: string | null) => {
+  if (!value) return "-";
+  try {
+    return new Date(value).toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return value;
+  }
+};
+
+const CHART_HEIGHT = 240;
+const CHART_PAD_TOP = 22;
+const CHART_PAD_BOTTOM = 34;
+const CHART_PAD_LEFT = 46;
+const CHART_PAD_RIGHT = 18;
+const Y_TICKS = [0, 25, 50, 75, 100] as const;
+
+function useContainerWidth<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const update = () => setWidth(node.clientWidth);
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, width] as const;
+}
+
+type ChartPoint = StudentExamTrendPoint & { value: number; x: number; y: number };
+
+function buildSmoothPath(points: { x: number; y: number }[]) {
+  if (points.length === 0) return "";
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const previous = points[index - 1] ?? points[index];
+    const current = points[index];
+    const next = points[index + 1];
+    const after = points[index + 2] ?? next;
+    const tension = 0.18;
+    const control1x = current.x + (next.x - previous.x) * tension;
+    const control1y = current.y + (next.y - previous.y) * tension;
+    const control2x = next.x - (after.x - current.x) * tension;
+    const control2y = next.y - (after.y - current.y) * tension;
+    path += ` C ${control1x} ${control1y}, ${control2x} ${control2y}, ${next.x} ${next.y}`;
+  }
+  return path;
+}
+
+function SubjectExamTrendChart({ exams }: { exams: StudentExamTrendPoint[] }) {
+  const [containerRef, width] = useContainerWidth<HTMLDivElement>();
+  const [hovered, setHovered] = useState<number | null>(null);
+  const gradientId = useId().replace(/:/g, "");
+
+  const geometry = useMemo(() => {
+    const usableWidth = Math.max(width, CHART_PAD_LEFT + CHART_PAD_RIGHT + 1);
+    const innerWidth = usableWidth - CHART_PAD_LEFT - CHART_PAD_RIGHT;
+    const innerHeight = CHART_HEIGHT - CHART_PAD_TOP - CHART_PAD_BOTTOM;
+    const points: ChartPoint[] = exams.map((exam, index) => {
+      const value = typeof exam.score === "number" ? Math.max(0, Math.min(100, exam.score)) : 0;
+      const ratio = exams.length === 1 ? 0.5 : index / (exams.length - 1);
+      return {
+        ...exam,
+        value,
+        x: CHART_PAD_LEFT + ratio * innerWidth,
+        y: CHART_PAD_TOP + (1 - value / 100) * innerHeight,
+      };
+    });
+    return {
+      points,
+      width: usableWidth,
+      innerWidth,
+      innerHeight,
+      baseline: CHART_PAD_TOP + innerHeight,
+    };
+  }, [exams, width]);
+
+  const { points, width: chartWidth, baseline } = geometry;
+  const linePath = useMemo(() => buildSmoothPath(points), [points]);
+  const areaPath = useMemo(() => {
+    if (points.length < 2) return "";
+    const first = points[0];
+    const last = points[points.length - 1];
+    return `${linePath} L ${last.x} ${baseline} L ${first.x} ${baseline} Z`;
+  }, [linePath, points, baseline]);
+
+  const tooltip = hovered !== null ? points[hovered] : null;
+  const xStep = points.length > 1 ? points[1].x - points[0].x : geometry.innerWidth;
+  const labelEvery = xStep >= 44 ? 1 : Math.max(1, Math.ceil(44 / Math.max(xStep, 1)));
+  const useCode = xStep >= 64;
+
+  return (
+    <div ref={containerRef} className="relative w-full min-w-0">
+      {width > 0 && (
+        <svg
+          role="img"
+          aria-label="Grafik tren nilai per ujian"
+          width={chartWidth}
+          height={CHART_HEIGHT}
+          viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
+          className="block w-full"
+        >
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.32" />
+              <stop offset="100%" stopColor="var(--primary)" stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+
+          {Y_TICKS.map((tick) => {
+            const y = CHART_PAD_TOP + (1 - tick / 100) * geometry.innerHeight;
+            return (
+              <g key={tick}>
+                <line
+                  x1={CHART_PAD_LEFT}
+                  y1={y}
+                  x2={chartWidth - CHART_PAD_RIGHT}
+                  y2={y}
+                  stroke="var(--border-color)"
+                  strokeWidth={1}
+                  strokeDasharray="4 6"
+                />
+                <text
+                  x={CHART_PAD_LEFT - 10}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize={11}
+                  fill="var(--text-dim)"
+                >
+                  {tick}%
+                </text>
+              </g>
+            );
+          })}
+
+          {areaPath && <path d={areaPath} fill={`url(#${gradientId})`} />}
+          {points.length > 1 && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="var(--primary)"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+
+          {points.map((point, index) => {
+            const showLabel = index % labelEvery === 0 || index === points.length - 1;
+            const rawLabel = useCode ? point.package_code || `Ujian ${index + 1}` : `Ujian ${index + 1}`;
+            const label = rawLabel.length > 12 ? `${rawLabel.slice(0, 11)}\u2026` : rawLabel;
+            return (
+              <g key={`${point.package_id}-${index}`}>
+                {showLabel && (
+                  <text
+                    x={point.x}
+                    y={CHART_HEIGHT - 12}
+                    textAnchor="middle"
+                    fontSize={11}
+                    fill="var(--text-dim)"
+                  >
+                    {label}
+                  </text>
+                )}
+                <text
+                  x={point.x}
+                  y={point.y - 12}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fontWeight={700}
+                  fill="var(--primary)"
+                >
+                  {fmtPercent(point.value)}
+                </text>
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={13}
+                  fill="transparent"
+                  className="cursor-pointer"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${point.package_title || point.package_code}: ${fmtPercent(point.value)} pada ${fmtDate(point.date)}`}
+                  onMouseEnter={() => setHovered(index)}
+                  onMouseLeave={() => setHovered(null)}
+                  onFocus={() => setHovered(index)}
+                  onBlur={() => setHovered(null)}
+                />
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={hovered === index ? 6 : 4.5}
+                  fill="var(--primary)"
+                  stroke="var(--bg-main)"
+                  strokeWidth={2}
+                  className="pointer-events-none transition-all duration-150"
+                />
+              </g>
+            );
+          })}
+        </svg>
+      )}
+
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-left shadow-lg"
+          style={{
+            left: Math.min(Math.max(tooltip.x, 84), Math.max(chartWidth - 84, 84)),
+            top: tooltip.y - 12,
+          }}
+        >
+          <p className="max-w-[190px] whitespace-normal text-xs font-semibold text-on-surface">
+            {tooltip.package_title || tooltip.package_code}
+          </p>
+          <p className="mt-0.5 text-[11px] text-on-surface-variant">{fmtDate(tooltip.date)}</p>
+          <p className="mt-0.5 text-xs font-bold text-primary">{fmtPercent(tooltip.value)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyTrendState({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant/60 px-4 py-12 text-center">
+      <LineChart size={22} className="text-on-surface-variant" />
+      <p className="max-w-sm text-sm text-on-surface-variant">{message}</p>
+    </div>
+  );
+}
+
+function SubjectExamTrendCard({ trends }: { trends: StudentSubjectExamTrend[] }) {
+  const [selectedSubject, setSelectedSubject] = useState(
+    () => trends.find((item) => item.exams.length > 0)?.subject_id ?? trends[0]?.subject_id ?? "",
+  );
+
+  const options = trends.map((item) => ({ value: item.subject_id, label: item.subject_name }));
+  const active = trends.find((item) => item.subject_id === selectedSubject) ?? trends[0];
+  const exams = active?.exams ?? [];
+
+  return (
+    <section className="glass-card p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-2">
+          <TrendingUp size={19} className="mt-0.5 shrink-0 text-primary" />
+          <div>
+            <h2 className="font-display text-base font-bold text-on-surface">
+              Tren Perkembangan Nilai per Ujian
+            </h2>
+            <p className="mt-1 text-xs text-on-surface-variant">
+              Riwayat nilai evaluasi tervalidasi untuk setiap paket ujian.
+            </p>
+          </div>
+        </div>
+        {options.length > 0 && (
+          <AppSelect
+            value={selectedSubject}
+            onValueChange={setSelectedSubject}
+            options={options}
+            ariaLabel="Pilih mata kuliah"
+            className="w-full sm:w-64"
+          />
+        )}
+      </div>
+
+      <div className="mt-5">
+        {!options.length ? (
+          <EmptyTrendState message="Belum ada riwayat ujian yang tervalidasi." />
+        ) : exams.length ? (
+          <SubjectExamTrendChart exams={exams} />
+        ) : (
+          <EmptyTrendState message="Belum ada riwayat ujian yang tervalidasi untuk mata kuliah ini." />
+        )}
+      </div>
+    </section>
+  );
+}
 
 function ActiveExamBanner({ exam }: { exam: StudentActiveExam }) {
   const deadline = exam.duration_minutes
@@ -190,6 +500,7 @@ export default function StudentDashboard({ dashboard }: { dashboard: StudentDash
   const activeExams = dashboard.active_exams ?? [];
   const remediation = dashboard.needs_remediation ?? [];
   const recent = dashboard.recent_validated ?? [];
+  const subjectTrends = dashboard.subject_exam_trends ?? [];
 
   const metrics = [
     {
@@ -236,6 +547,8 @@ export default function StudentDashboard({ dashboard }: { dashboard: StudentDash
           );
         })}
       </section>
+
+      <SubjectExamTrendCard trends={subjectTrends} />
 
       <Doughnut data={distribution} />
 

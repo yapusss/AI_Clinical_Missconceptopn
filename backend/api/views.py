@@ -571,6 +571,7 @@ class DashboardView(APIView):
             'diagnostic_distribution': distribution,
             'needs_remediation': needs_remediation,
             'recent_validated': recent_validated,
+            'subject_exam_trends': _build_subject_exam_trends(user),
             'stats': {
                 'avg_score': round(float(avg), 2) if avg is not None else None,
                 'validated': mine.filter(status='VALIDATED').count(),
@@ -3356,11 +3357,64 @@ def _build_submission_package_groups(user):
             'correct_count': selected_correct_count,
             'validated_count': selected_validated_count,
             'is_fully_validated': is_fully_validated,
+            'has_validated_score': bool(scored_attempts),
             'questions': questions_payload,
         })
 
     results.sort(key=lambda item: item['last_submitted_at'], reverse=True)
     return results
+
+
+def _build_subject_exam_trends(user):
+    """Group a student's validated exam package scores by subject.
+
+    Each subject exposes its exam history ordered chronologically (oldest
+    first) so the dashboard can render a value development trend line.
+    Packages without a validated attempt are excluded because they have no
+    final score yet.
+    """
+    grouped = {}
+    for package in _build_submission_package_groups(user):
+        if not package.get('has_validated_score'):
+            continue
+        subject_id = package['subject_id']
+        bucket = grouped.setdefault(subject_id, {
+            'subject_id': subject_id,
+            'subject_name': package['subject_name'],
+            'exams': [],
+        })
+        submitted_at = package.get('last_submitted_at')
+        bucket['exams'].append({
+            'package_id': package['package_id'],
+            'package_code': package['code'],
+            'package_title': package['title'],
+            'date': submitted_at.isoformat() if submitted_at else None,
+            'score': package['overall_score'],
+        })
+
+    for bucket in grouped.values():
+        bucket['exams'].sort(key=lambda exam: exam['date'] or '')
+
+    # Surface every subject the student is enrolled in, even without history,
+    # so the dropdown can show a friendly empty state for that subject.
+    for role in (
+        UserSubjectRole.objects
+        .filter(user=user, role=UserSubjectRole.Role.STUDENT)
+        .select_related('subject')
+    ):
+        subject_id = str(role.subject_id)
+        if subject_id in grouped:
+            continue
+        grouped[subject_id] = {
+            'subject_id': subject_id,
+            'subject_name': role.subject.name,
+            'exams': [],
+        }
+
+    trends = list(grouped.values())
+    trends.sort(key=lambda item: (not item['exams'], item['subject_name'].lower()))
+    return trends
+
 
 class StudentSubmissionPackageListView(APIView):
     """Daftar pengumpulan mahasiswa dikelompokkan per paket ujian."""
