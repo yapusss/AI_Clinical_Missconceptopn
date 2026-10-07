@@ -406,6 +406,22 @@ class DashboardView(APIView):
                     'recommendation': recommendation,
                 })
             package_recommendations.sort(key=lambda item: item['average_score'])
+            subject_mastery = {
+                subject_id: {'remedial': 0, 'reinforcement': 0, 'mastery': 0}
+                for subject_id in scoped_subject_ids
+            }
+            student_subject_scores = Validation.objects.filter(
+                subject_id__in=scoped_subject_ids,
+                status__in=['ACCEPTED', 'EDITED'],
+                final_percentage__isnull=False,
+                analysis__submission__exam_package__isnull=False,
+            ).values('subject_id', 'analysis__submission__student_id').annotate(
+                score=Avg('final_percentage'),
+            )
+            for row in student_subject_scores:
+                score = float(row['score'])
+                bucket = 'remedial' if score < 60 else 'reinforcement' if score < 80 else 'mastery'
+                subject_mastery[row['subject_id']][bucket] += 1
             recent_activity = []
             for submission in Submission.objects.filter(in_scope).select_related('student', 'subject').order_by('-submitted_at')[:5]:
                 recent_activity.append({
@@ -436,6 +452,10 @@ class DashboardView(APIView):
                     'active_packages': package_rows,
                     'subjects': subject_rows,
                     'risk_levels': risk_levels,
+                    'subject_mastery_distributions': [{
+                        'subject_id': str(subject_id),
+                        **counts,
+                    } for subject_id, counts in subject_mastery.items()],
                     'package_recommendations': package_recommendations[:4],
                     'packages_pending_validation': [{
                         'id': str(package.id),

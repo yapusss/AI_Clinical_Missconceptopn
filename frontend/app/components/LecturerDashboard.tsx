@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -9,6 +10,7 @@ import {
   ClipboardCheck,
   TriangleAlert,
 } from "lucide-react";
+import AppSelect from "./AppSelect";
 
 type Dashboard = {
   pending_validation_count: number;
@@ -40,6 +42,12 @@ type Dashboard = {
     average_score: number | null;
   }[];
   risk_levels: { risk_level: string; count: number }[];
+  subject_mastery_distributions: {
+    subject_id: string;
+    remedial: number;
+    reinforcement: number;
+    mastery: number;
+  }[];
   packages_pending_validation: {
     id: string;
     code: string;
@@ -119,6 +127,108 @@ function SubjectAverageBarChart({
       ) : (
         <p className="mt-5 rounded-xl bg-surface-container p-4 text-sm text-on-surface-variant">
           Rata-rata nilai tersedia setelah ada hasil analisis AI.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function SubjectMasteryDonut({ dashboard }: { dashboard: Dashboard }) {
+  const [subjectId, setSubjectId] = useState(dashboard.subjects[0]?.id ?? "");
+  const subject = dashboard.subjects.find((item) => item.id === subjectId);
+  const distribution = dashboard.subject_mastery_distributions.find(
+    (item) => item.subject_id === subjectId,
+  );
+  const data = [
+    {
+      label: "Perlu remedial",
+      value: distribution?.remedial ?? 0,
+      color: "#ef4444",
+    },
+    {
+      label: "Perlu penguatan",
+      value: distribution?.reinforcement ?? 0,
+      color: "#f59e0b",
+    },
+    {
+      label: "Sudah menguasai",
+      value: distribution?.mastery ?? 0,
+      color: "#10b981",
+    },
+  ];
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  let start = 0;
+  const segments = data.map((item) => {
+    const end = total ? start + (item.value / total) * 360 : start;
+    const segment = `${item.color} ${start}deg ${end}deg`;
+    start = end;
+    return segment;
+  });
+
+  return (
+    <section className="glass-card p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="font-display text-lg font-bold text-on-surface">
+            Distribusi capaian mahasiswa
+          </h2>
+          <p className="mt-1 text-sm text-on-surface-variant">
+            Rata-rata nilai final tiap mahasiswa dari seluruh paket ujian pada
+            mata kuliah terpilih.
+          </p>
+        </div>
+        <AppSelect
+          value={subjectId}
+          onValueChange={setSubjectId}
+          ariaLabel="Pilih mata kuliah untuk distribusi capaian"
+          className="min-w-[220px]"
+          options={dashboard.subjects.map((item) => ({
+            value: item.id,
+            label: item.name,
+          }))}
+        />
+      </div>
+      {subject ? (
+        <div className="mt-5 flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
+          <div
+            aria-label={`Distribusi capaian ${subject.name}: ${total} mahasiswa`}
+            className="relative grid h-40 w-40 shrink-0 place-items-center rounded-full"
+            style={{
+              background: total
+                ? `conic-gradient(${segments.join(", ")})`
+                : "var(--bg-card-hover)",
+            }}
+          >
+            <div className="grid h-28 w-28 place-items-center rounded-full bg-surface-container-lowest text-center">
+              <strong className="font-mono-ui text-3xl text-on-surface">
+                {total}
+              </strong>
+              <span className="text-[10px] text-on-surface-variant">
+                mahasiswa
+              </span>
+            </div>
+          </div>
+          <ul className="w-full max-w-sm space-y-3">
+            {data.map((item) => (
+              <li
+                key={item.label}
+                className="flex items-center justify-between gap-4"
+              >
+                <span className="flex items-center gap-2 text-sm text-on-surface-variant">
+                  <i
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ background: item.color }}
+                  />
+                  {item.label}
+                </span>
+                <strong className="text-on-surface">{item.value}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="mt-5 rounded-xl bg-surface-container p-4 text-sm text-on-surface-variant">
+          Belum ada mata kuliah yang dapat dipilih.
         </p>
       )}
     </section>
@@ -374,6 +484,8 @@ export default function LecturerDashboard({
           )}
         </section>
       </section>
+
+      <SubjectMasteryDonut dashboard={dashboard} />
 
       <section className="glass-card p-5">
         <div className="flex items-start gap-3">
