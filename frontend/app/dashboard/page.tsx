@@ -26,28 +26,57 @@ import { apiFetch } from "../lib/api";
 import AdminDashboard from "../components/AdminDashboard";
 import LecturerDashboard from "../components/LecturerDashboard";
 import StudentDashboard from "../components/StudentDashboard";
+import FeedbackModal from "../components/FeedbackModal";
 
 type Role = { role: string; subject_slug: string; subject_name: string };
-type SubjectSummary = { id: string; slug: string; name: string; image_url?: string };
+type SubjectSummary = {
+  id: string;
+  slug: string;
+  name: string;
+  image_url?: string;
+};
 type Summary = Record<string, string | number | null | SubjectSummary[]>;
 type DashboardData = { roles: Role[]; is_superuser: boolean; summary: Summary };
 
-const ROLE_META: Record<string, { label: string; icon: typeof ShieldCheck; desc: string }> = {
+const ROLE_META: Record<
+  string,
+  { label: string; icon: typeof ShieldCheck; desc: string }
+> = {
   ADMIN: { label: "Dashboard", icon: ShieldCheck, desc: "" },
-  LECTURER: { label: "Dosen", icon: BookOpen, desc: "Kelola soal dan validasi jawaban mahasiswa." },
-  STUDENT: { label: "Mahasiswa", icon: GraduationCap, desc: "Lembar evaluasi dan pemantauan penguasaan." },
-  GENERAL: { label: "Akun Umum", icon: LayoutDashboard, desc: "Ringkasan umum akun Anda." },
+  LECTURER: {
+    label: "Dosen",
+    icon: BookOpen,
+    desc: "Kelola soal dan validasi jawaban mahasiswa.",
+  },
+  STUDENT: {
+    label: "Mahasiswa",
+    icon: GraduationCap,
+    desc: "Lembar evaluasi dan pemantauan penguasaan.",
+  },
+  GENERAL: {
+    label: "Akun Umum",
+    icon: LayoutDashboard,
+    desc: "Ringkasan umum akun Anda.",
+  },
 };
 
 const fmtPercent = (v: unknown) =>
   typeof v === "number" ? `${v.toFixed(2).replace(/\.?0+$/, "")}%` : "-";
 
-type Card = { icon: typeof ShieldCheck; label: string; value: unknown; format?: (v: unknown) => string };
+type Card = {
+  icon: typeof ShieldCheck;
+  label: string;
+  value: unknown;
+  format?: (v: unknown) => string;
+};
 
 function StatCard({ icon, label, value }: Card) {
   const Icon = icon;
   return (
-    <div className="glass-card" style={{ padding: "1rem", borderRadius: "var(--radius-md)" }}>
+    <div
+      className="glass-card"
+      style={{ padding: "1rem", borderRadius: "var(--radius-md)" }}
+    >
       <div
         style={{
           width: "40px",
@@ -62,10 +91,19 @@ function StatCard({ icon, label, value }: Card) {
       >
         <Icon size={20} />
       </div>
-      <p style={{ fontSize: "1.9rem", fontWeight: 800, margin: "0.75rem 0 0.2rem", color: "var(--text-main)" }}>
-        {((value ?? 0) as React.ReactNode)}
+      <p
+        style={{
+          fontSize: "1.9rem",
+          fontWeight: 800,
+          margin: "0.75rem 0 0.2rem",
+          color: "var(--text-main)",
+        }}
+      >
+        {(value ?? 0) as React.ReactNode}
       </p>
-      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0 }}>{label}</p>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0 }}>
+        {label}
+      </p>
     </div>
   );
 }
@@ -84,7 +122,9 @@ export default function DashboardPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setView(params.get("view"));
-    setSelectedRole(params.get("role") ?? localStorage.getItem("selected_role"));
+    setSelectedRole(
+      params.get("role") ?? localStorage.getItem("selected_role"),
+    );
   }, []);
 
   useEffect(() => {
@@ -117,54 +157,144 @@ export default function DashboardPage() {
   const primaryRole = selectedRole ?? fallbackRole;
   const meta = ROLE_META[primaryRole] ?? ROLE_META.GENERAL;
   const summary = data?.summary ?? {};
-  const adminDashboard = summary.admin_dashboard as unknown as React.ComponentProps<typeof AdminDashboard>["dashboard"] | undefined;
-  const studentDashboard = summary.student_dashboard as unknown as React.ComponentProps<typeof StudentDashboard>["dashboard"] | undefined;
+  const adminDashboard = summary.admin_dashboard as unknown as
+    React.ComponentProps<typeof AdminDashboard>["dashboard"] | undefined;
+  const studentDashboard = summary.student_dashboard as unknown as
+    React.ComponentProps<typeof StudentDashboard>["dashboard"] | undefined;
   const mySubjects = (summary.my_subjects as SubjectSummary[]) ?? [];
-  const lecturerDashboard = summary.lecturer_dashboard as unknown as React.ComponentProps<typeof LecturerDashboard>["dashboard"] | undefined;
+  const lecturerDashboard = summary.lecturer_dashboard as unknown as
+    React.ComponentProps<typeof LecturerDashboard>["dashboard"] | undefined;
 
   const cards: Card[] = (() => {
     switch (primaryRole) {
       case "ADMIN":
         return [
-          { icon: Users, label: "Pengguna terdaftar", value: summary.total_users },
-          { icon: BookOpen, label: "Mata kuliah", value: summary.total_subjects },
-          { icon: FileSearch, label: "Bank soal", value: summary.total_question_sets },
-          { icon: ClipboardList, label: "Pengumpulan", value: summary.total_submissions },
-          { icon: TriangleAlert, label: "Miskonsepsi", value: summary.total_misconceptions },
-          { icon: BarChart3, label: "Analisis LLM", value: summary.total_analyses },
-          { icon: ShieldCheck, label: "Validasi", value: summary.total_validations },
+          {
+            icon: Users,
+            label: "Pengguna terdaftar",
+            value: summary.total_users,
+          },
+          {
+            icon: BookOpen,
+            label: "Mata kuliah",
+            value: summary.total_subjects,
+          },
+          {
+            icon: FileSearch,
+            label: "Bank soal",
+            value: summary.total_question_sets,
+          },
+          {
+            icon: ClipboardList,
+            label: "Pengumpulan",
+            value: summary.total_submissions,
+          },
+          {
+            icon: TriangleAlert,
+            label: "Miskonsepsi",
+            value: summary.total_misconceptions,
+          },
+          {
+            icon: BarChart3,
+            label: "Analisis LLM",
+            value: summary.total_analyses,
+          },
+          {
+            icon: ShieldCheck,
+            label: "Validasi",
+            value: summary.total_validations,
+          },
         ];
       case "STUDENT":
         return [
-          { icon: ClipboardList, label: "Pengumpulan saya", value: summary.my_submissions },
-          { icon: BarChart3, label: "Sedang dianalisis", value: summary.my_analyzed },
-          { icon: CircleCheck, label: "Tervalidasi", value: summary.my_validated },
-          { icon: TrendingUp, label: "Rata-rata skor", value: summary.my_avg_score, format: fmtPercent },
+          {
+            icon: ClipboardList,
+            label: "Pengumpulan saya",
+            value: summary.my_submissions,
+          },
+          {
+            icon: BarChart3,
+            label: "Sedang dianalisis",
+            value: summary.my_analyzed,
+          },
+          {
+            icon: CircleCheck,
+            label: "Tervalidasi",
+            value: summary.my_validated,
+          },
+          {
+            icon: TrendingUp,
+            label: "Rata-rata skor",
+            value: summary.my_avg_score,
+            format: fmtPercent,
+          },
         ];
       case "LECTURER":
         return [
-          { icon: FileSearch, label: "Bank soal saya", value: summary.my_question_sets },
-          { icon: BookOpen, label: "Soal di mata kuliah saya", value: summary.subject_question_sets },
-          { icon: ClipboardList, label: "Pengumpulan mahasiswa", value: summary.subject_submissions },
-          { icon: ShieldCheck, label: "Menunggu validasi", value: summary.pending_validations },
+          {
+            icon: FileSearch,
+            label: "Bank soal saya",
+            value: summary.my_question_sets,
+          },
+          {
+            icon: BookOpen,
+            label: "Soal di mata kuliah saya",
+            value: summary.subject_question_sets,
+          },
+          {
+            icon: ClipboardList,
+            label: "Pengumpulan mahasiswa",
+            value: summary.subject_submissions,
+          },
+          {
+            icon: ShieldCheck,
+            label: "Menunggu validasi",
+            value: summary.pending_validations,
+          },
         ];
       default:
         return [
-          { icon: BookOpen, label: "Mata kuliah", value: Array.isArray(summary.my_subjects) ? summary.my_subjects.length : 0 },
-          { icon: LayoutDashboard, label: "Peran", value: roles.length || "Umum" },
+          {
+            icon: BookOpen,
+            label: "Mata kuliah",
+            value: Array.isArray(summary.my_subjects)
+              ? summary.my_subjects.length
+              : 0,
+          },
+          {
+            icon: LayoutDashboard,
+            label: "Peran",
+            value: roles.length || "Umum",
+          },
         ];
     }
   })();
 
-  const quickActions: { icon: typeof ShieldCheck; label: string; href?: string }[] =
+  const quickActions: {
+    icon: typeof ShieldCheck;
+    label: string;
+    href?: string;
+  }[] =
     primaryRole === "STUDENT"
       ? [
-          { icon: ClipboardList, label: "Kerjakan evaluasi baru", href: "/code" },
-          { icon: FileSearch, label: "Lihat pengumpulan saya", href: "/code#pengumpulan" },
+          {
+            icon: ClipboardList,
+            label: "Kerjakan evaluasi baru",
+            href: "/code",
+          },
+          {
+            icon: FileSearch,
+            label: "Lihat pengumpulan saya",
+            href: "/code#pengumpulan",
+          },
         ]
       : primaryRole === "LECTURER"
         ? [
-            { icon: FilePlus, label: "Buat bank soal baru", href: "/questions" },
+            {
+              icon: FilePlus,
+              label: "Buat bank soal baru",
+              href: "/questions",
+            },
             { icon: ShieldCheck, label: "Tinjau validasi", href: "/questions" },
           ]
         : primaryRole === "ADMIN"
@@ -178,110 +308,217 @@ export default function DashboardPage() {
 
   return (
     <PageContainer>
-      <PageHeader className="mb-6" title={meta.label} description={meta.desc} icon={MetaIcon} />
+      <PageHeader
+        className="mb-6"
+        title={meta.label}
+        description={meta.desc}
+        icon={MetaIcon}
+      />
 
       {view && (
-        <div role="status" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(99, 102, 241, 0.25)", background: "rgba(99, 102, 241, 0.1)", color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.7rem 1rem", marginBottom: "1.25rem" }}>
+        <div
+          role="status"
+          style={{
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid rgba(99, 102, 241, 0.25)",
+            background: "rgba(99, 102, 241, 0.1)",
+            color: "var(--text-muted)",
+            fontSize: "0.85rem",
+            padding: "0.7rem 1rem",
+            marginBottom: "1.25rem",
+          }}
+        >
           Modul {view === "soal" ? "Soal" : "Settings"} akan segera tersedia.
         </div>
       )}
 
-      {error && (
-        <div role="alert" style={{ borderRadius: "var(--radius-sm)", border: "1px solid rgba(239, 68, 68, 0.3)", background: "rgba(239, 68, 68, 0.12)", color: "#f87171", fontSize: "0.85rem", padding: "0.7rem 1rem", marginBottom: "1.25rem" }}>
-          {error}
-        </div>
-      )}
-
       {pageLoading ? (
-        <p style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>Memproses...</p>
+        <p style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>
+          Memproses...
+        </p>
       ) : (
         <>
-          {primaryRole === "ADMIN" && adminDashboard ? <AdminDashboard dashboard={adminDashboard} /> : primaryRole === "LECTURER" && lecturerDashboard ? <LecturerDashboard dashboard={lecturerDashboard} /> : primaryRole === "STUDENT" && studentDashboard ? <StudentDashboard dashboard={studentDashboard} /> : <><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
-            {cards.map((card) => (
-              <StatCard
-                key={card.label}
-                icon={card.icon}
-                label={card.label}
-                value={card.format ? card.format(card.value) : card.value}
-              />
-            ))}
-          </div>
+          {primaryRole === "ADMIN" && adminDashboard ? (
+            <AdminDashboard dashboard={adminDashboard} />
+          ) : primaryRole === "LECTURER" && lecturerDashboard ? (
+            <LecturerDashboard dashboard={lecturerDashboard} />
+          ) : primaryRole === "STUDENT" && studentDashboard ? (
+            <StudentDashboard dashboard={studentDashboard} />
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                  gap: "16px",
+                }}
+              >
+                {cards.map((card) => (
+                  <StatCard
+                    key={card.label}
+                    icon={card.icon}
+                    label={card.label}
+                    value={card.format ? card.format(card.value) : card.value}
+                  />
+                ))}
+              </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "20px", marginTop: "1.75rem" }}>
-            <section className="glass-card" style={{ padding: "1.25rem", borderRadius: "var(--radius-lg)" }}>
-              <h2 style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0 }}>Aksi cepat</h2>
-              <ul style={{ marginTop: "0.9rem", padding: 0, display: "flex", flexDirection: "column", gap: "8px", listStyle: "none" }}>
-                {quickActions.map((action) => {
-                  const ActionIcon = action.icon;
-                  const inner = (
-                    <>
-                      <ActionIcon size={16} color="var(--primary)" />
-                      {action.label}
-                    </>
-                  );
-                  return (
-                    <li key={action.label}>
-                      {action.href ? (
-                        <Link
-                          href={action.href}
-                          className="btn-secondary"
-                          style={{ width: "100%", justifyContent: "flex-start", padding: "0.6rem 0.9rem" }}
-                        >
-                          {inner}
-                        </Link>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          style={{ width: "100%", justifyContent: "flex-start", padding: "0.6rem 0.9rem" }}
-                        >
-                          {inner}
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-                {quickActions.length === 0 && (
-                  <li style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                    Tidak ada aksi khusus untuk peran ini.
-                  </li>
-                )}
-              </ul>
-            </section>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+                  gap: "20px",
+                  marginTop: "1.75rem",
+                }}
+              >
+                <section
+                  className="glass-card"
+                  style={{
+                    padding: "1.25rem",
+                    borderRadius: "var(--radius-lg)",
+                  }}
+                >
+                  <h2
+                    style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0 }}
+                  >
+                    Aksi cepat
+                  </h2>
+                  <ul
+                    style={{
+                      marginTop: "0.9rem",
+                      padding: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                      listStyle: "none",
+                    }}
+                  >
+                    {quickActions.map((action) => {
+                      const ActionIcon = action.icon;
+                      const inner = (
+                        <>
+                          <ActionIcon size={16} color="var(--primary)" />
+                          {action.label}
+                        </>
+                      );
+                      return (
+                        <li key={action.label}>
+                          {action.href ? (
+                            <Link
+                              href={action.href}
+                              className="btn-secondary"
+                              style={{
+                                width: "100%",
+                                justifyContent: "flex-start",
+                                padding: "0.6rem 0.9rem",
+                              }}
+                            >
+                              {inner}
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{
+                                width: "100%",
+                                justifyContent: "flex-start",
+                                padding: "0.6rem 0.9rem",
+                              }}
+                            >
+                              {inner}
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                    {quickActions.length === 0 && (
+                      <li
+                        style={{
+                          fontSize: "0.85rem",
+                          color: "var(--text-muted)",
+                        }}
+                      >
+                        Tidak ada aksi khusus untuk peran ini.
+                      </li>
+                    )}
+                  </ul>
+                </section>
 
-            <section className="glass-card" style={{ padding: "1.25rem", borderRadius: "var(--radius-lg)" }}>
-              <h2 style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0 }}>Mata kuliah saya</h2>
-              {mySubjects.length > 0 ? (
-                <ul style={{ marginTop: "0.9rem", padding: 0, display: "flex", flexDirection: "column", gap: "8px", listStyle: "none" }}>
-                  {mySubjects.map((s) => (
-                    <li
-                      key={s.slug}
+                <section
+                  className="glass-card"
+                  style={{
+                    padding: "1.25rem",
+                    borderRadius: "var(--radius-lg)",
+                  }}
+                >
+                  <h2
+                    style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0 }}
+                  >
+                    Mata kuliah saya
+                  </h2>
+                  {mySubjects.length > 0 ? (
+                    <ul
                       style={{
+                        marginTop: "0.9rem",
+                        padding: 0,
                         display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "0.6rem 0.9rem",
-                        borderRadius: "var(--radius-sm)",
-                        background: "var(--input-bg)",
-                        border: "1px solid var(--border-color)",
+                        flexDirection: "column",
+                        gap: "8px",
+                        listStyle: "none",
                       }}
                     >
-                      <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-main)" }}>
-                        <KeyRound size={14} color="var(--primary)" style={{ marginRight: "8px" }} />
-                        {s.name}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p style={{ marginTop: "0.9rem", fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                  Belum ada mata kuliah yang ditautkan ke akun ini.
-                </p>
-              )}
-            </section>
-          </div></>}
+                      {mySubjects.map((s) => (
+                        <li
+                          key={s.slug}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "0.6rem 0.9rem",
+                            borderRadius: "var(--radius-sm)",
+                            background: "var(--input-bg)",
+                            border: "1px solid var(--border-color)",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: "0.85rem",
+                              fontWeight: 600,
+                              color: "var(--text-main)",
+                            }}
+                          >
+                            <KeyRound
+                              size={14}
+                              color="var(--primary)"
+                              style={{ marginRight: "8px" }}
+                            />
+                            {s.name}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p
+                      style={{
+                        marginTop: "0.9rem",
+                        fontSize: "0.85rem",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      Belum ada mata kuliah yang ditautkan ke akun ini.
+                    </p>
+                  )}
+                </section>
+              </div>
+            </>
+          )}
         </>
       )}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

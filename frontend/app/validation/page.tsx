@@ -3,17 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  ClipboardCheck,
-  ShieldCheck,
-  TriangleAlert,
-} from "lucide-react";
+import { ArrowRight, ClipboardCheck, ShieldCheck } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
 import PageHeader from "../components/PageHeader";
 import PageContainer from "../components/PageContainer";
 import { apiFetch } from "../lib/api";
+import FeedbackModal from "../components/FeedbackModal";
 
 type QueueItem = {
   analysis_id: string;
@@ -33,11 +29,15 @@ type QueueItem = {
   answer_preview: string;
 };
 
-const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const errMsg = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
 
 const fmtDate = (value: string) => {
   try {
-    return new Date(value).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+    return new Date(value).toLocaleString("id-ID", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
   } catch {
     return value;
   }
@@ -97,8 +97,18 @@ export default function ValidationQueuePage() {
         title="Antrian Validasi"
         description="Tinjau hasil analisis AI, konfirmasi miskonsepsi, lalu terima, koreksi, atau tolak. AI memberi saran - Anda yang memutuskan."
         icon={ShieldCheck}
-        eyebrow={<span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary"><ShieldCheck size={14} aria-hidden="true" /> Validasi Analisis AI</span>}
-        action={<div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">Menunggu <span className="font-mono-ui text-primary">{items.length}</span> analisis</div>}
+        eyebrow={
+          <span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
+            <ShieldCheck size={14} aria-hidden="true" /> Validasi Analisis AI
+          </span>
+        }
+        action={
+          <div className="glass-panel rounded-lg border border-outline-variant/40 px-4 py-3 text-xs font-semibold text-on-surface-variant">
+            Menunggu{" "}
+            <span className="font-mono-ui text-primary">{items.length}</span>{" "}
+            analisis
+          </div>
+        }
       />
 
       {!isLecturer && (
@@ -107,22 +117,16 @@ export default function ValidationQueuePage() {
           className="mt-6 flex items-center gap-3 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-4 text-sm text-primary"
         >
           <ClipboardCheck size={20} />
-          <span>Halaman ini ditujukan untuk dosen pengampu mata kuliah terkait.</span>
-        </div>
-      )}
-
-      {error && (
-        <div
-          role="alert"
-          className="mt-6 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={20} />
-          <span>{error}</span>
+          <span>
+            Halaman ini ditujukan untuk dosen pengampu mata kuliah terkait.
+          </span>
         </div>
       )}
 
       {fetching ? (
-        <p className="mt-8 text-sm text-on-surface-variant">Memuat antrian validasi...</p>
+        <p className="mt-8 text-sm text-on-surface-variant">
+          Memuat antrian validasi...
+        </p>
       ) : items.length === 0 ? (
         <div className="glass-panel mt-8 rounded-xl border border-outline-variant/40 p-8 text-center text-sm text-on-surface-variant">
           Tidak ada analisis yang menunggu validasi saat ini.
@@ -138,12 +142,18 @@ export default function ValidationQueuePage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`badge ${TIER_BADGE[item.tier_level] ?? "badge-role"}`}>
+                    <span
+                      className={`badge ${TIER_BADGE[item.tier_level] ?? "badge-role"}`}
+                    >
                       Tier {item.tier_level} · {item.tier_label}
                     </span>
-                    <span className="badge badge-role">{fmtPct(item.percentage_correct)}</span>
+                    <span className="badge badge-role">
+                      {fmtPct(item.percentage_correct)}
+                    </span>
                     {item.run_number > 1 && (
-                      <span className="badge badge-draft">Analisis ulang ke-{item.run_number}</span>
+                      <span className="badge badge-draft">
+                        Analisis ulang ke-{item.run_number}
+                      </span>
                     )}
                   </div>
                   <p className="mt-2 truncate text-sm font-semibold text-on-surface">
@@ -152,7 +162,9 @@ export default function ValidationQueuePage() {
                   <p className="mt-1 text-xs text-on-surface-variant">
                     {item.student_name} • {item.set_title ?? "-"}{" "}
                     {item.set_code && (
-                      <span className="font-mono-ui text-primary">({item.set_code})</span>
+                      <span className="font-mono-ui text-primary">
+                        ({item.set_code})
+                      </span>
                     )}{" "}
                     • {item.subject_name}
                   </p>
@@ -174,6 +186,11 @@ export default function ValidationQueuePage() {
           ))}
         </div>
       )}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

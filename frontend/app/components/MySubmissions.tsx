@@ -8,13 +8,13 @@ import {
   Eye,
   Filter,
   Layers,
-  TriangleAlert,
 } from "lucide-react";
 
 import { useAuth } from "./AuthProvider";
 import AppSelect from "./AppSelect";
 import ListToolbar, { type SortMenuOption } from "./ListToolbar";
 import { apiFetch } from "../lib/api";
+import FeedbackModal from "./FeedbackModal";
 import {
   summarizeSetStatus,
   type StudentPackageGroup,
@@ -124,16 +124,6 @@ export default function MySubmissions({ compactHeading = false }: Props) {
           <h2 className="font-display text-sm font-bold text-on-surface">
             Pengumpulan Saya
           </h2>
-        </div>
-      )}
-
-      {error && (
-        <div
-          role="alert"
-          className="mb-3 flex items-center gap-3 rounded-xl border border-error/40 bg-error-container p-3 text-xs text-on-error-container"
-        >
-          <TriangleAlert size={16} />
-          <span>{error}</span>
         </div>
       )}
 
@@ -278,6 +268,11 @@ export default function MySubmissions({ compactHeading = false }: Props) {
           )}
         </div>
       )}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </div>
   );
 }

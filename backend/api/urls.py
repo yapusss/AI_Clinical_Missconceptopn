@@ -46,6 +46,7 @@ from .views import (
     RegisterView,
     StudentSetLookupView,
     StudentPackageSubmissionCreateView,
+    StudentTimedAutoSubmissionView,
     StudentSubmissionCreateView,
     StudentSubmissionListView,
     StudentSubmissionPackageDetailView,
@@ -95,6 +96,7 @@ urlpatterns = [
 
     path('student/sets', StudentSetLookupView.as_view(), name='student-set-lookup'),
     path('student/sets/<uuid:pk>/submissions', StudentPackageSubmissionCreateView.as_view(), name='student-package-submission-create'),
+    path('student/sets/<uuid:pk>/auto-submit', StudentTimedAutoSubmissionView.as_view(), name='student-timed-auto-submission'),
     path('student/sets/<uuid:pk>/questions/<uuid:qid>/submissions', StudentSubmissionCreateView.as_view(), name='student-submission-create'),
     path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
     path('student/submission-packages', StudentSubmissionPackageListView.as_view(), name='student-submission-package-list'),

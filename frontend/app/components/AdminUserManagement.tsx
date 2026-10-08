@@ -17,6 +17,7 @@ import AppSelect from "./AppSelect";
 import ListToolbar from "./ListToolbar";
 import PageContainer from "./PageContainer";
 import PageHeader from "./PageHeader";
+import FeedbackModal from "./FeedbackModal";
 
 type Subject = { id: string; name: string };
 type ManagedUser = {
@@ -65,8 +66,7 @@ export default function AdminUserManagement({
     const userResponse = await fetch(`/api/admin/users/${role}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!userResponse.ok)
-      throw new Error("Gagal memuat data akun.");
+    if (!userResponse.ok) throw new Error("Gagal memuat data akun.");
     setUsers(await userResponse.json());
     if (role === "lecturers") {
       const subjectResponse = await fetch("/api/admin/subjects", {
@@ -87,7 +87,13 @@ export default function AdminUserManagement({
 
   function openCreate() {
     setEditing(null);
-    setForm({ full_name: "", nim: "", email: "", password: "", subject_ids: [] });
+    setForm({
+      full_name: "",
+      nim: "",
+      email: "",
+      password: "",
+      subject_ids: [],
+    });
     setShowForm(true);
     setError("");
   }
@@ -177,12 +183,17 @@ export default function AdminUserManagement({
   }
 
   const visible = users
-    .filter((user) =>
-      `${user.full_name} ${user.nim ?? ""} ${user.email}`.toLowerCase().includes(search.toLowerCase()) &&
-      (statusFilter === "ALL" || (statusFilter === "ACTIVE" ? user.is_active : !user.is_active)),
+    .filter(
+      (user) =>
+        `${user.full_name} ${user.nim ?? ""} ${user.email}`
+          .toLowerCase()
+          .includes(search.toLowerCase()) &&
+        (statusFilter === "ALL" ||
+          (statusFilter === "ACTIVE" ? user.is_active : !user.is_active)),
     )
     .sort((a, b) => {
-      if (sortOrder === "NAME_DESC") return b.full_name.localeCompare(a.full_name);
+      if (sortOrder === "NAME_DESC")
+        return b.full_name.localeCompare(a.full_name);
       if (sortOrder === "EMAIL_ASC") return a.email.localeCompare(b.email);
       return a.full_name.localeCompare(b.full_name);
     });
@@ -191,14 +202,6 @@ export default function AdminUserManagement({
   return (
     <PageContainer>
       <PageHeader title={title} description={description} icon={Users} />
-      {error && (
-        <div
-          role="alert"
-          className="mt-5 rounded-lg border border-error/40 bg-error-container p-3 text-sm text-on-error-container"
-        >
-          {error}
-        </div>
-      )}
       {notice && (
         <div
           role="status"
@@ -213,9 +216,29 @@ export default function AdminUserManagement({
           onAdd={openCreate}
           searchValue={search}
           onSearchChange={setSearch}
-          searchPlaceholder={role === "students" ? "Cari nama, NIM, atau email..." : "Cari nama atau email..."}
-          filters={<AppSelect value={statusFilter} onValueChange={setStatusFilter} ariaLabel="Filter status akun" className="min-w-36" options={[{ value: "ALL", label: "Semua status" }, { value: "ACTIVE", label: "Aktif" }, { value: "INACTIVE", label: "Nonaktif" }]} />}
-          sortOptions={[{ value: "NAME_ASC", label: "Nama A-Z", direction: "asc" }, { value: "NAME_DESC", label: "Nama Z-A", direction: "desc" }, { value: "EMAIL_ASC", label: "Email A-Z", direction: "asc" }]}
+          searchPlaceholder={
+            role === "students"
+              ? "Cari nama, NIM, atau email..."
+              : "Cari nama atau email..."
+          }
+          filters={
+            <AppSelect
+              value={statusFilter}
+              onValueChange={setStatusFilter}
+              ariaLabel="Filter status akun"
+              className="min-w-36"
+              options={[
+                { value: "ALL", label: "Semua status" },
+                { value: "ACTIVE", label: "Aktif" },
+                { value: "INACTIVE", label: "Nonaktif" },
+              ]}
+            />
+          }
+          sortOptions={[
+            { value: "NAME_ASC", label: "Nama A-Z", direction: "asc" },
+            { value: "NAME_DESC", label: "Nama Z-A", direction: "desc" },
+            { value: "EMAIL_ASC", label: "Email A-Z", direction: "asc" },
+          ]}
           currentSort={sortOrder}
           onSortChange={setSortOrder}
         />
@@ -227,7 +250,9 @@ export default function AdminUserManagement({
               <th className="px-5 py-4">Nama</th>
               {role === "students" && <th className="px-5 py-4">NIM</th>}
               <th className="px-5 py-4">Email</th>
-              {role === "lecturers" && <th className="px-5 py-4">Mata kuliah</th>}
+              {role === "lecturers" && (
+                <th className="px-5 py-4">Mata kuliah</th>
+              )}
               <th className="px-5 py-4">Status</th>
               <th className="px-5 py-4 text-right">Aksi</th>
             </tr>
@@ -238,7 +263,11 @@ export default function AdminUserManagement({
                 <td className="px-5 py-4 font-semibold text-on-surface">
                   {user.full_name}
                 </td>
-                {role === "students" && <td className="px-5 py-4 font-mono-ui text-on-surface-variant">{user.nim || "-"}</td>}
+                {role === "students" && (
+                  <td className="px-5 py-4 font-mono-ui text-on-surface-variant">
+                    {user.nim || "-"}
+                  </td>
+                )}
                 <td className="px-5 py-4 text-on-surface-variant">
                   {user.email}
                 </td>
@@ -350,7 +379,16 @@ export default function AdminUserManagement({
             </div>
             <dl className="mt-5 space-y-4 text-sm">
               <div>
-                {role === "students" && <><dt className="text-xs font-semibold uppercase text-on-surface-variant">NIM</dt><dd className="mt-1 font-mono-ui text-on-surface">{viewing.nim || "-"}</dd></>}
+                {role === "students" && (
+                  <>
+                    <dt className="text-xs font-semibold uppercase text-on-surface-variant">
+                      NIM
+                    </dt>
+                    <dd className="mt-1 font-mono-ui text-on-surface">
+                      {viewing.nim || "-"}
+                    </dd>
+                  </>
+                )}
               </div>
               <div>
                 <dt className="text-xs font-semibold uppercase text-on-surface-variant">
@@ -376,9 +414,17 @@ export default function AdminUserManagement({
                     Mata kuliah
                   </dt>
                   <dd className="mt-2 flex flex-wrap gap-2">
-                    {viewing.subjects.length ? viewing.subjects.map((subject) => (
-                      <span key={subject.id} className="badge badge-role">{subject.name}</span>
-                    )) : <span className="text-on-surface-variant">Belum ditetapkan</span>}
+                    {viewing.subjects.length ? (
+                      viewing.subjects.map((subject) => (
+                        <span key={subject.id} className="badge badge-role">
+                          {subject.name}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-on-surface-variant">
+                        Belum ditetapkan
+                      </span>
+                    )}
                   </dd>
                 </div>
               )}
@@ -475,10 +521,29 @@ export default function AdminUserManagement({
                         className="form-input"
                       />
                     </div>
-                    {role === "students" && <div>
-                      <label htmlFor="account-nim" className="mb-1.5 block text-sm font-medium text-on-surface-variant">NIM</label>
-                      <input id="account-nim" value={form.nim} onChange={(event) => setForm({ ...form, nim: event.target.value.toUpperCase() })} required placeholder="Nomor Induk Mahasiswa" className="form-input" />
-                    </div>}
+                    {role === "students" && (
+                      <div>
+                        <label
+                          htmlFor="account-nim"
+                          className="mb-1.5 block text-sm font-medium text-on-surface-variant"
+                        >
+                          NIM
+                        </label>
+                        <input
+                          id="account-nim"
+                          value={form.nim}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              nim: event.target.value.toUpperCase(),
+                            })
+                          }
+                          required
+                          placeholder="Nomor Induk Mahasiswa"
+                          className="form-input"
+                        />
+                      </div>
+                    )}
                   </div>
                 </section>
                 <section className="rounded-xl border border-outline-variant/50 p-4">
@@ -488,44 +553,55 @@ export default function AdminUserManagement({
                       className="text-primary"
                       aria-hidden="true"
                     />
-                    {role === "lecturers" ? "Keamanan & Penugasan mata kuliah" : "Keamanan"}
+                    {role === "lecturers"
+                      ? "Keamanan & Penugasan mata kuliah"
+                      : "Keamanan"}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
-                    <label
-                      htmlFor="account-password"
-                      className="mb-1.5 block text-sm font-medium text-on-surface-variant"
-                    >
-                      Password{editing && " baru"}
-                    </label>
-                    <input
-                      id="account-password"
-                      type="password"
-                      value={form.password}
-                      onChange={(event) =>
-                        setForm({ ...form, password: event.target.value })
-                      }
-                      required={!editing}
-                      placeholder={
-                        editing
-                          ? "Kosongkan jika tidak ingin mengubah password"
-                          : "Minimal 8 karakter"
-                      }
-                      className="form-input"
-                    />
-                    </div>
-                    {role === "lecturers" && <div>
-                      <label className="mb-1.5 block text-sm font-medium text-on-surface-variant">Mata kuliah</label>
-                      <AppMultiSelect
-                        value={form.subject_ids}
-                        onValueChange={(subject_ids) => setForm((current) => ({ ...current, subject_ids }))}
-                        options={subjects.map((subject) => ({ value: subject.id, label: subject.name }))}
-                        placeholder="Pilih mata kuliah"
-                        ariaLabel="Pilih mata kuliah"
-                        clearLabel="Hapus semua mata kuliah yang dipilih"
-                        selectedCountLabel="mata kuliah dipilih"
+                      <label
+                        htmlFor="account-password"
+                        className="mb-1.5 block text-sm font-medium text-on-surface-variant"
+                      >
+                        Password{editing && " baru"}
+                      </label>
+                      <input
+                        id="account-password"
+                        type="password"
+                        value={form.password}
+                        onChange={(event) =>
+                          setForm({ ...form, password: event.target.value })
+                        }
+                        required={!editing}
+                        placeholder={
+                          editing
+                            ? "Kosongkan jika tidak ingin mengubah password"
+                            : "Minimal 8 karakter"
+                        }
+                        className="form-input"
                       />
-                    </div>}
+                    </div>
+                    {role === "lecturers" && (
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-on-surface-variant">
+                          Mata kuliah
+                        </label>
+                        <AppMultiSelect
+                          value={form.subject_ids}
+                          onValueChange={(subject_ids) =>
+                            setForm((current) => ({ ...current, subject_ids }))
+                          }
+                          options={subjects.map((subject) => ({
+                            value: subject.id,
+                            label: subject.name,
+                          }))}
+                          placeholder="Pilih mata kuliah"
+                          ariaLabel="Pilih mata kuliah"
+                          clearLabel="Hapus semua mata kuliah yang dipilih"
+                          selectedCountLabel="mata kuliah dipilih"
+                        />
+                      </div>
+                    )}
                   </div>
                 </section>
               </div>
@@ -549,6 +625,11 @@ export default function AdminUserManagement({
           </form>
         </div>
       )}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

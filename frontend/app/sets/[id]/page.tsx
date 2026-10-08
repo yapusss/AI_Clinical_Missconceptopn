@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -9,7 +9,7 @@ import {
   HelpCircle,
   LogOut,
   Send,
-  TriangleAlert,
+  Timer,
   X,
 } from "lucide-react";
 
@@ -18,6 +18,7 @@ import { apiFetch } from "../../lib/api";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
+import FeedbackModal from "../../components/FeedbackModal";
 
 type StudentQuestion = {
   question_id: string;
@@ -35,6 +36,9 @@ type StudentSet = {
   subject_id: string;
   subject_name: string;
   is_active: boolean;
+  attempt_deadline: string | null;
+  server_time: string;
+  expiry_behavior: "REJECT" | "AUTO_SUBMIT";
   questions: StudentQuestion[];
 };
 
@@ -62,6 +66,15 @@ const REASON_KEYWORDS = [
   "karna",
 ];
 
+const formatRemainingTime = (seconds: number) => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remaining = seconds % 60;
+  return [hours, minutes, remaining]
+    .map((value) => value.toString().padStart(2, "0"))
+    .join(":");
+};
+
 function AnswerSetContent() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -78,8 +91,11 @@ function AnswerSetContent() {
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showExitWarningModal, setShowExitWarningModal] = useState(false);
+  const [showExpiryWarning, setShowExpiryWarning] = useState(false);
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const autoSubmissionStarted = useRef(false);
 
   // Kembali ke atas setiap kali nomor soal berubah (prev/next/pill/submit-advance)
   useEffect(() => {
@@ -99,11 +115,14 @@ function AnswerSetContent() {
     setFetching(true);
     setError("");
     try {
-      const password = passwordKey ? sessionStorage.getItem(passwordKey) ?? "" : "";
+      const password = passwordKey
+        ? (sessionStorage.getItem(passwordKey) ?? "")
+        : "";
       const res = await apiFetch<StudentSet>(
         `/student/sets?code=${encodeURIComponent(code)}&password=${encodeURIComponent(password)}`,
       );
       setData(res);
+      autoSubmissionStarted.current = false;
 
       const initial: Record<string, QuestionAnswer> = {};
       res.questions.forEach((q) => {
@@ -149,6 +168,24 @@ function AnswerSetContent() {
     localStorage.setItem(storageKey, JSON.stringify(answers));
   }, [answers, storageKey]);
 
+  useEffect(() => {
+    if (!data?.attempt_deadline || !data.server_time) {
+      setRemainingSeconds(null);
+      return;
+    }
+    // Use the server-reported remaining duration instead of the browser clock.
+    const deadlineDelay = Math.max(
+      0,
+      Date.parse(data.attempt_deadline) - Date.parse(data.server_time),
+    );
+    const endsAt = Date.now() + deadlineDelay;
+    const updateRemaining = () =>
+      setRemainingSeconds(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+    updateRemaining();
+    const interval = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(interval);
+  }, [data?.attempt_deadline, data?.server_time]);
+
   // 3. Peringatan Browser saat keluar/refresh
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -171,7 +208,7 @@ function AnswerSetContent() {
     : null;
 
   const updateCurrent = (patch: Partial<QuestionAnswer>) => {
-    if (!activeQuestion) return;
+    if (!activeQuestion || expired) return;
     setAnswers((prev) => ({
       ...prev,
       [activeQuestion.question_id]: {
@@ -204,8 +241,68 @@ function AnswerSetContent() {
     );
   };
 
+  const expired = remainingSeconds === 0 && Boolean(data?.attempt_deadline);
+
+  const autoSubmit = useCallback(async () => {
+    if (!data || !setId) return;
+    setSubmitting(true);
+    setShowConfirmModal(false);
+    try {
+      const completedAnswers = data.questions.flatMap((question) => {
+        const answer = answers[question.question_id];
+        if (
+          !answer ||
+          !answer.t1_answer.trim() ||
+          answer.t2_confidence === null ||
+          !answer.t3_reason.trim() ||
+          answer.t4_confidence === null
+        ) {
+          return [];
+        }
+        return [
+          {
+            question_id: question.question_id,
+            tier1_answer: answer.t1_answer.trim(),
+            tier2_confidence: answer.t2_confidence,
+            tier3_reason: answer.t3_reason.trim(),
+            tier4_confidence: answer.t4_confidence,
+          },
+        ];
+      });
+      await apiFetch(`/student/sets/${setId}/auto-submit`, {
+        method: "POST",
+        body: JSON.stringify({ answers: completedAnswers }),
+      });
+      if (storageKey) localStorage.removeItem(storageKey);
+      router.replace("/code#pengumpulan");
+    } catch (err) {
+      setError(
+        `Waktu habis. Pengumpulan otomatis gagal: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [answers, data, router, setId, storageKey]);
+
+  useEffect(() => {
+    if (
+      !expired ||
+      data?.expiry_behavior !== "AUTO_SUBMIT" ||
+      autoSubmissionStarted.current
+    ) {
+      return;
+    }
+    autoSubmissionStarted.current = true;
+    void autoSubmit();
+  }, [autoSubmit, data?.expiry_behavior, expired]);
+
+  useEffect(() => {
+    if (expired && data?.expiry_behavior === "REJECT")
+      setShowExpiryWarning(true);
+  }, [data?.expiry_behavior, expired]);
+
   const handleNextOrFinish = () => {
-    if (!data || !activeQuestion || !currentAnswer) return;
+    if (!data || !activeQuestion || !currentAnswer || expired) return;
 
     if (!currentAnswer.t1_answer.trim()) {
       setError("Harap isi kesimpulan jawaban Anda terlebih dahulu.");
@@ -233,7 +330,7 @@ function AnswerSetContent() {
       );
       if (incomplete) {
         setError(
-          `Pertanyaan nomor ${data.questions.indexOf(incomplete) + 1} belum diselesaikan secara lengkap.`
+          `Pertanyaan nomor ${data.questions.indexOf(incomplete) + 1} belum diselesaikan secara lengkap.`,
         );
         setActiveIndex(data.questions.indexOf(incomplete));
         return;
@@ -262,7 +359,12 @@ function AnswerSetContent() {
 
       await apiFetch(`/student/sets/${setId}/submissions`, {
         method: "POST",
-        body: JSON.stringify({ answers: payloadAnswers, password: passwordKey ? sessionStorage.getItem(passwordKey) ?? "" : "" }),
+        body: JSON.stringify({
+          answers: payloadAnswers,
+          password: passwordKey
+            ? (sessionStorage.getItem(passwordKey) ?? "")
+            : "",
+        }),
       });
 
       if (storageKey) {
@@ -296,6 +398,20 @@ function AnswerSetContent() {
             description="Format Evaluasi Pemahaman Konseptual"
             icon={ClipboardList}
           />
+          {data.attempt_deadline && (
+            <div
+              className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold ${
+                expired
+                  ? "border-error/40 bg-error-container text-on-error-container"
+                  : "border-primary/30 bg-primary/5 text-primary"
+              }`}
+            >
+              <Timer size={17} />
+              {expired
+                ? "Waktu pengerjaan telah habis."
+                : `Sisa waktu: ${formatRemainingTime(remainingSeconds ?? 0)}`}
+            </div>
+          )}
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 text-sm text-on-surface space-y-3">
             <h3 className="font-bold text-primary flex items-center gap-2">
               <ClipboardList size={18} /> Petunjuk Pengisian Soal:
@@ -331,6 +447,7 @@ function AnswerSetContent() {
           <button
             type="button"
             onClick={() => setStarted(true)}
+            disabled={expired}
             className="btn-primary mt-4 cursor-pointer"
           >
             Mulai Pengerjaan <Send size={16} />
@@ -346,266 +463,299 @@ function AnswerSetContent() {
 
   return (
     <PageContainer>
-      <div className="flex items-center justify-between mb-4">
-        <button
-          type="button"
-          onClick={() => setShowExitWarningModal(true)}
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
-        >
-          <LogOut size={15} /> Keluar dari Lembar Soal
-        </button>
-        <span className="text-sm font-mono-ui font-semibold text-primary">
-          Soal Selesai: {completedQuestionsCount} /{" "}
-          {data?.questions.length ?? 0}
-        </span>
-      </div>
-
-      {error && (
-        <div
-          role="alert"
-          className="mb-4 flex items-center gap-2.5 rounded-xl border border-error/40 bg-error-container p-3.5 text-xs text-on-error-container animate-fade-in"
-        >
-          <TriangleAlert size={16} className="shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {activeQuestion && currentAnswer && (
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-        <div className="min-w-0 flex-1 space-y-5">
-          {/* Teks Pertanyaan Konseptual */}
-          <section className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6 space-y-2">
-            <span className="font-mono-ui text-sm font-bold uppercase tracking-wider text-primary">
-              Soal Nomor {activeQuestion.order_index} dari{" "}
-              {data?.questions.length}
-            </span>
-            <RichTextContent html={activeQuestion.prompt} className="text-xl font-semibold leading-relaxed text-on-surface" />
-          </section>
-
-          {/* 1. Kesimpulan / Jawaban Singkat */}
-          <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-            <div className="flex items-center justify-between">
+      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            onClick={() => setShowExitWarningModal(true)}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
+          >
+            <LogOut size={15} /> Keluar dari Lembar Soal
+          </button>
+          {data?.attempt_deadline && (
+            <div
+              className={`flex w-fit items-center justify-center gap-2 self-start rounded-xl border border-outline-variant/50 px-3.5 py-2 sm:self-auto ${
+                expired
+                  ? "bg-error-container text-on-error-container"
+                  : "bg-primary/10 text-primary"
+              }`}
+            >
+              <Timer size={17} className="shrink-0" />
               <div>
-                <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                  1. Kesimpulan / Jawaban Singkat
-                </h3>
-                <p className="text-xs text-on-surface-variant mt-0.5">
-                  Maksimal 120 karakter.
+                <p className="text-[10px] font-sans font-semibold uppercase tracking-wide opacity-75">
+                  Sisa waktu
+                </p>
+                <p className="font-mono-ui text-sm font-bold leading-4">
+                  {expired
+                    ? "Waktu habis"
+                    : formatRemainingTime(remainingSeconds ?? 0)}
                 </p>
               </div>
-              <span
-                className={`text-xs font-mono-ui font-bold ${currentAnswer.t1_answer.length > 120 ? "text-error" : "text-on-surface-variant"}`}
-              >
-                {currentAnswer.t1_answer.length} / 120
-              </span>
             </div>
+          )}
+        </div>
+        <div className="flex w-full items-center rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-3.5 py-2">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-on-surface-variant">
+              Soal selesai
+            </p>
+            <p className="font-mono-ui text-sm font-bold text-on-surface">
+              {completedQuestionsCount} / {data?.questions.length ?? 0}
+            </p>
+          </div>
+        </div>
+      </div>
 
-            <input
-              type="text"
-              maxLength={120}
-              value={currentAnswer.t1_answer}
-              onChange={(e) => updateCurrent({ t1_answer: e.target.value })}
-              placeholder="Contoh: Resultan gayanya nol."
-              className="form-input text-sm w-full"
-            />
-
-            {t1HasReasonKeyword && (
-              <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-500">
-                <AlertTriangle size={15} className="shrink-0" />
-                <span>
-                  Catatan: Terdeteksi kata sebab (&ldquo;karena/sebab&rdquo;).
-                  Di bagian ini tuliskan kesimpulannya saja; alasan ilmiah
-                  diuraikan pada kolom alasan di bawah.
+      {activeQuestion && currentAnswer && (
+        <fieldset disabled={expired || submitting} className="contents">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_13rem] lg:items-start">
+            <div className="min-w-0 flex-1 space-y-5">
+              {/* Teks Pertanyaan Konseptual */}
+              <section className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6 space-y-2">
+                <span className="font-mono-ui text-sm font-bold uppercase tracking-wider text-primary">
+                  Soal Nomor {activeQuestion.order_index} dari{" "}
+                  {data?.questions.length}
                 </span>
+                <RichTextContent
+                  html={activeQuestion.prompt}
+                  className="text-xl font-semibold leading-relaxed text-on-surface"
+                />
+              </section>
+
+              {/* 1. Kesimpulan / Jawaban Singkat */}
+              <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
+                      1. Kesimpulan / Jawaban Singkat
+                    </h3>
+                    <p className="text-xs text-on-surface-variant mt-0.5">
+                      Maksimal 120 karakter.
+                    </p>
+                  </div>
+                  <span
+                    className={`text-xs font-mono-ui font-bold ${currentAnswer.t1_answer.length > 120 ? "text-error" : "text-on-surface-variant"}`}
+                  >
+                    {currentAnswer.t1_answer.length} / 120
+                  </span>
+                </div>
+
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={currentAnswer.t1_answer}
+                  onChange={(e) => updateCurrent({ t1_answer: e.target.value })}
+                  placeholder="Contoh: Resultan gayanya nol."
+                  className="form-input text-sm w-full"
+                />
+
+                {t1HasReasonKeyword && (
+                  <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-500">
+                    <AlertTriangle size={15} className="shrink-0" />
+                    <span>
+                      Catatan: Terdeteksi kata sebab
+                      (&ldquo;karena/sebab&rdquo;). Di bagian ini tuliskan
+                      kesimpulannya saja; alasan ilmiah diuraikan pada kolom
+                      alasan di bawah.
+                    </span>
+                  </div>
+                )}
+              </section>
+
+              {/* 2. Tingkat Keyakinan pada Jawaban */}
+              <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
+                <div>
+                  <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
+                    2. Tingkat Keyakinan pada Jawaban
+                  </h3>
+                  <p className="text-xs text-on-surface-variant mt-0.5">
+                    Skala 1–3: Tidak Yakin, 4–6: Yakin.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
+                  {CONFIDENCE_LEVELS.map((lvl) => {
+                    const isSelected = currentAnswer.t2_confidence === lvl.val;
+                    return (
+                      <label
+                        key={lvl.val}
+                        className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
+                            : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`t2_conf_${activeQuestion.question_id}`}
+                          value={lvl.val}
+                          checked={isSelected}
+                          onChange={() =>
+                            updateCurrent({ t2_confidence: lvl.val })
+                          }
+                          className="hidden"
+                        />
+                        <span className="font-mono-ui text-base">
+                          {lvl.val}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* 3. Alasan / Penalaran Ilmiah */}
+              <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
+                <div>
+                  <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
+                    3. Alasan / Penalaran Ilmiah
+                  </h3>
+                </div>
+
+                <textarea
+                  rows={4}
+                  value={currentAnswer.t3_reason}
+                  onChange={(e) => updateCurrent({ t3_reason: e.target.value })}
+                  placeholder="Uraikan penalaran ilmiah dan dasar konsep Anda di sini..."
+                  className="form-input text-sm w-full"
+                />
+              </section>
+
+              {/* 4. Tingkat Keyakinan pada Alasan */}
+              <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
+                <div>
+                  <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
+                    4. Tingkat Keyakinan pada Alasan
+                  </h3>
+                  <p className="text-xs text-on-surface-variant mt-0.5">
+                    Skala 1–3: Tidak Yakin, 4–6: Yakin.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
+                  {CONFIDENCE_LEVELS.map((lvl) => {
+                    const isSelected = currentAnswer.t4_confidence === lvl.val;
+                    return (
+                      <label
+                        key={lvl.val}
+                        className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
+                            : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`t4_conf_${activeQuestion.question_id}`}
+                          value={lvl.val}
+                          checked={isSelected}
+                          onChange={() =>
+                            updateCurrent({ t4_confidence: lvl.val })
+                          }
+                          className="hidden"
+                        />
+                        <span className="font-mono-ui text-base">
+                          {lvl.val}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* Navigasi Soal Bawah */}
+              <div className="flex items-center justify-between pt-4 border-t border-outline-variant/30">
+                <button
+                  type="button"
+                  disabled={activeIndex === 0}
+                  onClick={() => {
+                    setError("");
+                    setActiveIndex((idx) => Math.max(0, idx - 1));
+                  }}
+                  className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-30 cursor-pointer"
+                >
+                  ← Soal Sebelumnya
+                </button>
+
+                <span className="text-sm font-mono-ui text-on-surface-variant">
+                  Soal {activeIndex + 1} dari {data.questions.length}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={handleNextOrFinish}
+                  className="btn-primary text-sm !py-2.5 !px-6 cursor-pointer"
+                >
+                  {activeIndex === data.questions.length - 1 ? (
+                    <>
+                      Selesai &amp; Kumpulkan Semua <Send size={14} />
+                    </>
+                  ) : (
+                    <>Lanjut ke Soal Berikutnya →</>
+                  )}
+                </button>
               </div>
-            )}
-          </section>
-
-          {/* 2. Tingkat Keyakinan pada Jawaban */}
-          <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-            <div>
-              <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                2. Tingkat Keyakinan pada Jawaban
-              </h3>
-              <p className="text-xs text-on-surface-variant mt-0.5">
-                Skala 1–3: Tidak Yakin, 4–6: Yakin.
-              </p>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
-              {CONFIDENCE_LEVELS.map((lvl) => {
-                const isSelected = currentAnswer.t2_confidence === lvl.val;
-                return (
-                  <label
-                    key={lvl.val}
-                    className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
-                      isSelected
-                        ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
-                        : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`t2_conf_${activeQuestion.question_id}`}
-                      value={lvl.val}
-                      checked={isSelected}
-                      onChange={() => updateCurrent({ t2_confidence: lvl.val })}
-                      className="hidden"
-                    />
-                    <span className="font-mono-ui text-base">{lvl.val}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </section>
+            {/* SIDEBAR KANAN: DAFTAR SOAL (sama seperti view lain) */}
+            <aside className="w-full space-y-3 lg:sticky lg:top-6">
+              <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
+                <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
+                  <h3 className="font-bold text-sm uppercase tracking-wide text-on-surface">
+                    Daftar Soal
+                  </h3>
+                  <span className="font-mono-ui text-xs text-on-surface-variant">
+                    {data.questions.length} Soal
+                  </span>
+                </div>
 
-          {/* 3. Alasan / Penalaran Ilmiah */}
-          <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-            <div>
-              <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                3. Alasan / Penalaran Ilmiah
-              </h3>
-            </div>
+                <div className="flex flex-wrap items-center gap-2 py-3">
+                  {data.questions.map((q, idx) => {
+                    const isDone = isQuestionComplete(q.question_id);
+                    const isCurrent = idx === activeIndex;
+                    const boxCls = isDone
+                      ? "border-emerald-500/60 bg-emerald-500/15 font-bold text-emerald-600 dark:text-emerald-400"
+                      : "border-outline-variant/50 bg-surface-container text-on-surface-variant";
+                    return (
+                      <button
+                        key={q.question_id}
+                        type="button"
+                        onClick={() => {
+                          setError("");
+                          setActiveIndex(idx);
+                        }}
+                        className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm ${boxCls} ${
+                          isCurrent
+                            ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
+                            : "hover:border-primary/60"
+                        }`}
+                        title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi" : "Belum diisi"}`}
+                      >
+                        {idx + 1}
+                        <span
+                          className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${
+                            isDone ? "bg-emerald-400" : "bg-slate-400"
+                          }`}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
 
-            <textarea
-              rows={4}
-              value={currentAnswer.t3_reason}
-              onChange={(e) => updateCurrent({ t3_reason: e.target.value })}
-              placeholder="Uraikan penalaran ilmiah dan dasar konsep Anda di sini..."
-              className="form-input text-sm w-full"
-            />
-          </section>
-
-          {/* 4. Tingkat Keyakinan pada Alasan */}
-          <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-            <div>
-              <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                4. Tingkat Keyakinan pada Alasan
-              </h3>
-              <p className="text-xs text-on-surface-variant mt-0.5">
-                Skala 1–3: Tidak Yakin, 4–6: Yakin.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
-              {CONFIDENCE_LEVELS.map((lvl) => {
-                const isSelected = currentAnswer.t4_confidence === lvl.val;
-                return (
-                  <label
-                    key={lvl.val}
-                    className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
-                      isSelected
-                        ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
-                        : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`t4_conf_${activeQuestion.question_id}`}
-                      value={lvl.val}
-                      checked={isSelected}
-                      onChange={() => updateCurrent({ t4_confidence: lvl.val })}
-                      className="hidden"
-                    />
-                    <span className="font-mono-ui text-base">{lvl.val}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Navigasi Soal Bawah */}
-          <div className="flex items-center justify-between pt-4 border-t border-outline-variant/30">
-            <button
-              type="button"
-              disabled={activeIndex === 0}
-              onClick={() => {
-                setError("");
-                setActiveIndex((idx) => Math.max(0, idx - 1));
-              }}
-              className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-30 cursor-pointer"
-            >
-              ← Soal Sebelumnya
-            </button>
-
-            <span className="text-sm font-mono-ui text-on-surface-variant">
-              Soal {activeIndex + 1} dari {data.questions.length}
-            </span>
-
-            <button
-              type="button"
-              onClick={handleNextOrFinish}
-              className="btn-primary text-sm !py-2.5 !px-6 cursor-pointer"
-            >
-              {activeIndex === data.questions.length - 1 ? (
-                <>
-                  Selesai &amp; Kumpulkan Semua <Send size={14} />
-                </>
-              ) : (
-                <>Lanjut ke Soal Berikutnya →</>
-              )}
-            </button>
+                <div className="space-y-1 border-t border-outline-variant/30 pt-2 text-xs font-medium text-on-surface-variant">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                    <span>Sudah Diisi</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-slate-400" />
+                    <span>Belum Diisi</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
           </div>
-        </div>
-
-        {/* SIDEBAR KANAN: DAFTAR SOAL (sama seperti view lain) */}
-        <aside className="w-full shrink-0 space-y-3 lg:sticky lg:top-6 lg:w-52">
-          <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
-            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
-              <h3 className="font-bold text-sm uppercase tracking-wide text-on-surface">
-                Daftar Soal
-              </h3>
-              <span className="font-mono-ui text-xs text-on-surface-variant">
-                {data.questions.length} Soal
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 py-3">
-              {data.questions.map((q, idx) => {
-                const isDone = isQuestionComplete(q.question_id);
-                const isCurrent = idx === activeIndex;
-                const boxCls = isDone
-                  ? "border-emerald-500/60 bg-emerald-500/15 font-bold text-emerald-600 dark:text-emerald-400"
-                  : "border-outline-variant/50 bg-surface-container text-on-surface-variant";
-                return (
-                  <button
-                    key={q.question_id}
-                    type="button"
-                    onClick={() => {
-                      setError("");
-                      setActiveIndex(idx);
-                    }}
-                    className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm ${boxCls} ${
-                      isCurrent
-                        ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
-                        : "hover:border-primary/60"
-                    }`}
-                    title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi" : "Belum diisi"}`}
-                  >
-                    {idx + 1}
-                    <span
-                      className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${
-                        isDone ? "bg-emerald-400" : "bg-slate-400"
-                      }`}
-                    />
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="space-y-1 border-t border-outline-variant/30 pt-2 text-xs font-medium text-on-surface-variant">
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
-                <span>Sudah Diisi</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-slate-400" />
-                <span>Belum Diisi</span>
-              </div>
-            </div>
-          </div>
-        </aside>
-        </div>
+        </fieldset>
       )}
 
       {/* Modal Peringatan Keluar */}
@@ -697,6 +847,17 @@ function AnswerSetContent() {
           </div>
         </div>
       )}
+      <FeedbackModal
+        open={showExpiryWarning}
+        message="Waktu pengerjaan telah habis. Pengumpulan jawaban tidak lagi dapat dilakukan."
+        variant="warning"
+        onClose={() => setShowExpiryWarning(false)}
+      />
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

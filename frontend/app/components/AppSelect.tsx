@@ -45,7 +45,10 @@ export default function AppSelect({
   }, []);
 
   return (
-    <div ref={root} className={`app-select ${className}`}>
+    <div
+      ref={root}
+      className={`app-select ${open ? "app-select-open" : ""} ${className}`}
+    >
       {/* Clickable Trigger Button (keeps text and custom icon) */}
       <button
         id={id}
@@ -95,10 +98,18 @@ export default function AppSelect({
                     setOpen(false);
                   }}
                 >
-                  <span className={isSelected ? "font-semibold text-primary" : "text-on-surface"}>
+                  <span
+                    className={
+                      isSelected
+                        ? "font-semibold text-primary"
+                        : "text-on-surface"
+                    }
+                  >
                     {option.label}
                   </span>
-                  {isSelected && <Check size={16} className="text-primary shrink-0 ml-2" />}
+                  {isSelected && (
+                    <Check size={16} className="text-primary shrink-0 ml-2" />
+                  )}
                 </button>
               );
             })}

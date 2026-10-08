@@ -9,12 +9,12 @@ import {
   Plus,
   Send,
   Trash2,
-  TriangleAlert,
   X,
 } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
 import PageContainer from "./PageContainer";
 import RichTextEditor from "./RichTextEditor";
+import FeedbackModal from "./FeedbackModal";
 
 export type ExamQuestion = {
   id?: string;
@@ -63,7 +63,12 @@ const htmlToPlain = (html: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-export default function QuestionForm({ isEditing = false, isReadOnly = false, setId, initialData }: Props) {
+export default function QuestionForm({
+  isEditing = false,
+  isReadOnly = false,
+  setId,
+  initialData,
+}: Props) {
   const router = useRouter();
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -71,11 +76,13 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   const [topics, setTopics] = useState<Topic[]>([]);
   const [topicId, setTopicId] = useState(initialData?.topic_id ?? "");
   const [title, setTitle] = useState(initialData?.title ?? "");
-  const [description, setDescription] = useState(initialData?.description ?? "");
+  const [description, setDescription] = useState(
+    initialData?.description ?? "",
+  );
   const [questions, setQuestions] = useState<ExamQuestion[]>(
     initialData?.questions && initialData.questions.length > 0
       ? initialData.questions
-      : [blankQuestion()]
+      : [blankQuestion()],
   );
 
   const [activeIndex, setActiveIndex] = useState(0);
@@ -84,15 +91,17 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   const [showExitModal, setShowExitModal] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
-  const [pendingQuestionRemoval, setPendingQuestionRemoval] = useState<number | null>(null);
-  const [validationModalError, setValidationModalError] = useState<string | null>(null);
+  const [pendingQuestionRemoval, setPendingQuestionRemoval] = useState<
+    number | null
+  >(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
+    const token =
+      localStorage.getItem("token") ?? sessionStorage.getItem("token");
     if (!token) return;
 
     fetch("/api/dashboard/summary", {
@@ -105,7 +114,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         setSubjectId((curr) => {
           if (curr) return curr;
           if (initialData?.subject_id) return initialData.subject_id;
-          const stored = !isEditing ? sessionStorage.getItem("imported_package") : null;
+          const stored = !isEditing
+            ? sessionStorage.getItem("imported_package")
+            : null;
           if (stored) {
             try {
               const parsed = JSON.parse(stored);
@@ -124,7 +135,8 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       setTopicId("");
       return;
     }
-    const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
+    const token =
+      localStorage.getItem("token") ?? sessionStorage.getItem("token");
     if (!token) return;
 
     fetch(`/api/admin/subjects/${subjectId}/topics`, {
@@ -133,14 +145,22 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       .then((res) => (res.ok ? res.json() : []))
       .then((data: Topic[]) => {
         setTopics(data);
-        if (initialData?.topic_id && data.some((t) => t.id === initialData.topic_id)) {
+        if (
+          initialData?.topic_id &&
+          data.some((t) => t.id === initialData.topic_id)
+        ) {
           setTopicId(initialData.topic_id);
         } else if (!topicId && data.length > 0) {
-          const stored = !isEditing ? sessionStorage.getItem("imported_package") : null;
+          const stored = !isEditing
+            ? sessionStorage.getItem("imported_package")
+            : null;
           if (stored) {
             try {
               const parsed = JSON.parse(stored);
-              if (parsed.topic_id && data.some((t) => t.id === parsed.topic_id)) {
+              if (
+                parsed.topic_id &&
+                data.some((t) => t.id === parsed.topic_id)
+              ) {
                 setTopicId(parsed.topic_id);
               }
             } catch {}
@@ -168,13 +188,17 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           if (parsed.topic_id) setTopicId(parsed.topic_id);
           if (parsed.title) setTitle(parsed.title);
           if (parsed.description) setDescription(parsed.description);
-          if (parsed.questions && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+          if (
+            parsed.questions &&
+            Array.isArray(parsed.questions) &&
+            parsed.questions.length > 0
+          ) {
             setQuestions(
               parsed.questions.map((q: Partial<ExamQuestion>) => ({
                 prompt: q.prompt ?? "",
                 short_answer: q.short_answer ?? "",
                 alasan: q.alasan ?? "",
-              }))
+              })),
             );
             setActiveIndex(0);
           }
@@ -199,16 +223,28 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
     if (!isDirty || isReadOnly) return;
     const handleClick = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0) return;
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
-      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return;
+      const anchor = (event.target as Element | null)?.closest?.(
+        "a[href]",
+      ) as HTMLAnchorElement | null;
+      if (
+        !anchor ||
+        anchor.target === "_blank" ||
+        anchor.hasAttribute("download")
+      )
+        return;
       // Links inside the rich text editor are content, not navigation.
       if (anchor.closest('[contenteditable="true"]')) return;
       const href = anchor.getAttribute("href") ?? "";
       if (!href || href.startsWith("#")) return;
       const url = new URL(anchor.href, window.location.href);
       if (url.origin !== window.location.origin) return;
-      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      if (
+        url.pathname === window.location.pathname &&
+        url.search === window.location.search
+      )
+        return;
       event.preventDefault();
       event.stopPropagation();
       setPendingHref(`${url.pathname}${url.search}`);
@@ -235,7 +271,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   }, [isDirty, isReadOnly]);
 
   const selectedTopicName =
-    topics.find((topic) => topic.id === topicId)?.name ?? initialData?.topic_name ?? "";
+    topics.find((topic) => topic.id === topicId)?.name ??
+    initialData?.topic_name ??
+    "";
 
   const questionValidity = useMemo(() => {
     return questions.map((q) => {
@@ -249,12 +287,12 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   const updateQuestionField = (
     index: number,
     field: "prompt" | "short_answer" | "alasan",
-    value: string
+    value: string,
   ) => {
     if (isReadOnly) return;
     setIsDirty(true);
     setQuestions((current) =>
-      current.map((q, i) => (i === index ? { ...q, [field]: value } : q))
+      current.map((q, i) => (i === index ? { ...q, [field]: value } : q)),
     );
   };
 
@@ -311,7 +349,8 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
   };
 
   const executeSave = async () => {
-    const token = localStorage.getItem("token") ?? sessionStorage.getItem("token");
+    const token =
+      localStorage.getItem("token") ?? sessionStorage.getItem("token");
     if (!token) {
       router.replace("/login");
       return;
@@ -322,10 +361,11 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
     const validationError = validateForm();
     if (validationError) {
-      const actionName = isEditing ? "Gagal memperbarui bank soal" : "Gagal membuat bank soal";
+      const actionName = isEditing
+        ? "Gagal memperbarui bank soal"
+        : "Gagal membuat bank soal";
       const fullError = `${actionName}: ${validationError}`;
       setError(fullError);
-      setValidationModalError(validationError);
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -408,10 +448,11 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         setTimeout(() => finishExit(pendingHref), 1000);
       }
     } catch (err) {
-      const actionName = isEditing ? "Gagal memperbarui bank soal" : "Gagal membuat bank soal";
+      const actionName = isEditing
+        ? "Gagal memperbarui bank soal"
+        : "Gagal membuat bank soal";
       const errText = err instanceof Error ? err.message : "Terjadi kesalahan.";
       setError(`${actionName}: ${errText}`);
-      setValidationModalError(errText);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setBusy(false);
@@ -462,7 +503,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-surface-container-high font-mono-ui text-xs font-bold text-on-surface">
               {qIndex + 1}
             </span>
-            <h3 className="font-semibold text-on-surface">Pertanyaan Nomor {qIndex + 1}</h3>
+            <h3 className="font-semibold text-on-surface">
+              Pertanyaan Nomor {qIndex + 1}
+            </h3>
           </div>
           {questions.length > 1 && !isEditing && !isReadOnly && (
             <button
@@ -496,7 +539,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           </label>
           <RichTextEditor
             value={q.short_answer}
-            onChange={(html) => updateQuestionField(qIndex, "short_answer", html)}
+            onChange={(html) =>
+              updateQuestionField(qIndex, "short_answer", html)
+            }
             disabled={isReadOnly}
             placeholder="Tuliskan jawaban / kunci jawaban yang benar..."
             className="mt-1"
@@ -533,7 +578,11 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
 
       <header className="mb-6">
         <h1 className="font-display text-2xl font-bold text-on-surface">
-          {isReadOnly ? "Lihat Bank Soal" : isEditing ? "Edit Bank Soal" : "Buat Bank Soal Baru"}
+          {isReadOnly
+            ? "Lihat Bank Soal"
+            : isEditing
+              ? "Edit Bank Soal"
+              : "Buat Bank Soal Baru"}
         </h1>
         <p className="text-sm text-on-surface-variant mt-1">
           {isReadOnly
@@ -542,32 +591,38 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         </p>
       </header>
 
-      {error && (
-        <div role="alert" className="mb-5 flex gap-2 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container">
-          <TriangleAlert size={18} />
-          {error}
-        </div>
-      )}
-
       {message && (
-        <div role="status" className="mb-5 flex gap-2 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-4 text-sm text-primary">
+        <div
+          role="status"
+          className="mb-5 flex gap-2 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-4 text-sm text-primary"
+        >
           <CheckCircle2 size={18} />
           {message}
         </div>
       )}
 
-      <form onSubmit={(e) => { e.preventDefault(); setShowSubmitModal(true); }}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setShowSubmitModal(true);
+        }}
+      >
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           <div className="lg:col-span-3 space-y-6">
             <section className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 space-y-4">
-              <h2 className="font-semibold text-on-surface text-base">Identitas Bank Soal</h2>
+              <h2 className="font-semibold text-on-surface text-base">
+                Identitas Bank Soal
+              </h2>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-semibold uppercase text-on-surface-variant">
                     Mata Kuliah
                   </label>
                   <input
-                    value={subjects.find((s) => s.id === subjectId)?.name || subjectId}
+                    value={
+                      subjects.find((s) => s.id === subjectId)?.name ||
+                      subjectId
+                    }
                     readOnly
                     disabled
                     className="form-input mt-1 w-full cursor-not-allowed bg-surface-container disabled:opacity-80"
@@ -607,12 +662,15 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
             </section>
 
             <div className="space-y-4">
-              {questions[activeIndex] && renderQuestionCard(questions[activeIndex], activeIndex)}
+              {questions[activeIndex] &&
+                renderQuestionCard(questions[activeIndex], activeIndex)}
 
               <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
-                  onClick={() => setActiveIndex((prev) => Math.max(0, prev - 1))}
+                  onClick={() =>
+                    setActiveIndex((prev) => Math.max(0, prev - 1))
+                  }
                   disabled={activeIndex === 0}
                   className="btn-secondary text-xs disabled:opacity-40 cursor-pointer"
                 >
@@ -632,11 +690,17 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                     >
                       <Plus size={14} /> Tambah Soal
                     </button>
-                  ) : <div />
+                  ) : (
+                    <div />
+                  )
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setActiveIndex((prev) => Math.min(questions.length - 1, prev + 1))}
+                    onClick={() =>
+                      setActiveIndex((prev) =>
+                        Math.min(questions.length - 1, prev + 1),
+                      )
+                    }
                     className="btn-secondary text-xs cursor-pointer"
                   >
                     Soal Selanjutnya <ArrowRight size={14} />
@@ -661,7 +725,11 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
                     className="btn-primary px-6 py-2.5 min-w-[140px] text-sm font-semibold justify-center cursor-pointer"
                   >
                     <Send size={16} />
-                    {busy ? "Menyimpan..." : isEditing ? "Perbarui Bank Soal" : "Simpan Bank Soal"}
+                    {busy
+                      ? "Menyimpan..."
+                      : isEditing
+                        ? "Perbarui Bank Soal"
+                        : "Simpan Bank Soal"}
                   </button>
                 </div>
               </div>
@@ -671,7 +739,9 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
           <aside className="lg:col-span-1 sticky top-6 space-y-4">
             <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4 shadow-sm">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
-                <h3 className="font-semibold text-sm text-on-surface">Daftar Nomor Soal</h3>
+                <h3 className="font-semibold text-sm text-on-surface">
+                  Daftar Nomor Soal
+                </h3>
                 <span className="text-xs text-on-surface-variant font-mono-ui">
                   {questions.length} Soal
                 </span>
@@ -752,10 +822,16 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
       />
 
       {showExitModal && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="w-full max-w-md rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
             <div className="flex items-start justify-between gap-3">
-              <h3 className="font-display text-lg font-bold text-on-surface">Tinggalkan Halaman?</h3>
+              <h3 className="font-display text-lg font-bold text-on-surface">
+                Tinggalkan Halaman?
+              </h3>
               <button
                 type="button"
                 onClick={() => setShowExitModal(false)}
@@ -765,7 +841,8 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
               </button>
             </div>
             <p className="text-sm leading-6 text-on-surface-variant">
-              Perubahan pada bank soal ini belum disimpan. Jika Anda keluar sekarang, perubahan akan hilang.
+              Perubahan pada bank soal ini belum disimpan. Jika Anda keluar
+              sekarang, perubahan akan hilang.
             </p>
             <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
               <button
@@ -803,37 +880,11 @@ export default function QuestionForm({ isEditing = false, isReadOnly = false, se
         </div>
       )}
 
-      {validationModalError && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-md rounded-2xl border border-error/40 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5 text-error">
-                <TriangleAlert size={22} />
-                <h3 className="font-display text-lg font-bold text-on-surface">Peringatan Pengisian Soal</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setValidationModalError(null)}
-                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <p className="text-sm leading-6 text-on-surface-variant">
-              {validationModalError}
-            </p>
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setValidationModalError(null)}
-                className="btn-primary text-xs cursor-pointer"
-              >
-                Mengerti
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, KeyRound, TriangleAlert } from "lucide-react";
+import { ArrowRight, KeyRound } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
 import PageHeader from "../components/PageHeader";
 import PageContainer from "../components/PageContainer";
 import MySubmissions from "../components/MySubmissions";
 import FormModal from "../components/FormModal";
+import FeedbackModal from "../components/FeedbackModal";
 import { apiFetch } from "../lib/api";
 
 type StudentSet = {
@@ -22,7 +23,8 @@ type StudentSet = {
   questions: unknown[];
 };
 
-const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const errMsg = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
 
 export default function SoalPage() {
   const { user, loading } = useAuth();
@@ -57,13 +59,18 @@ export default function SoalPage() {
     setError("");
     setSubmitting(true);
     try {
-      const data = await apiFetch<StudentSet>(`/student/sets?code=${encodeURIComponent(value)}&password=${encodeURIComponent(password)}`);
+      const data = await apiFetch<StudentSet>(
+        `/student/sets?code=${encodeURIComponent(value)}&password=${encodeURIComponent(password)}`,
+      );
       if (!data.questions || data.questions.length === 0) {
-        setError("Soal belum dipublikasikan oleh dosen. Hubungi dosen pengampu Anda.");
+        setError(
+          "Soal belum dipublikasikan oleh dosen. Hubungi dosen pengampu Anda.",
+        );
         return;
       }
       setShowModal(false);
-      if (password) sessionStorage.setItem(`exam_package_password_${data.id}`, password);
+      if (password)
+        sessionStorage.setItem(`exam_package_password_${data.id}`, password);
       router.push(`/sets/${data.id}?code=${encodeURIComponent(data.code)}`);
     } catch (err) {
       setError(errMsg(err));
@@ -126,47 +133,72 @@ export default function SoalPage() {
           onSubmit={onSubmit}
           maxWidth="max-w-md"
           closeLabel="Tutup pop up"
-          footer={<><button type="button" onClick={() => setShowModal(false)} disabled={submitting} className="btn-secondary w-full sm:w-auto !py-2 !px-4 text-xs font-semibold">Batal</button><button type="submit" disabled={submitting} className="btn-primary w-full sm:w-auto !py-2 !px-4 text-xs font-semibold disabled:opacity-50">{submitting ? "Memeriksa..." : "Buka Lembar Evaluasi"}<ArrowRight size={14} /></button></>}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                disabled={submitting}
+                className="btn-secondary w-full sm:w-auto !py-2 !px-4 text-xs font-semibold"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn-primary w-full sm:w-auto !py-2 !px-4 text-xs font-semibold disabled:opacity-50"
+              >
+                {submitting ? "Memeriksa..." : "Buka Lembar Evaluasi"}
+                <ArrowRight size={14} />
+              </button>
+            </>
+          }
         >
           <section className="rounded-xl border border-outline-variant/50 p-4">
-            {error && (
-              <div
-                role="alert"
-                className="mb-4 flex items-center gap-2.5 rounded-xl border border-error/40 bg-error-container p-3 text-xs text-on-error-container"
+            <div>
+              <label
+                htmlFor="modal-input-code"
+                className="block text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-1.5"
               >
-                <TriangleAlert size={16} className="shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-              <div>
-                <label
-                  htmlFor="modal-input-code"
-                  className="block text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-1.5"
-                >
-                  Kode Soal
-                </label>
-                <input
-                  id="modal-input-code"
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="Contoh: FIS-NEWTON-01"
-                  required
-                  autoFocus
-                  className="w-full rounded-xl border border-outline-variant/60 bg-surface-container-low px-3.5 py-2.5 font-mono-ui text-sm text-on-surface uppercase placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-               <p className="mt-1.5 text-[11px] text-on-surface-variant">
-                  Kode paket bersifat unik untuk setiap evaluasi konseptual.
-               </p>
-               </div>
-              <div className="mt-4">
-                <label htmlFor="modal-input-password" className="block text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-1.5">Password paket (jika ada)</label>
-                <input id="modal-input-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-xl border border-outline-variant/60 bg-surface-container-low px-3.5 py-2.5 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
+                Kode Soal
+              </label>
+              <input
+                id="modal-input-code"
+                type="text"
+                value={code}
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                placeholder="Contoh: FIS-NEWTON-01"
+                required
+                autoFocus
+                className="w-full rounded-xl border border-outline-variant/60 bg-surface-container-low px-3.5 py-2.5 font-mono-ui text-sm text-on-surface uppercase placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <p className="mt-1.5 text-[11px] text-on-surface-variant">
+                Kode paket bersifat unik untuk setiap evaluasi konseptual.
+              </p>
+            </div>
+            <div className="mt-4">
+              <label
+                htmlFor="modal-input-password"
+                className="block text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-1.5"
+              >
+                Password paket (jika ada)
+              </label>
+              <input
+                id="modal-input-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-xl border border-outline-variant/60 bg-surface-container-low px-3.5 py-2.5 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
           </section>
         </FormModal>
       )}
+      <FeedbackModal
+        open={Boolean(error)}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

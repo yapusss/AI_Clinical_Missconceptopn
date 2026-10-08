@@ -17,7 +17,6 @@ import {
   Lock,
   RotateCcw,
   ShieldCheck,
-  TriangleAlert,
   Unlock,
   X,
   XCircle,
@@ -29,6 +28,7 @@ import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
 import RichTextContent from "../../../../components/RichTextContent";
 import { apiFetch } from "../../../../lib/api";
+import FeedbackModal from "../../../../components/FeedbackModal";
 
 type AttemptItem = {
   submission_id: string;
@@ -141,34 +141,44 @@ const CATEGORY_STYLES: Record<
   { badgeCls: string; label: string; desc: string; detailExpl: string }
 > = {
   SC: {
-    badgeCls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/40",
+    badgeCls:
+      "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/40",
     label: "Sound Understanding",
     desc: "Paham konsep secara utuh dan konsisten.",
-    detailExpl: "Sound Understanding: Mahasiswa memahami konsep ilmiah secara utuh dan konsisten.",
+    detailExpl:
+      "Sound Understanding: Mahasiswa memahami konsep ilmiah secara utuh dan konsisten.",
   },
   LK: {
-    badgeCls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/40",
+    badgeCls:
+      "bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/40",
     label: "Lack of Knowledge",
     desc: "Kurang pengetahuan, ragu-ragu, atau menebak.",
-    detailExpl: "Lack of Knowledge: Mahasiswa mengalami kesulitan konsep dasar atau tidak memiliki keyakinan yang cukup.",
+    detailExpl:
+      "Lack of Knowledge: Mahasiswa mengalami kesulitan konsep dasar atau tidak memiliki keyakinan yang cukup.",
   },
   FN: {
-    badgeCls: "bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-500/40",
+    badgeCls:
+      "bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-500/40",
     label: "False Negative",
     desc: "Penalaran benar tetapi kesimpulan keliru.",
-    detailExpl: "False Negative: Penalaran ilmiah mahasiswa sudah tepat, namun kurang teliti saat menarik kesimpulan akhir.",
+    detailExpl:
+      "False Negative: Penalaran ilmiah mahasiswa sudah tepat, namun kurang teliti saat menarik kesimpulan akhir.",
   },
   FP: {
-    badgeCls: "bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/40",
+    badgeCls:
+      "bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/40",
     label: "False Positive",
     desc: "Jawaban benar menutupi miskonsepsi.",
-    detailExpl: "False Positive: Kesimpulan mahasiswa benar, namun alasan/penalaran menunjukkan pemahaman yang keliru.",
+    detailExpl:
+      "False Positive: Kesimpulan mahasiswa benar, namun alasan/penalaran menunjukkan pemahaman yang keliru.",
   },
   MSC: {
-    badgeCls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/40",
+    badgeCls:
+      "bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/40",
     label: "Miskonsepsi",
     desc: "Miskonsepsi penuh dan diyakini secara konsisten.",
-    detailExpl: "Misconception: Kesimpulan dan alasan salah, serta diyakini secara konsisten oleh mahasiswa.",
+    detailExpl:
+      "Misconception: Kesimpulan dan alasan salah, serta diyakini secara konsisten oleh mahasiswa.",
   },
 };
 
@@ -202,7 +212,7 @@ const draftStorageKey = (setId: string, studentId: string) =>
 
 const readDrafts = (
   setId: string | undefined,
-  studentId: string | undefined
+  studentId: string | undefined,
 ): Record<string, ValidationDraft> => {
   if (!setId || !studentId || typeof window === "undefined") return {};
   try {
@@ -216,20 +226,24 @@ const readDrafts = (
 const persistDrafts = (
   setId: string | undefined,
   studentId: string | undefined,
-  next: Record<string, ValidationDraft>
+  next: Record<string, ValidationDraft>,
 ) => {
   if (!setId || !studentId || typeof window === "undefined") return;
   try {
     window.localStorage.setItem(
       draftStorageKey(setId, studentId),
-      JSON.stringify(next)
+      JSON.stringify(next),
     );
   } catch {
     /* abaikan error quota/privacy mode */
   }
 };
 
-export default function StudentPackageReviewPage({ examPackage = false }: { examPackage?: boolean }) {
+export default function StudentPackageReviewPage({
+  examPackage = false,
+}: {
+  examPackage?: boolean;
+}) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams<{ id: string; studentId: string }>();
@@ -272,13 +286,13 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     setError("");
     try {
       const res = await apiFetch<PackageReview>(
-        `/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${studentId}/review`
+        `/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${studentId}/review`,
       );
       setData(res);
       setDrafts(readDrafts(setId, studentId));
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Gagal memuat review paket."
+        caught instanceof Error ? caught.message : "Gagal memuat review paket.",
       );
     } finally {
       setFetching(false);
@@ -302,7 +316,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
   const attemptsDesc: AttemptItem[] = useMemo(() => {
     if (!activeQuestion) return [];
     return [...activeQuestion.attempts].sort(
-      (a, b) => b.attempt_no - a.attempt_no
+      (a, b) => b.attempt_no - a.attempt_no,
     );
   }, [activeQuestion]);
 
@@ -380,7 +394,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
     patch: Partial<{
       isCorrect: boolean;
       finalCategory: string;
-    }>
+    }>,
   ) => {
     if (!currentAttempt?.analysis || !activeQuestion) return;
     const nextIsCorrect = patch.isCorrect ?? isCorrect;
@@ -425,16 +439,16 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
         return st === "PENDING_VALIDATION" || st === "REJECTED";
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data]
+    [data],
   );
 
   const inFlightQuestions = useMemo(
     () =>
       (data?.questions ?? []).filter((q) =>
-        IN_FLIGHT_STATUSES.includes(latestAttemptOf(q)?.status ?? "")
+        IN_FLIGHT_STATUSES.includes(latestAttemptOf(q)?.status ?? ""),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data]
+    [data],
   );
 
   const finalizeItems = useMemo(() => {
@@ -573,13 +587,19 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
 
       let decision: SummaryRow["decision"] = null;
       let source: SummaryRow["source"] = "-";
-      const levelToCode: Record<number, string> = { 4: "SC", 3: "FN", 2: "MSC", 1: "LK" };
+      const levelToCode: Record<number, string> = {
+        4: "SC",
+        3: "FN",
+        2: "MSC",
+        1: "LK",
+      };
       const labelFor = (code?: string | null) =>
-        code ? CATEGORY_STYLES[code]?.label ?? code : "-";
+        code ? (CATEGORY_STYLES[code]?.label ?? code) : "-";
       let diagnosis = "-";
       if (validation) {
         decision =
-          Number(validation.final_percentage ?? an?.percentage_correct ?? 0) >= 99.9
+          Number(validation.final_percentage ?? an?.percentage_correct ?? 0) >=
+          99.9
             ? "Benar"
             : "Salah";
         source = "Dosen";
@@ -613,12 +633,12 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
 
   const totalPages = Math.max(
     1,
-    Math.ceil(summaryRows.length / SUMMARY_PAGE_SIZE)
+    Math.ceil(summaryRows.length / SUMMARY_PAGE_SIZE),
   );
   const safePage = Math.min(summaryPage, totalPages);
   const pageRows = summaryRows.slice(
     (safePage - 1) * SUMMARY_PAGE_SIZE,
-    safePage * SUMMARY_PAGE_SIZE
+    safePage * SUMMARY_PAGE_SIZE,
   );
 
   const openQuestionFromSummary = (idx: number) => {
@@ -642,7 +662,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
       status: decisionStatus,
       final_percentage: targetScore,
       final_tier_level:
-        CATEGORY_TO_LEVEL[draft.finalCategory] ?? (a?.tier_level ?? 1),
+        CATEGORY_TO_LEVEL[draft.finalCategory] ?? a?.tier_level ?? 1,
     };
     return body;
   };
@@ -671,7 +691,7 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
         succeededIds.push(item.analysisId);
       } catch (err) {
         failed.push(
-          `Soal ${item.orderIndex}: ${err instanceof Error ? err.message : "gagal menyimpan."}`
+          `Soal ${item.orderIndex}: ${err instanceof Error ? err.message : "gagal menyimpan."}`,
         );
       } finally {
         done += 1;
@@ -763,7 +783,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
   };
 
   const categoryMeta = currentAttempt?.analysis?.four_tier_category
-    ? CATEGORY_STYLES[currentAttempt.analysis.four_tier_category] ?? CATEGORY_STYLES.LK
+    ? (CATEGORY_STYLES[currentAttempt.analysis.four_tier_category] ??
+      CATEGORY_STYLES.LK)
     : null;
 
   const summary = data?.summary;
@@ -793,16 +814,6 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
             </span>
           }
         />
-      )}
-
-      {error && (
-        <div
-          role="alert"
-          className="mt-3 flex items-center gap-2.5 rounded-lg border border-error/40 bg-error-container p-3 text-xs text-on-error-container"
-        >
-          <TriangleAlert size={15} className="shrink-0" />
-          <span>{error}</span>
-        </div>
       )}
 
       {notice && (
@@ -915,8 +926,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-on-surface-variant">
-                    Halaman {safePage}/{totalPages} · menampilkan {pageRows.length}{" "}
-                    dari {summaryRows.length} soal
+                    Halaman {safePage}/{totalPages} · menampilkan{" "}
+                    {pageRows.length} dari {summaryRows.length} soal
                   </span>
                   <div className="flex items-center gap-2">
                     <button
@@ -938,585 +949,706 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-on-surface-variant">
-                  Klik baris atau “Buka” untuk meninjau &amp; menyesuaikan keputusan
-                  pada tab Detail Evaluasi.
+                  Klik baris atau “Buka” untuk meninjau &amp; menyesuaikan
+                  keputusan pada tab Detail Evaluasi.
                 </p>
               </section>
             ) : (
-            <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono-ui text-base font-bold text-primary">
-                    Soal Nomor {activeQuestion.order_index}
-                  </span>
-                  <span className="text-xs text-on-surface-variant font-mono-ui">
-                    dari {data.questions.length} Soal
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-on-surface-variant text-xs font-semibold uppercase tracking-wide">
-                      Percobaan:
+              <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono-ui text-base font-bold text-primary">
+                      Soal Nomor {activeQuestion.order_index}
                     </span>
-                    {attemptsDesc.length <= 1 ? (
-                      <span className="inline-flex min-w-[95px] items-center justify-center rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs font-semibold text-on-surface-variant">
-                        {attemptsDesc.length === 0
-                          ? "Belum ada"
-                          : `Ke-${currentAttempt?.attempt_no ?? 1}`}
+                    <span className="text-xs text-on-surface-variant font-mono-ui">
+                      dari {data.questions.length} Soal
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-on-surface-variant text-xs font-semibold uppercase tracking-wide">
+                        Percobaan:
+                      </span>
+                      {attemptsDesc.length <= 1 ? (
+                        <span className="inline-flex min-w-[95px] items-center justify-center rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs font-semibold text-on-surface-variant">
+                          {attemptsDesc.length === 0
+                            ? "Belum ada"
+                            : `Ke-${currentAttempt?.attempt_no ?? 1}`}
+                        </span>
+                      ) : (
+                        <AppSelect
+                          value={
+                            currentAttempt
+                              ? String(currentAttempt.attempt_no)
+                              : ""
+                          }
+                          onValueChange={(val) => {
+                            if (val)
+                              handleSelectAttempt(
+                                activeQuestion.question_id,
+                                Number.parseInt(val, 10),
+                              );
+                          }}
+                          ariaLabel="Pilih Percobaan"
+                          placeholder={`Ke-${currentAttempt?.attempt_no ?? 1}`}
+                          className="min-w-[95px] text-xs"
+                          options={attemptsDesc.map((att) => ({
+                            value: String(att.attempt_no),
+                            label: `Ke-${att.attempt_no}`,
+                          }))}
+                        />
+                      )}
+                    </div>
+
+                    {currentAttempt ? (
+                      <span
+                        className={`badge ${STATUS_BADGE[currentAttempt.status]?.cls} text-xs`}
+                      >
+                        {STATUS_BADGE[currentAttempt.status]?.label}
                       </span>
                     ) : (
-                      <AppSelect
-                        value={currentAttempt ? String(currentAttempt.attempt_no) : ""}
-                        onValueChange={(val) => {
-                          if (val)
-                            handleSelectAttempt(
-                              activeQuestion.question_id,
-                              Number.parseInt(val, 10)
-                            );
-                        }}
-                        ariaLabel="Pilih Percobaan"
-                        placeholder={`Ke-${currentAttempt?.attempt_no ?? 1}`}
-                        className="min-w-[95px] text-xs"
-                        options={attemptsDesc.map((att) => ({
-                          value: String(att.attempt_no),
-                          label: `Ke-${att.attempt_no}`,
-                        }))}
-                      />
+                      <span className="badge badge-draft text-xs">
+                        Belum Dijawab
+                      </span>
                     )}
                   </div>
-
-                  {currentAttempt ? (
-                    <span className={`badge ${STATUS_BADGE[currentAttempt.status]?.cls} text-xs`}>
-                      {STATUS_BADGE[currentAttempt.status]?.label}
-                    </span>
-                  ) : (
-                    <span className="badge badge-draft text-xs">Belum Dijawab</span>
-                  )}
-                </div>
-              </div>
-
-              {/* PERTANYAAN KONSEPTUAL — callout penuh, sama seperti view lain */}
-              <div className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-4 shadow-sm sm:p-5 space-y-2">
-                <span className="block text-sm font-semibold uppercase tracking-wider text-primary">
-                  Pertanyaan Konseptual
-                </span>
-                <RichTextContent html={activeQuestion.prompt} className="text-lg font-semibold leading-relaxed text-on-surface" />
-              </div>
-
-              {/* REFERENSI vs JAWABAN MAHASISWA — berdampingan di bawah soal */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 flex flex-col justify-between space-y-3">
-                  <div>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
-                      Jawaban Singkat (Referensi)
-                    </span>
-                    <RichTextContent html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ''} className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
-                  </div>
-
-                  <div className="border-t border-outline-variant/20 pt-2.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
-                      Alasan Referensi
-                    </span>
-                    <RichTextContent html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ''} className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20" />
-                  </div>
                 </div>
 
-                <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 space-y-2.5 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary">
-                        Jawaban Mahasiswa
+                {/* PERTANYAAN KONSEPTUAL — callout penuh, sama seperti view lain */}
+                <div className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-4 shadow-sm sm:p-5 space-y-2">
+                  <span className="block text-sm font-semibold uppercase tracking-wider text-primary">
+                    Pertanyaan Konseptual
+                  </span>
+                  <RichTextContent
+                    html={activeQuestion.prompt}
+                    className="text-lg font-semibold leading-relaxed text-on-surface"
+                  />
+                </div>
+
+                {/* REFERENSI vs JAWABAN MAHASISWA — berdampingan di bawah soal */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
+                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 flex flex-col justify-between space-y-3">
+                    <div>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
+                        Jawaban Singkat (Referensi)
                       </span>
-                      {currentAttempt && (
-                        <span className="text-xs text-on-surface-variant font-mono-ui">
-                          {fmtDate(currentAttempt.submitted_at)}
+                      <RichTextContent
+                        html={
+                          activeQuestion.reference?.short_answer ??
+                          activeQuestion.short_answer ??
+                          ""
+                        }
+                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
+                      />
+                    </div>
+
+                    <div className="border-t border-outline-variant/20 pt-2.5">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
+                        Alasan Referensi
+                      </span>
+                      <RichTextContent
+                        html={
+                          activeQuestion.reference?.reason ??
+                          activeQuestion.model_answer ??
+                          ""
+                        }
+                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 space-y-2.5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold uppercase tracking-wider text-primary">
+                          Jawaban Mahasiswa
                         </span>
-                      )}
+                        {currentAttempt && (
+                          <span className="text-xs text-on-surface-variant font-mono-ui">
+                            {fmtDate(currentAttempt.submitted_at)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold uppercase tracking-wide text-primary">
+                            1. Jawaban Singkat
+                          </span>
+                          <span className="font-mono-ui text-xs font-bold text-primary">
+                            {currentAttempt?.tier2_confidence ?? 1}/6 ·{" "}
+                            {(currentAttempt?.tier2_confidence ?? 1) >= 4
+                              ? "Yakin"
+                              : "Ragu"}
+                          </span>
+                        </div>
+                        <p className="text-base font-medium text-on-surface leading-normal mt-0.5">
+                          {currentAttempt?.tier1_answer ||
+                            currentAttempt?.answer_text ||
+                            "Belum ada jawaban"}
+                        </p>
+                        {currentAttempt?.heuristic_flags?.includes(
+                          "t1_berisi_alasan",
+                        ) && (
+                          <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+                            <AlertTriangle size={12} className="shrink-0" />
+                            <span>
+                              Jawaban singkat memuat alasan — uraikan alasan
+                              ilmiah pada kolom Alasan.
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold uppercase tracking-wide text-primary">
-                          1. Jawaban Singkat
+                          2. Alasan Ilmiah
                         </span>
                         <span className="font-mono-ui text-xs font-bold text-primary">
-                          {currentAttempt?.tier2_confidence ?? 1}/6 · {(currentAttempt?.tier2_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}
+                          {currentAttempt?.tier4_confidence ?? 1}/6 ·{" "}
+                          {(currentAttempt?.tier4_confidence ?? 1) >= 4
+                            ? "Yakin"
+                            : "Ragu"}
                         </span>
                       </div>
-                      <p className="text-base font-medium text-on-surface leading-normal mt-0.5">
-                        {currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}
+                      <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">
+                        {currentAttempt?.tier3_reason ||
+                          currentAttempt?.answer_text ||
+                          "Belum ada alasan"}
                       </p>
-                      {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
-                        <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+                      {(currentAttempt?.heuristic_flags ?? []).some(
+                        (f) =>
+                          f === "t3_kosong" ||
+                          f === "t3_redundan" ||
+                          f === "t3_hafalan",
+                      ) && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
                           <AlertTriangle size={12} className="shrink-0" />
-                          <span>
-                            Jawaban singkat memuat alasan — uraikan alasan ilmiah
-                            pada kolom Alasan.
-                          </span>
+                          {currentAttempt?.heuristic_flags?.includes(
+                            "t3_kosong",
+                          ) && <span>Alasan terlalu singkat.</span>}
+                          {currentAttempt?.heuristic_flags?.includes(
+                            "t3_redundan",
+                          ) && <span>Alasan mengulang jawaban.</span>}
+                          {currentAttempt?.heuristic_flags?.includes(
+                            "t3_hafalan",
+                          ) && (
+                            <span>Alasan hafalan rumus tanpa penerapan.</span>
+                          )}
                         </div>
                       )}
                     </div>
                   </div>
+                </div>
 
-                  <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wide text-primary">
-                        2. Alasan Ilmiah
-                      </span>
-                      <span className="font-mono-ui text-xs font-bold text-primary">
-                        {currentAttempt?.tier4_confidence ?? 1}/6 · {(currentAttempt?.tier4_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}
-                      </span>
+                {/* REKOMENDASI AI: MURNI STATUS BENAR/SALAH */}
+                {currentAttempt?.analysis && (
+                  <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/70 px-3.5 py-2.5 space-y-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
+                          <BrainCircuit size={15} className="text-primary" />{" "}
+                          REKOMENDASI AI:
+                        </span>
+
+                        <span
+                          className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
+                            CATEGORY_STYLES[
+                              currentAttempt.analysis.four_tier_category ?? "LK"
+                            ]?.badgeCls
+                          }`}
+                          title={categoryMeta?.detailExpl}
+                        >
+                          [{currentAttempt.analysis.four_tier_category}]{" "}
+                          {categoryMeta?.label}
+                          <Info size={11} className="opacity-70" />
+                        </span>
+
+                        {currentAttempt.analysis.run_number > 1 && (
+                          <span
+                            className="font-mono-ui text-xs font-bold inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                            title="Analisis ulang oleh AI setelah penolakan dosen"
+                          >
+                            <RotateCcw size={12} /> Analisis{" "}
+                            {currentAttempt.analysis.run_number}/
+                            {MAX_ANALYSIS_RUNS}
+                          </span>
+                        )}
+
+                        <span
+                          className={`font-mono-ui font-bold text-xs px-2.5 py-0.5 rounded border inline-flex items-center gap-1 ${
+                            isAiPredictedCorrect
+                              ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                              : "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                          }`}
+                        >
+                          {isAiPredictedCorrect
+                            ? "Prediksi: Benar"
+                            : "Prediksi: Salah"}
+                        </span>
+
+                        <span className="text-xs text-on-surface-variant">
+                          Jawaban:{" "}
+                          <strong className="text-on-surface">
+                            {currentAttempt.analysis.module_a_score}
+                          </strong>{" "}
+                          · Alasan:{" "}
+                          <strong className="text-on-surface">
+                            {currentAttempt.analysis.module_b_score}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowAiDetails((prev) => !prev)}
+                        className="text-xs text-primary hover:underline font-semibold cursor-pointer inline-flex items-center gap-1"
+                      >
+                        {showAiDetails ? (
+                          <>
+                            Sembunyikan Detail AI <ChevronUp size={12} />
+                          </>
+                        ) : (
+                          <>
+                            Lihat Detail AI <ChevronDown size={12} />
+                          </>
+                        )}
+                      </button>
                     </div>
-                    <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">
-                      {currentAttempt?.tier3_reason || currentAttempt?.answer_text || "Belum ada alasan"}
+
+                    <p className="text-xs text-on-surface-variant leading-relaxed">
+                      <strong className="text-on-surface">Temuan AI: </strong>
+                      {currentAttempt.analysis.four_tier_category === "FP"
+                        ? "Kesimpulan benar, namun alasan ilmiah menunjukkan miskonsepsi (False Positive)."
+                        : currentAttempt.analysis.four_tier_category === "SC"
+                          ? "Kesimpulan dan penalaran fisis konsisten dengan kunci ilmiah (Sound Understanding)."
+                          : currentAttempt.analysis.explanation.split(
+                              "\n",
+                            )[0] || currentAttempt.analysis.explanation}
                     </p>
-                    {(currentAttempt?.heuristic_flags ?? []).some(
-                      (f) =>
-                        f === "t3_kosong" || f === "t3_redundan" || f === "t3_hafalan"
-                    ) && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
-                        <AlertTriangle size={12} className="shrink-0" />
-                        {currentAttempt?.heuristic_flags?.includes("t3_kosong") && (
-                          <span>Alasan terlalu singkat.</span>
-                        )}
-                        {currentAttempt?.heuristic_flags?.includes("t3_redundan") && (
-                          <span>Alasan mengulang jawaban.</span>
-                        )}
-                        {currentAttempt?.heuristic_flags?.includes("t3_hafalan") && (
-                          <span>Alasan hafalan rumus tanpa penerapan.</span>
-                        )}
+
+                    {showAiDetails && (
+                      <div className="pt-2 mt-1.5 border-t border-outline-variant/20 text-xs space-y-1.5 text-on-surface-variant animate-fade-in">
+                        <div className="bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/25 whitespace-pre-wrap leading-relaxed">
+                          {currentAttempt.analysis.explanation}
+                        </div>
+                        <div className="flex items-center justify-between text-xs font-mono-ui text-on-surface-variant/80">
+                          <span>
+                            Tingkat Keyakinan Model AI:{" "}
+                            {Number(currentAttempt.analysis.confidence).toFixed(
+                              2,
+                            )}
+                          </span>
+                          <span>
+                            Waktu Analisis:{" "}
+                            {currentAttempt.analysis.execution_time_ms ?? "-"}{" "}
+                            ms
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
-                </div>
-              </div>
+                )}
 
-              {/* REKOMENDASI AI: MURNI STATUS BENAR/SALAH */}
-              {currentAttempt?.analysis && (
-                <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/70 px-3.5 py-2.5 space-y-1.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-bold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
-                        <BrainCircuit size={15} className="text-primary" /> REKOMENDASI AI:
-                      </span>
-
-                      <span
-                        className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
-                          CATEGORY_STYLES[currentAttempt.analysis.four_tier_category ?? "LK"]?.badgeCls
-                        }`}
-                        title={categoryMeta?.detailExpl}
-                      >
-                        [{currentAttempt.analysis.four_tier_category}] {categoryMeta?.label}
-                        <Info size={11} className="opacity-70" />
-                      </span>
-
-                      {currentAttempt.analysis.run_number > 1 && (
-                        <span
-                          className="font-mono-ui text-xs font-bold inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                          title="Analisis ulang oleh AI setelah penolakan dosen"
-                        >
-                          <RotateCcw size={12} /> Analisis{" "}
-                          {currentAttempt.analysis.run_number}/{MAX_ANALYSIS_RUNS}
-                        </span>
-                      )}
-
-                      <span
-                        className={`font-mono-ui font-bold text-xs px-2.5 py-0.5 rounded border inline-flex items-center gap-1 ${
-                          isAiPredictedCorrect
-                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                            : "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                        }`}
-                      >
-                        {isAiPredictedCorrect ? "Prediksi: Benar" : "Prediksi: Salah"}
-                      </span>
-
-                      <span className="text-xs text-on-surface-variant">
-                        Jawaban: <strong className="text-on-surface">{currentAttempt.analysis.module_a_score}</strong> · Alasan: <strong className="text-on-surface">{currentAttempt.analysis.module_b_score}</strong>
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowAiDetails((prev) => !prev)}
-                      className="text-xs text-primary hover:underline font-semibold cursor-pointer inline-flex items-center gap-1"
-                    >
-                      {showAiDetails ? (
-                        <>Sembunyikan Detail AI <ChevronUp size={12} /></>
-                      ) : (
-                        <>Lihat Detail AI <ChevronDown size={12} /></>
-                      )}
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-on-surface-variant leading-relaxed">
-                    <strong className="text-on-surface">Temuan AI: </strong>
-                    {currentAttempt.analysis.four_tier_category === "FP"
-                      ? "Kesimpulan benar, namun alasan ilmiah menunjukkan miskonsepsi (False Positive)."
-                      : currentAttempt.analysis.four_tier_category === "SC"
-                      ? "Kesimpulan dan penalaran fisis konsisten dengan kunci ilmiah (Sound Understanding)."
-                      : currentAttempt.analysis.explanation.split("\n")[0] || currentAttempt.analysis.explanation}
-                  </p>
-
-                  {showAiDetails && (
-                    <div className="pt-2 mt-1.5 border-t border-outline-variant/20 text-xs space-y-1.5 text-on-surface-variant animate-fade-in">
-                      <div className="bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/25 whitespace-pre-wrap leading-relaxed">
-                        {currentAttempt.analysis.explanation}
-                      </div>
-                      <div className="flex items-center justify-between text-xs font-mono-ui text-on-surface-variant/80">
-                        <span>Tingkat Keyakinan Model AI: {Number(currentAttempt.analysis.confidence).toFixed(2)}</span>
-                        <span>Waktu Analisis: {currentAttempt.analysis.execution_time_ms ?? "-"} ms</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* KEPUTUSAN VALIDASI DOSEN */}
-              {currentAttempt?.analysis ? (
-                <section
-                  className={`rounded-xl border-2 transition-all p-4 sm:p-5 space-y-3.5 shadow-sm ${
-                    isLocked
-                      ? "border-emerald-500/30 bg-surface-container-low/50"
-                      : isAlreadyValidated
-                      ? "border-amber-500/50 bg-surface-container-low"
-                      : "border-primary/40 bg-surface-container-low"
-                  }`}
-                >
-                  <div className="flex items-center justify-between border-b border-outline-variant/20 pb-2.5">
-                    <div className="flex items-center gap-2">
-                      {isLocked ? (
-                        <Lock size={16} className="text-emerald-600 dark:text-emerald-400" />
-                      ) : (
-                        <ShieldCheck size={18} className="text-primary" />
-                      )}
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-on-surface">
-                        KEPUTUSAN VALIDASI DOSEN
-                      </h3>
-                    </div>
-
-                    <div>
-                      {isLocked ? (
-                        <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 inline-flex items-center gap-1.5">
-                          ✓ Sudah Divalidasi ({VALIDATION_STATUS_LABEL[currentAttempt.analysis.validation?.status ?? "ACCEPTED"]})
-                        </span>
-                      ) : currentDraft ? (
-                        <span className="text-xs font-semibold text-primary bg-primary-fixed px-2.5 py-0.5 rounded-full border border-primary/30 inline-flex items-center gap-1">
-                          ● Draft tersimpan
-                        </span>
-                      ) : (
-                        <span className="text-xs font-semibold text-on-surface-variant bg-surface-container px-2.5 py-0.5 rounded-full border border-outline-variant/30">
-                          Menunggu Validasi
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {isLocked ? (
-                    <div className="space-y-3 pt-1">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                        <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                          <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
-                            STATUS BUTIR INI
-                          </span>
-                          <span
-                            className={`font-mono-ui text-lg font-extrabold inline-flex items-center gap-1.5 ${
-                              isCorrect ? "text-emerald-500" : "text-rose-500"
-                            }`}
-                          >
-                            {isCorrect ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
-                            {isCorrect ? "Benar" : "Salah"}
-                          </span>
-                        </div>
-
-                        <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                          <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
-                            DIAGNOSIS AKHIR DOSEN
-                          </span>
-                          <span
-                            className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
-                              CATEGORY_STYLES[finalCategory]?.badgeCls
-                            }`}
-                          >
-                            [{finalCategory}] {CATEGORY_STYLES[finalCategory]?.label ?? finalCategory}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
-                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                          <Info size={14} className="text-primary" />
-                          Referensi &amp; Materi Pembelajaran
-                          <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
-                            In Development
-                          </span>
-                        </div>
-                        <p className="text-xs text-on-surface-variant leading-relaxed">
-                          Area ini nantinya berisi daftar buku, referensi, dan sumber
-                          materi pilihan AI untuk membantu mahasiswa. Fitur sedang
-                          dalam pengembangan.
-                        </p>
-                      </div>
-
-                      <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
-                        <span className="text-xs text-on-surface-variant">
-                          Divalidasi oleh: <strong className="text-on-surface">{currentAttempt.analysis.validation?.lecturer_name}</strong>
-                          {currentAttempt.analysis.validation?.validated_at && (
-                            <> ({fmtDate(currentAttempt.analysis.validation.validated_at)})</>
-                          )}
-                        </span>
-
-                        <button
-                          type="button"
-                          onClick={() => setIsUnlocked(true)}
-                          className="btn-secondary !py-1.5 !px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Unlock size={13} /> Buka Kunci untuk Koreksi
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-3.5">
-                      {isAlreadyValidated && (
-                        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-1.5 text-xs text-amber-300">
-                          <span className="inline-flex items-center gap-1.5 font-semibold">
-                            <Unlock size={13} /> Mode Koreksi Aktif: Anda sedang mengedit validasi yang sudah tersimpan.
-                          </span>
-                          <button
-                            type="button"
-                            onClick={handleCancelUnlock}
-                            className="text-amber-400 hover:underline font-semibold cursor-pointer text-xs"
-                          >
-                            Batal Koreksi
-                          </button>
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
-                        {/* Status Biner: Benar / Salah (Softer, Refined Color Intensity) */}
-                        <div>
-                          <label className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
-                            PENILAIAN BUTIR SOAL INI
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => updateDraft({ isCorrect: true })}
-                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
-                                isCorrect
-                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50 font-bold ring-1 ring-emerald-500/25 shadow-sm"
-                                  : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
-                              }`}
-                            >
-                              🟢 Benar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => updateDraft({ isCorrect: false })}
-                              className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
-                                !isCorrect
-                                  ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50 font-bold ring-1 ring-rose-500/25 shadow-sm"
-                                  : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
-                              }`}
-                            >
-                              🔴 Salah
-                            </button>
-                          </div>
-                          <div className="mt-1.5 text-xs text-on-surface-variant flex items-center gap-1.5">
-                            <span>
-                              Rekomendasi AI:{" "}
-                              <strong className="text-on-surface font-mono-ui">
-                                {isAiPredictedCorrect ? "Benar" : "Salah"}
-                              </strong>
-                            </span>
-                            <span className="text-outline-variant">·</span>
-                            <button
-                              type="button"
-                              onClick={resetToAiValues}
-                              className="text-primary hover:underline font-semibold cursor-pointer inline-flex items-center gap-0.5"
-                              title="Gunakan nilai rekomendasi AI"
-                            >
-                              <RotateCcw size={10} /> Reset ke AI
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Diagnosis Akhir Dosen */}
-                        <div>
-                          <span className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
-                            DIAGNOSIS AKHIR DOSEN
-                          </span>
-                          <AppSelect
-                            value={finalCategory}
-                            onValueChange={(val) => updateDraft({ finalCategory: val })}
-                            className="w-full text-xs font-medium"
-                            ariaLabel="Pilih Diagnosis Akhir Dosen"
-                            options={[
-                              { value: "SC", label: "[SC] Sound Understanding" },
-                              { value: "LK", label: "[LK] Lack of Knowledge" },
-                              { value: "FP", label: "[FP] False Positive" },
-                              { value: "MSC", label: "[MSC] Misconception" },
-                              { value: "FN", label: "[FN] False Negative" },
-                            ]}
+                {/* KEPUTUSAN VALIDASI DOSEN */}
+                {currentAttempt?.analysis ? (
+                  <section
+                    className={`rounded-xl border-2 transition-all p-4 sm:p-5 space-y-3.5 shadow-sm ${
+                      isLocked
+                        ? "border-emerald-500/30 bg-surface-container-low/50"
+                        : isAlreadyValidated
+                          ? "border-amber-500/50 bg-surface-container-low"
+                          : "border-primary/40 bg-surface-container-low"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between border-b border-outline-variant/20 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        {isLocked ? (
+                          <Lock
+                            size={16}
+                            className="text-emerald-600 dark:text-emerald-400"
                           />
-                          <span className="text-xs text-on-surface-variant mt-1.5 flex items-center gap-1.5">
-                            AI merekomendasikan:{" "}
-                            <strong
-                              className={`font-mono-ui text-xs font-bold px-2 py-0.5 rounded-md ${
-                                CATEGORY_STYLES[currentAttempt.analysis.four_tier_category ?? "LK"]?.badgeCls
-                              }`}
-                            >
-                              [{currentAttempt.analysis.four_tier_category}] {categoryMeta?.label}
-                            </strong>
-                          </span>
-                        </div>
-
-                        {/* Referensi & Materi — In Development */}
-                        <div className="sm:col-span-2">
-                          <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
-                            <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                              <Info size={14} className="text-primary" />
-                              Referensi &amp; Materi Pembelajaran
-                              <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
-                                In Development
-                              </span>
-                            </div>
-                            <p className="text-xs text-on-surface-variant leading-relaxed">
-                              Area ini nantinya berisi daftar buku, referensi, dan
-                              sumber materi pilihan AI untuk membantu mahasiswa.
-                              Fitur sedang dalam pengembangan.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {showRejectBox && (
-                        <div className="rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3 space-y-2">
-                          <div className="flex items-center justify-between text-xs font-bold text-error">
-                            <span className="inline-flex items-center gap-1.5">
-                              <XCircle size={14} /> Tolak &amp; Minta Analisis Ulang AI
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowRejectBox(false);
-                                setRejectError("");
-                              }}
-                              className="text-xs text-on-surface-variant hover:text-on-surface cursor-pointer"
-                            >
-                              Batal
-                            </button>
-                          </div>
-                          <textarea
-                            rows={2}
-                            value={notes}
-                            onChange={(e) => {
-                              setNotes(e.target.value);
-                              if (rejectError) setRejectError("");
-                            }}
-                            placeholder="Jelaskan alasan penolakan agar model AI dapat memperbaiki analisis ulangnya..."
-                            className={`form-input w-full text-xs ${
-                              rejectError ? "border-error ring-1 ring-error/40" : ""
-                            }`}
-                          />
-                          {rejectError && (
-                            <p className="flex items-center gap-1.5 text-xs font-semibold text-error">
-                              <AlertTriangle size={13} className="shrink-0" />
-                              {rejectError}
-                            </p>
-                          )}
-                          <div className="flex justify-end pt-1">
-                            <button
-                              type="button"
-                              onClick={handleRejectNow}
-                              disabled={rejecting}
-                              className="btn-danger !py-1.5 !px-3.5 text-xs font-semibold cursor-pointer"
-                            >
-                              {rejecting ? "Menolak..." : "Konfirmasi Tolak & Re-analisis"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="pt-2 border-t border-outline-variant/20 flex items-center justify-between gap-3">
-                        {!showRejectBox ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowRejectBox(true);
-                              setRejectError("");
-                            }}
-                            className="btn-danger !py-2 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <XCircle size={14} /> Tolak &amp; Re-analisis
-                          </button>
                         ) : (
-                          <div />
+                          <ShieldCheck size={18} className="text-primary" />
                         )}
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-on-surface">
+                          KEPUTUSAN VALIDASI DOSEN
+                        </h3>
+                      </div>
 
-                        <div className="flex items-center gap-2">
-                          {isAlreadyValidated && (
+                      <div>
+                        {isLocked ? (
+                          <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 inline-flex items-center gap-1.5">
+                            ✓ Sudah Divalidasi (
+                            {
+                              VALIDATION_STATUS_LABEL[
+                                currentAttempt.analysis.validation?.status ??
+                                  "ACCEPTED"
+                              ]
+                            }
+                            )
+                          </span>
+                        ) : currentDraft ? (
+                          <span className="text-xs font-semibold text-primary bg-primary-fixed px-2.5 py-0.5 rounded-full border border-primary/30 inline-flex items-center gap-1">
+                            ● Draft tersimpan
+                          </span>
+                        ) : (
+                          <span className="text-xs font-semibold text-on-surface-variant bg-surface-container px-2.5 py-0.5 rounded-full border border-outline-variant/30">
+                            Menunggu Validasi
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {isLocked ? (
+                      <div className="space-y-3 pt-1">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
+                            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
+                              STATUS BUTIR INI
+                            </span>
+                            <span
+                              className={`font-mono-ui text-lg font-extrabold inline-flex items-center gap-1.5 ${
+                                isCorrect ? "text-emerald-500" : "text-rose-500"
+                              }`}
+                            >
+                              {isCorrect ? (
+                                <CheckCircle2 size={18} />
+                              ) : (
+                                <XCircle size={18} />
+                              )}
+                              {isCorrect ? "Benar" : "Salah"}
+                            </span>
+                          </div>
+
+                          <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
+                            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
+                              DIAGNOSIS AKHIR DOSEN
+                            </span>
+                            <span
+                              className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
+                                CATEGORY_STYLES[finalCategory]?.badgeCls
+                              }`}
+                            >
+                              [{finalCategory}]{" "}
+                              {CATEGORY_STYLES[finalCategory]?.label ??
+                                finalCategory}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
+                          <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                            <Info size={14} className="text-primary" />
+                            Referensi &amp; Materi Pembelajaran
+                            <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
+                              In Development
+                            </span>
+                          </div>
+                          <p className="text-xs text-on-surface-variant leading-relaxed">
+                            Area ini nantinya berisi daftar buku, referensi, dan
+                            sumber materi pilihan AI untuk membantu mahasiswa.
+                            Fitur sedang dalam pengembangan.
+                          </p>
+                        </div>
+
+                        <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
+                          <span className="text-xs text-on-surface-variant">
+                            Divalidasi oleh:{" "}
+                            <strong className="text-on-surface">
+                              {
+                                currentAttempt.analysis.validation
+                                  ?.lecturer_name
+                              }
+                            </strong>
+                            {currentAttempt.analysis.validation
+                              ?.validated_at && (
+                              <>
+                                {" "}
+                                (
+                                {fmtDate(
+                                  currentAttempt.analysis.validation
+                                    .validated_at,
+                                )}
+                                )
+                              </>
+                            )}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => setIsUnlocked(true)}
+                            className="btn-secondary !py-1.5 !px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Unlock size={13} /> Buka Kunci untuk Koreksi
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3.5">
+                        {isAlreadyValidated && (
+                          <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-1.5 text-xs text-amber-300">
+                            <span className="inline-flex items-center gap-1.5 font-semibold">
+                              <Unlock size={13} /> Mode Koreksi Aktif: Anda
+                              sedang mengedit validasi yang sudah tersimpan.
+                            </span>
                             <button
                               type="button"
                               onClick={handleCancelUnlock}
-                              className="btn-secondary !py-2 !px-3.5 text-xs font-semibold cursor-pointer"
+                              className="text-amber-400 hover:underline font-semibold cursor-pointer text-xs"
                             >
                               Batal Koreksi
                             </button>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                          {/* Status Biner: Benar / Salah (Softer, Refined Color Intensity) */}
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
+                              PENILAIAN BUTIR SOAL INI
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => updateDraft({ isCorrect: true })}
+                                className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
+                                  isCorrect
+                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50 font-bold ring-1 ring-emerald-500/25 shadow-sm"
+                                    : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
+                                }`}
+                              >
+                                🟢 Benar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateDraft({ isCorrect: false })
+                                }
+                                className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
+                                  !isCorrect
+                                    ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50 font-bold ring-1 ring-rose-500/25 shadow-sm"
+                                    : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
+                                }`}
+                              >
+                                🔴 Salah
+                              </button>
+                            </div>
+                            <div className="mt-1.5 text-xs text-on-surface-variant flex items-center gap-1.5">
+                              <span>
+                                Rekomendasi AI:{" "}
+                                <strong className="text-on-surface font-mono-ui">
+                                  {isAiPredictedCorrect ? "Benar" : "Salah"}
+                                </strong>
+                              </span>
+                              <span className="text-outline-variant">·</span>
+                              <button
+                                type="button"
+                                onClick={resetToAiValues}
+                                className="text-primary hover:underline font-semibold cursor-pointer inline-flex items-center gap-0.5"
+                                title="Gunakan nilai rekomendasi AI"
+                              >
+                                <RotateCcw size={10} /> Reset ke AI
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Diagnosis Akhir Dosen */}
+                          <div>
+                            <span className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
+                              DIAGNOSIS AKHIR DOSEN
+                            </span>
+                            <AppSelect
+                              value={finalCategory}
+                              onValueChange={(val) =>
+                                updateDraft({ finalCategory: val })
+                              }
+                              className="w-full text-xs font-medium"
+                              ariaLabel="Pilih Diagnosis Akhir Dosen"
+                              options={[
+                                {
+                                  value: "SC",
+                                  label: "[SC] Sound Understanding",
+                                },
+                                {
+                                  value: "LK",
+                                  label: "[LK] Lack of Knowledge",
+                                },
+                                { value: "FP", label: "[FP] False Positive" },
+                                { value: "MSC", label: "[MSC] Misconception" },
+                                { value: "FN", label: "[FN] False Negative" },
+                              ]}
+                            />
+                            <span className="text-xs text-on-surface-variant mt-1.5 flex items-center gap-1.5">
+                              AI merekomendasikan:{" "}
+                              <strong
+                                className={`font-mono-ui text-xs font-bold px-2 py-0.5 rounded-md ${
+                                  CATEGORY_STYLES[
+                                    currentAttempt.analysis
+                                      .four_tier_category ?? "LK"
+                                  ]?.badgeCls
+                                }`}
+                              >
+                                [{currentAttempt.analysis.four_tier_category}]{" "}
+                                {categoryMeta?.label}
+                              </strong>
+                            </span>
+                          </div>
+
+                          {/* Referensi & Materi — In Development */}
+                          <div className="sm:col-span-2">
+                            <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
+                              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                                <Info size={14} className="text-primary" />
+                                Referensi &amp; Materi Pembelajaran
+                                <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
+                                  In Development
+                                </span>
+                              </div>
+                              <p className="text-xs text-on-surface-variant leading-relaxed">
+                                Area ini nantinya berisi daftar buku, referensi,
+                                dan sumber materi pilihan AI untuk membantu
+                                mahasiswa. Fitur sedang dalam pengembangan.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {showRejectBox && (
+                          <div className="rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3 space-y-2">
+                            <div className="flex items-center justify-between text-xs font-bold text-error">
+                              <span className="inline-flex items-center gap-1.5">
+                                <XCircle size={14} /> Tolak &amp; Minta Analisis
+                                Ulang AI
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowRejectBox(false);
+                                  setRejectError("");
+                                }}
+                                className="text-xs text-on-surface-variant hover:text-on-surface cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={notes}
+                              onChange={(e) => {
+                                setNotes(e.target.value);
+                                if (rejectError) setRejectError("");
+                              }}
+                              placeholder="Jelaskan alasan penolakan agar model AI dapat memperbaiki analisis ulangnya..."
+                              className={`form-input w-full text-xs ${
+                                rejectError
+                                  ? "border-error ring-1 ring-error/40"
+                                  : ""
+                              }`}
+                            />
+                            {rejectError && (
+                              <p className="flex items-center gap-1.5 text-xs font-semibold text-error">
+                                <AlertTriangle size={13} className="shrink-0" />
+                                {rejectError}
+                              </p>
+                            )}
+                            <div className="flex justify-end pt-1">
+                              <button
+                                type="button"
+                                onClick={handleRejectNow}
+                                disabled={rejecting}
+                                className="btn-danger !py-1.5 !px-3.5 text-xs font-semibold cursor-pointer"
+                              >
+                                {rejecting
+                                  ? "Menolak..."
+                                  : "Konfirmasi Tolak & Re-analisis"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-outline-variant/20 flex items-center justify-between gap-3">
+                          {!showRejectBox ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowRejectBox(true);
+                                setRejectError("");
+                              }}
+                              className="btn-danger !py-2 !px-3.5 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <XCircle size={14} /> Tolak &amp; Re-analisis
+                            </button>
+                          ) : (
+                            <div />
                           )}
-                          <span className="text-xs text-on-surface-variant">
-                            {currentDraft
-                              ? "Draft tersimpan otomatis — dikirim lewat “Selesai Evaluasi”."
-                              : "Draft dibuat otomatis saat soal dibuka."}
-                          </span>
+
+                          <div className="flex items-center gap-2">
+                            {isAlreadyValidated && (
+                              <button
+                                type="button"
+                                onClick={handleCancelUnlock}
+                                className="btn-secondary !py-2 !px-3.5 text-xs font-semibold cursor-pointer"
+                              >
+                                Batal Koreksi
+                              </button>
+                            )}
+                            <span className="text-xs text-on-surface-variant">
+                              {currentDraft
+                                ? "Draft tersimpan otomatis — dikirim lewat “Selesai Evaluasi”."
+                                : "Draft dibuat otomatis saat soal dibuka."}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </section>
-              ) : (
-                <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4 text-center text-xs text-on-surface-variant">
-                  {currentAttempt?.status === "ANALYZING"
-                    ? "Model AI sedang menganalisis tanggapan ini."
-                    : currentAttempt?.status === "ANALYSIS_FAILED"
-                      ? "Analisis AI mengalami kendala dan dijadwalkan ulang oleh sistem."
-                      : "Belum ada analisis AI yang tersedia untuk divalidasi pada butir soal ini."}
+                    )}
+                  </section>
+                ) : (
+                  <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4 text-center text-xs text-on-surface-variant">
+                    {currentAttempt?.status === "ANALYZING"
+                      ? "Model AI sedang menganalisis tanggapan ini."
+                      : currentAttempt?.status === "ANALYSIS_FAILED"
+                        ? "Analisis AI mengalami kendala dan dijadwalkan ulang oleh sistem."
+                        : "Belum ada analisis AI yang tersedia untuk divalidasi pada butir soal ini."}
+                  </div>
+                )}
+
+                {/* NAVIGASI INLINE */}
+                <div className="flex items-center justify-between pt-2.5 border-t border-outline-variant/20">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveQuestionIdx((prev) => Math.max(0, prev - 1));
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    disabled={activeQuestionIdx === 0}
+                    className="btn-secondary !py-1.5 !px-3.5 text-xs font-semibold disabled:opacity-30 cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <ChevronLeft size={14} /> Soal Sebelumnya
+                  </button>
+
+                  <span className="text-xs font-mono-ui font-semibold text-on-surface-variant">
+                    Soal {activeQuestionIdx + 1} dari {data.questions.length}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveQuestionIdx((prev) =>
+                        Math.min(data.questions.length - 1, prev + 1),
+                      );
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    disabled={activeQuestionIdx === data.questions.length - 1}
+                    className="btn-secondary !py-1.5 !px-3.5 text-xs font-semibold disabled:opacity-30 cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    Soal Berikutnya <ArrowRight size={14} />
+                  </button>
                 </div>
-              )}
-
-              {/* NAVIGASI INLINE */}
-              <div className="flex items-center justify-between pt-2.5 border-t border-outline-variant/20">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveQuestionIdx((prev) => Math.max(0, prev - 1));
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  disabled={activeQuestionIdx === 0}
-                  className="btn-secondary !py-1.5 !px-3.5 text-xs font-semibold disabled:opacity-30 cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  <ChevronLeft size={14} /> Soal Sebelumnya
-                </button>
-
-                <span className="text-xs font-mono-ui font-semibold text-on-surface-variant">
-                  Soal {activeQuestionIdx + 1} dari {data.questions.length}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveQuestionIdx((prev) =>
-                      Math.min(data.questions.length - 1, prev + 1)
-                    );
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  disabled={activeQuestionIdx === data.questions.length - 1}
-                  className="btn-secondary !py-1.5 !px-3.5 text-xs font-semibold disabled:opacity-30 cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  Soal Berikutnya <ArrowRight size={14} />
-                </button>
-              </div>
-            </section>
+              </section>
             )}
           </main>
 
@@ -1525,7 +1657,9 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
             {/* 1. KOTAK DAFTAR SOAL */}
             <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
-                <h3 className="font-bold text-xs text-on-surface uppercase tracking-wide">Daftar Soal</h3>
+                <h3 className="font-bold text-xs text-on-surface uppercase tracking-wide">
+                  Daftar Soal
+                </h3>
                 <span className="text-xs text-on-surface-variant font-mono-ui">
                   {data.questions.length} Soal
                 </span>
@@ -1538,35 +1672,44 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                   const draftAid = latestAttemptOf(q)?.analysis?.id;
                   const hasDraft = draftAid ? Boolean(drafts[draftAid]) : false;
                   const hasPendingValidation = q.attempts.some(
-                    (a) => a.status === "PENDING_VALIDATION"
+                    (a) => a.status === "PENDING_VALIDATION",
                   );
                   const isValidated =
                     q.attempts.length > 0 &&
                     q.attempts[0].status === "VALIDATED";
                   const isCorrectItem =
                     isValidated &&
-                    Number(q.attempts[0]?.analysis?.validation?.final_percentage ?? q.attempts[0]?.analysis?.percentage_correct ?? 0) >= 99.9;
+                    Number(
+                      q.attempts[0]?.analysis?.validation?.final_percentage ??
+                        q.attempts[0]?.analysis?.percentage_correct ??
+                        0,
+                    ) >= 99.9;
 
-                  let boxBorderCls = "border-outline-variant/50 bg-surface-container text-on-surface-variant";
+                  let boxBorderCls =
+                    "border-outline-variant/50 bg-surface-container text-on-surface-variant";
                   let dotColor = "bg-slate-400";
                   let statusTitle = "Belum Dijawab";
 
                   if (isValidated) {
                     if (isCorrectItem) {
-                      boxBorderCls = "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
+                      boxBorderCls =
+                        "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
                       dotColor = "bg-emerald-400";
                       statusTitle = "Jawaban Benar";
                     } else {
-                      boxBorderCls = "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
+                      boxBorderCls =
+                        "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
                       dotColor = "bg-rose-400";
                       statusTitle = "Jawaban Salah";
                     }
                   } else if (hasPendingValidation) {
-                    boxBorderCls = "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
+                    boxBorderCls =
+                      "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
                     dotColor = "bg-amber-400";
                     statusTitle = "Menunggu Validasi";
                   } else if (isAnswered) {
-                    boxBorderCls = "border-blue-500/60 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold";
+                    boxBorderCls =
+                      "border-blue-500/60 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold";
                     dotColor = "bg-blue-400";
                     statusTitle = "Tersimpan";
                   }
@@ -1632,7 +1775,9 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
             <button
               type="button"
               onClick={() => setShowFinalizeModal(true)}
-              disabled={!allPendingDecided || finalizeItems.length === 0 || finalizing}
+              disabled={
+                !allPendingDecided || finalizeItems.length === 0 || finalizing
+              }
               className="btn-primary w-full !py-2.5 text-sm font-bold inline-flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ShieldCheck size={16} />
@@ -1649,8 +1794,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
               </p>
             )}
             <p className="text-xs text-on-surface-variant text-center">
-              Draf: {decidedPendingCount} / {awaitingDecisionQuestions.length} soal
-              menunggu validasi diputuskan
+              Draf: {decidedPendingCount} / {awaitingDecisionQuestions.length}{" "}
+              soal menunggu validasi diputuskan
             </p>
           </aside>
         </div>
@@ -1665,7 +1810,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
           <div className="w-full max-w-lg rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2">
-                <ShieldCheck size={18} className="text-primary" /> Selesai Evaluasi?
+                <ShieldCheck size={18} className="text-primary" /> Selesai
+                Evaluasi?
               </h3>
               <button
                 type="button"
@@ -1676,8 +1822,8 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
               </button>
             </div>
             <p className="text-sm text-on-surface-variant">
-              {finalizeItems.length} keputusan draft akan dikirim sebagai validasi
-              final:
+              {finalizeItems.length} keputusan draft akan dikirim sebagai
+              validasi final:
             </p>
 
             {/* Ringkasan agregat — tetap mudah dipindai walau puluhan soal */}
@@ -1748,7 +1894,9 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
                       [{item.draft.finalCategory}]
                     </span>
                     <span className="text-on-surface-variant">
-                      {item.draft.mode === "correction" ? "Koreksi" : "Validasi baru"}
+                      {item.draft.mode === "correction"
+                        ? "Koreksi"
+                        : "Validasi baru"}
                     </span>
                   </div>
                 ))}
@@ -1780,6 +1928,11 @@ export default function StudentPackageReviewPage({ examPackage = false }: { exam
           </div>
         </div>
       )}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

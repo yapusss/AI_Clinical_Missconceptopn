@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  CalendarDays,
   ChevronRight,
   ClipboardList,
   Save,
-  TriangleAlert,
 } from "lucide-react";
 import { useAuth } from "../components/AuthProvider";
 import AppSelect from "../components/AppSelect";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
+import FeedbackModal from "../components/FeedbackModal";
 
 type BankSet = {
   id: string;
@@ -35,6 +36,7 @@ type ExistingPackage = {
   duration_minutes: number | null;
   max_attempts: number | null;
   score_policy: "HIGHEST" | "AVERAGE" | "LAST_ATTEMPT";
+  expiry_behavior: "REJECT" | "AUTO_SUBMIT";
   is_active: boolean;
 };
 
@@ -66,12 +68,17 @@ export default function ExamPackageForm({
   const [closesAt, setClosesAt] = useState("");
   const [durationHours, setDurationHours] = useState("");
   const [maxAttempts, setMaxAttempts] = useState("");
-  const [scorePolicy, setScorePolicy] = useState<ExistingPackage["score_policy"]>("LAST_ATTEMPT");
+  const [scorePolicy, setScorePolicy] =
+    useState<ExistingPackage["score_policy"]>("LAST_ATTEMPT");
+  const [expiryBehavior, setExpiryBehavior] =
+    useState<ExistingPackage["expiry_behavior"]>("REJECT");
   const [password, setPassword] = useState("");
   const [questionIds, setQuestionIds] = useState<string[]>([]);
   const [collapsedTopics, setCollapsedTopics] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const opensAtInput = useRef<HTMLInputElement>(null);
+  const closesAtInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!packageId) setCode(generatedCode());
@@ -107,6 +114,7 @@ export default function ExamPackageForm({
           );
           setMaxAttempts(item.max_attempts?.toString() ?? "");
           setScorePolicy(item.score_policy);
+          setExpiryBehavior(item.expiry_behavior);
         }
       })
       .catch((caught) =>
@@ -149,6 +157,10 @@ export default function ExamPackageForm({
     code.trim().length >= 3 &&
     title.trim() &&
     (!opensAt || !closesAt || new Date(opensAt) < new Date(closesAt)) &&
+    (!opensAt ||
+      !closesAt ||
+      Number(durationHours) * 60 <=
+        (new Date(closesAt).getTime() - new Date(opensAt).getTime()) / 60000) &&
     Number(durationHours) >= 0.5 &&
     Number(maxAttempts) >= 1;
 
@@ -167,6 +179,7 @@ export default function ExamPackageForm({
       duration_minutes: Number(durationHours) * 60,
       max_attempts: Number(maxAttempts),
       score_policy: scorePolicy,
+      expiry_behavior: expiryBehavior,
     };
     if (password) payload.password = password;
     try {
@@ -209,20 +222,13 @@ export default function ExamPackageForm({
         description="Susun pengaturan, pilih soal terbit, lalu tinjau sebelum menyimpan."
         icon={ClipboardList}
       />
-      {error && (
-        <div
-          role="alert"
-          className="mt-5 flex gap-2 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={18} />
-          {error}
-        </div>
-      )}
       <div className="mt-6 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5">
         {step === 1 && (
           <div className="space-y-5">
             <section className="glass-card rounded-xl border border-outline-variant/40 p-4 transition-colors hover:border-primary/40 sm:p-5">
-              <h2 className="font-display text-lg font-bold">Informasi Paket</h2>
+              <h2 className="font-display text-lg font-bold">
+                Informasi Paket
+              </h2>
               <p className="mt-1 text-sm text-on-surface-variant">
                 Gunakan kode dan judul yang mudah dikenali peserta.
               </p>
@@ -261,12 +267,13 @@ export default function ExamPackageForm({
                 </div>
               </div>
             </section>
-            <section className="glass-card rounded-xl border border-outline-variant/40 p-4 transition-colors hover:border-primary/40 sm:p-5">
+            <section className="glass-card relative z-10 rounded-xl border border-outline-variant/40 p-4 transition-colors hover:border-primary/40 sm:p-5">
               <h2 className="font-display text-lg font-bold">Jadwal Ujian</h2>
               <p className="mt-1 text-sm text-on-surface-variant">
-                Kosongkan jadwal atau durasi untuk membiarkan ujian tanpa batas tersebut.
+                Kosongkan jadwal atau durasi untuk membiarkan ujian tanpa batas
+                tersebut.
               </p>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div>
                   <label
                     htmlFor="opens-at"
@@ -274,13 +281,24 @@ export default function ExamPackageForm({
                   >
                     Waktu buka
                   </label>
-                  <input
-                    id="opens-at"
-                    type="datetime-local"
-                    value={opensAt}
-                    onChange={(event) => setOpensAt(event.target.value)}
-                    className="form-input"
-                  />
+                  <div className="relative">
+                    <input
+                      ref={opensAtInput}
+                      id="opens-at"
+                      type="datetime-local"
+                      value={opensAt}
+                      onChange={(event) => setOpensAt(event.target.value)}
+                      className="form-input datetime-input pr-12"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Pilih waktu buka"
+                      onClick={() => opensAtInput.current?.showPicker()}
+                      className="absolute inset-y-0 right-0 grid w-11 place-items-center text-primary transition-colors hover:text-primary-hover"
+                    >
+                      <CalendarDays size={18} />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label
@@ -289,13 +307,24 @@ export default function ExamPackageForm({
                   >
                     Waktu tutup
                   </label>
-                  <input
-                    id="closes-at"
-                    type="datetime-local"
-                    value={closesAt}
-                    onChange={(event) => setClosesAt(event.target.value)}
-                    className="form-input"
-                  />
+                  <div className="relative">
+                    <input
+                      ref={closesAtInput}
+                      id="closes-at"
+                      type="datetime-local"
+                      value={closesAt}
+                      onChange={(event) => setClosesAt(event.target.value)}
+                      className="form-input datetime-input pr-12"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Pilih waktu tutup"
+                      onClick={() => closesAtInput.current?.showPicker()}
+                      className="absolute inset-y-0 right-0 grid w-11 place-items-center text-primary transition-colors hover:text-primary-hover"
+                    >
+                      <CalendarDays size={18} />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label
@@ -315,12 +344,51 @@ export default function ExamPackageForm({
                     className="form-input"
                   />
                 </div>
+                <div>
+                  <label
+                    htmlFor="expiry-behavior"
+                    className="mb-1.5 block text-sm font-medium"
+                  >
+                    Saat waktu habis
+                  </label>
+                  <AppSelect
+                    value={expiryBehavior}
+                    onValueChange={(value) =>
+                      setExpiryBehavior(
+                        value as ExistingPackage["expiry_behavior"],
+                      )
+                    }
+                    ariaLabel="Tindakan saat waktu habis"
+                    options={[
+                      { value: "REJECT", label: "Tolak pengumpulan" },
+                      { value: "AUTO_SUBMIT", label: "Kumpulkan otomatis" },
+                    ]}
+                  />
+                </div>
               </div>
-              {opensAt && closesAt && new Date(opensAt) >= new Date(closesAt) && (
-                <p className="mt-3 text-sm text-error">
-                  Waktu tutup harus setelah waktu buka.
+              {expiryBehavior === "AUTO_SUBMIT" && (
+                <p className="mt-3 text-xs text-on-surface-variant">
+                  Saat waktu habis, jawaban yang sudah lengkap akan dikumpulkan;
+                  soal yang belum lengkap tidak dikirim.
                 </p>
               )}
+              {opensAt &&
+                closesAt &&
+                new Date(opensAt) >= new Date(closesAt) && (
+                  <p className="mt-3 text-sm text-error">
+                    Waktu tutup harus setelah waktu buka.
+                  </p>
+                )}
+              {opensAt &&
+                closesAt &&
+                Number(durationHours) * 60 >
+                  (new Date(closesAt).getTime() - new Date(opensAt).getTime()) /
+                    60000 && (
+                  <p className="mt-3 text-sm text-error">
+                    Batas durasi pengerjaan tidak boleh melebihi rentang waktu
+                    buka dan tutup paket.
+                  </p>
+                )}
             </section>
             <section className="glass-card rounded-xl border border-outline-variant/40 p-4 transition-colors hover:border-primary/40 sm:p-5">
               <h2 className="font-display text-lg font-bold">Akses Ujian</h2>
@@ -356,15 +424,16 @@ export default function ExamPackageForm({
                     value={scorePolicy}
                     disabled={Number(maxAttempts) <= 1}
                     onValueChange={(value) =>
-                      setScorePolicy(
-                        value as ExistingPackage["score_policy"],
-                      )
+                      setScorePolicy(value as ExistingPackage["score_policy"])
                     }
                     ariaLabel="Nilai yang diambil"
                     options={[
                       { value: "HIGHEST", label: "Nilai tertinggi" },
                       { value: "AVERAGE", label: "Nilai rata-rata" },
-                      { value: "LAST_ATTEMPT", label: "Nilai percobaan terakhir" },
+                      {
+                        value: "LAST_ATTEMPT",
+                        label: "Nilai percobaan terakhir",
+                      },
                     ]}
                   />
                 </div>
@@ -536,7 +605,9 @@ export default function ExamPackageForm({
             type="button"
             onClick={() => {
               if (!validStepOne) {
-                setError("Batas durasi minimal 0,5 jam dan maksimal percobaan minimal 1.");
+                setError(
+                  "Pastikan durasi minimal 0,5 jam, tidak melebihi jadwal paket, dan maksimal percobaan minimal 1.",
+                );
                 return;
               }
               setError("");
@@ -567,6 +638,11 @@ export default function ExamPackageForm({
           </div>
         )}
       </div>
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

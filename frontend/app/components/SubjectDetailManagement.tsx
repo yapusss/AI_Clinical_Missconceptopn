@@ -28,6 +28,7 @@ import PageContainer from "./PageContainer";
 import PageHeader from "./PageHeader";
 import QuestionBankImport from "./QuestionBankImport";
 import RowMenu from "./RowMenu";
+import FeedbackModal from "./FeedbackModal";
 
 type Subject = {
   id: string;
@@ -90,9 +91,9 @@ export default function SubjectDetailManagement({
   const [chooserTopic, setChooserTopic] = useState<Topic | null>(null);
   const [importTopic, setImportTopic] = useState<Topic | null>(null);
   const [busy, setBusy] = useState(false);
-  const [duplicatingPackageId, setDuplicatingPackageId] = useState<string | null>(
-    null,
-  );
+  const [duplicatingPackageId, setDuplicatingPackageId] = useState<
+    string | null
+  >(null);
   const [error, setError] = useState("");
   const headers = {
     "Content-Type": "application/json",
@@ -260,14 +261,6 @@ export default function SubjectDetailManagement({
       >
         <ArrowLeft size={16} /> {backLabel}
       </Link>
-      {error && (
-        <div
-          role="alert"
-          className="mb-5 rounded-lg border border-error/40 bg-error-container p-3 text-sm text-on-error-container"
-        >
-          {error}
-        </div>
-      )}
       {subject && (
         <>
           <PageHeader
@@ -280,7 +273,9 @@ export default function SubjectDetailManagement({
               </span>
             }
             action={
-              <span className={`badge ${subject.is_active ? "badge-active" : "badge-revoked"}`}>
+              <span
+                className={`badge ${subject.is_active ? "badge-active" : "badge-revoked"}`}
+              >
                 {subject.is_active ? "Aktif" : "Nonaktif"}
               </span>
             }
@@ -306,7 +301,9 @@ export default function SubjectDetailManagement({
           onAddQuestion={(topic) => setChooserTopic(topic)}
           onEditTopic={openTopicForm}
           onDeleteTopic={setDeleting}
-          onEditSet={(set) => router.push(`/questions/${set.id}/edit?subject_id=${subjectId}`)}
+          onEditSet={(set) =>
+            router.push(`/questions/${set.id}/edit?subject_id=${subjectId}`)
+          }
           onDeleteSet={setDeletingSet}
           onCreatePackage={() =>
             router.push(`/exam-packages/create?subject_id=${subjectId}`)
@@ -533,6 +530,11 @@ export default function SubjectDetailManagement({
           if (deletingSet) void removeSet(deletingSet);
         }}
       />
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }
@@ -586,11 +588,18 @@ function LecturerWorkspace({
         .toLowerCase()
         .includes(packageSearch.toLowerCase()),
     )
-    .filter((item) => packageStatus === "ALL" || item.is_active === (packageStatus === "ACTIVE"))
+    .filter(
+      (item) =>
+        packageStatus === "ALL" ||
+        item.is_active === (packageStatus === "ACTIVE"),
+    )
     .sort((left, right) => {
       switch (packageSort) {
         case "OLDEST":
-          return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+          return (
+            new Date(left.created_at).getTime() -
+            new Date(right.created_at).getTime()
+          );
         case "CODE_ASC":
           return left.code.localeCompare(right.code);
         case "CODE_DESC":
@@ -598,7 +607,10 @@ function LecturerWorkspace({
         case "TITLE_ASC":
           return left.title.localeCompare(right.title);
         default:
-          return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+          return (
+            new Date(right.created_at).getTime() -
+            new Date(left.created_at).getTime()
+          );
       }
     });
   return (
@@ -682,11 +694,17 @@ function LecturerWorkspace({
                       tabIndex={0}
                       role="link"
                       aria-label={`Tinjau mahasiswa paket ${item.code}`}
-                       onClick={() => router.push(`/exam-packages/${item.id}?subject_id=${item.subject_id}`)}
+                      onClick={() =>
+                        router.push(
+                          `/exam-packages/${item.id}?subject_id=${item.subject_id}`,
+                        )
+                      }
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                           router.push(`/exam-packages/${item.id}?subject_id=${item.subject_id}`);
+                          router.push(
+                            `/exam-packages/${item.id}?subject_id=${item.subject_id}`,
+                          );
                         }
                       }}
                       className="cursor-pointer transition-colors hover:bg-surface-container"
@@ -753,7 +771,11 @@ function LecturerWorkspace({
                             aria-label={`Duplikat ${item.title}`}
                             title="Duplikat paket"
                           >
-                            <Copy size={18} stroke="#4f46e5" strokeWidth={2.5} />
+                            <Copy
+                              size={18}
+                              stroke="#4f46e5"
+                              strokeWidth={2.5}
+                            />
                           </button>
                           <button
                             type="button"
@@ -836,33 +858,45 @@ function LecturerWorkspace({
                     }
                     className="flex min-w-0 flex-1 items-center gap-3 text-left hover:text-primary"
                   >
-                  <span className="text-primary">
-                    {expanded ? (
-                      <ChevronDown size={19} />
-                    ) : (
-                      <ChevronRight size={19} />
-                    )}
-                  </span>
-                  <span className="flex-1">
-                    <span className="block font-display text-lg font-bold text-on-surface">
-                      {topic.name}
+                    <span className="text-primary">
+                      {expanded ? (
+                        <ChevronDown size={19} />
+                      ) : (
+                        <ChevronRight size={19} />
+                      )}
                     </span>
-                    {topic.description && (
-                      <span className="block text-sm text-on-surface-variant">
-                        {topic.description}
+                    <span className="flex-1">
+                      <span className="block font-display text-lg font-bold text-on-surface">
+                        {topic.name}
                       </span>
-                    )}
-                  </span>
-                  <span className="shrink-0 text-xs font-semibold text-on-surface-variant">
-                    {sets.reduce((count, set) => count + set.question_count, 0)}{" "}
-                    soal
-                  </span>
+                      {topic.description && (
+                        <span className="block text-sm text-on-surface-variant">
+                          {topic.description}
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold text-on-surface-variant">
+                      {sets.reduce(
+                        (count, set) => count + set.question_count,
+                        0,
+                      )}{" "}
+                      soal
+                    </span>
                   </button>
                   <RowMenu
                     label={`Opsi topik ${topic.name}`}
                     items={[
-                      { label: "Edit topik", icon: <Pencil size={14} />, onClick: () => onEditTopic(topic) },
-                      { label: "Hapus topik", icon: <Trash2 size={14} />, danger: true, onClick: () => onDeleteTopic(topic) },
+                      {
+                        label: "Edit topik",
+                        icon: <Pencil size={14} />,
+                        onClick: () => onEditTopic(topic),
+                      },
+                      {
+                        label: "Hapus topik",
+                        icon: <Trash2 size={14} />,
+                        danger: true,
+                        onClick: () => onDeleteTopic(topic),
+                      },
                     ]}
                   />
                 </div>
@@ -870,28 +904,40 @@ function LecturerWorkspace({
                   <div className="divide-y divide-outline-variant/30 px-5">
                     {sets.length ? (
                       sets.map((set) => (
-                        <div key={set.id} className="flex items-center gap-2 py-4">
-                        <Link
-                           href={`/questions/${set.id}/view?subject_id=${subjectId}`}
-                          className="flex min-w-0 flex-1 items-center gap-3 no-underline hover:text-primary"
+                        <div
+                          key={set.id}
+                          className="flex items-center gap-2 py-4"
                         >
-                          <FileText size={17} className="text-secondary" />
-                          <span className="flex-1">
-                            <span className="block font-semibold text-on-surface">
-                              {set.title}
+                          <Link
+                            href={`/questions/${set.id}/view?subject_id=${subjectId}`}
+                            className="flex min-w-0 flex-1 items-center gap-3 no-underline hover:text-primary"
+                          >
+                            <FileText size={17} className="text-secondary" />
+                            <span className="flex-1">
+                              <span className="block font-semibold text-on-surface">
+                                {set.title}
+                              </span>
+                              <span className="text-xs text-on-surface-variant">
+                                {set.question_count} soal
+                              </span>
                             </span>
-                            <span className="text-xs text-on-surface-variant">
-                              {set.question_count} soal
-                            </span>
-                          </span>
-                        </Link>
-                        <RowMenu
-                          label={`Opsi ${set.title}`}
-                          items={[
-                            { label: "Edit bank soal", icon: <Pencil size={14} />, onClick: () => onEditSet(set) },
-                            { label: "Hapus bank soal", icon: <Trash2 size={14} />, danger: true, onClick: () => onDeleteSet(set) },
-                          ]}
-                        />
+                          </Link>
+                          <RowMenu
+                            label={`Opsi ${set.title}`}
+                            items={[
+                              {
+                                label: "Edit bank soal",
+                                icon: <Pencil size={14} />,
+                                onClick: () => onEditSet(set),
+                              },
+                              {
+                                label: "Hapus bank soal",
+                                icon: <Trash2 size={14} />,
+                                danger: true,
+                                onClick: () => onDeleteSet(set),
+                              },
+                            ]}
+                          />
                         </div>
                       ))
                     ) : (

@@ -173,6 +173,65 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(q['prompt'], 'Pertanyaan konseptual test?')
         self.assertIsNone(q['latest_submission'])
 
+    def test_timed_lookup_exposes_server_deadline(self):
+        self.exam_package.duration_minutes = 30
+        self.exam_package.save(update_fields=['duration_minutes'])
+        self._auth(self.student)
+
+        response = self._lookup(code=self.exam_package.code)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIsNotNone(body['attempt_deadline'])
+        self.assertIn('server_time', body)
+        self.assertEqual(body['expiry_behavior'], 'REJECT')
+
+    def test_auto_submit_finalizes_expired_attempt_with_completed_answers_only(self):
+        self.exam_package.duration_minutes = 1
+        self.exam_package.expiry_behavior = ExamPackage.ExpiryBehavior.AUTO_SUBMIT
+        self.exam_package.save(update_fields=['duration_minutes', 'expiry_behavior'])
+        self._auth(self.student)
+        self.assertEqual(self._lookup(code=self.exam_package.code).status_code, 200)
+        attempt = ExamPackageAttempt.objects.get(
+            exam_package=self.exam_package, student=self.student,
+        )
+        ExamPackageAttempt.objects.filter(pk=attempt.pk).update(
+            started_at=timezone.now() - timedelta(minutes=2),
+        )
+
+        response = self.client.post(
+            reverse('student-timed-auto-submission', kwargs={'pk': self.exam_package.id}),
+            {'answers': []},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        attempt.refresh_from_db()
+        self.assertIsNotNone(attempt.submitted_at)
+        self.assertEqual(Submission.objects.filter(student=self.student).count(), 0)
+
+    def test_auto_submit_uses_package_close_as_the_effective_deadline(self):
+        self.exam_package.duration_minutes = 30
+        self.exam_package.expiry_behavior = ExamPackage.ExpiryBehavior.AUTO_SUBMIT
+        self.exam_package.save(update_fields=['duration_minutes', 'expiry_behavior'])
+        self._auth(self.student)
+        self.assertEqual(self._lookup(code=self.exam_package.code).status_code, 200)
+        self.exam_package.closes_at = timezone.now() - timedelta(seconds=1)
+        self.exam_package.save(update_fields=['closes_at'])
+
+        response = self.client.post(
+            reverse('student-timed-auto-submission', kwargs={'pk': self.exam_package.id}),
+            {'answers': []},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNotNone(
+            ExamPackageAttempt.objects.get(
+                exam_package=self.exam_package, student=self.student,
+            ).submitted_at,
+        )
+
     def test_lookup_missing_code(self):
         self._auth(self.student)
         resp = self._lookup(code='TIDAK-ADA')

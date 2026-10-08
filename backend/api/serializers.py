@@ -156,6 +156,11 @@ class ExamPackageCreateSerializer(serializers.Serializer):
         required=False,
         default=ExamPackage.ScorePolicy.LAST_ATTEMPT,
     )
+    expiry_behavior = serializers.ChoiceField(
+        choices=ExamPackage.ExpiryBehavior.values,
+        required=False,
+        default=ExamPackage.ExpiryBehavior.REJECT,
+    )
     password = serializers.CharField(required=False, allow_blank=True, write_only=True, max_length=255)
 
     def validate_code(self, value):
@@ -174,8 +179,18 @@ class ExamPackageCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         opens_at = attrs.get('opens_at')
         closes_at = attrs.get('closes_at')
+        duration_minutes = attrs.get('duration_minutes')
         if opens_at and closes_at and opens_at >= closes_at:
             raise serializers.ValidationError({'closes_at': ['Waktu tutup harus setelah waktu buka.']})
+        if (
+            opens_at
+            and closes_at
+            and duration_minutes
+            and duration_minutes > (closes_at - opens_at).total_seconds() / 60
+        ):
+            raise serializers.ValidationError({
+                'duration_minutes': ['Batas durasi pengerjaan tidak boleh melebihi rentang waktu buka dan tutup paket.']
+            })
         return attrs
 
 
@@ -200,6 +215,16 @@ class FourTierPackageSubmissionSerializer(serializers.Serializer):
 
     def validate_answers(self, answers):
         q_ids = [a['question_id'] for a in answers]
+        if len(q_ids) != len(set(q_ids)):
+            raise serializers.ValidationError("Setiap pertanyaan hanya boleh dijawab satu kali.")
+        return answers
+
+
+class TimedAutoSubmissionSerializer(serializers.Serializer):
+    answers = FourTierSubmissionItemSerializer(many=True, allow_empty=True)
+
+    def validate_answers(self, answers):
+        q_ids = [answer['question_id'] for answer in answers]
         if len(q_ids) != len(set(q_ids)):
             raise serializers.ValidationError("Setiap pertanyaan hanya boleh dijawab satu kali.")
         return answers

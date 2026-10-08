@@ -16,6 +16,7 @@ import PageHeader from "../components/PageHeader";
 import PageContainer from "../components/PageContainer";
 import AppSelect from "../components/AppSelect";
 import { apiFetch } from "../lib/api";
+import FeedbackModal from "../components/FeedbackModal";
 
 type SubmissionRow = {
   id: string;
@@ -123,23 +124,6 @@ export default function SubmissionsPage() {
         description="Daftar jawaban yang dikumpulkan mahasiswa untuk ditinjau."
         icon={ClipboardList}
       />
-
-      {error && (
-        <div
-          role="alert"
-          style={{
-            borderRadius: "var(--radius-sm)",
-            border: "1px solid rgba(239, 68, 68, 0.3)",
-            background: "rgba(239, 68, 68, 0.12)",
-            color: "#f87171",
-            fontSize: "0.85rem",
-            padding: "0.7rem 1rem",
-            marginBottom: "1.25rem",
-          }}
-        >
-          {error}
-        </div>
-      )}
 
       <div
         style={{
@@ -405,6 +389,11 @@ export default function SubmissionsPage() {
           );
         })}
       </div>
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

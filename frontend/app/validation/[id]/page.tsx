@@ -12,7 +12,6 @@ import {
   Lightbulb,
   RotateCcw,
   ShieldCheck,
-  TriangleAlert,
   XCircle,
 } from "lucide-react";
 
@@ -22,6 +21,7 @@ import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
 import { apiFetch } from "../../lib/api";
+import FeedbackModal from "../../components/FeedbackModal";
 
 type MisconceptionMatch = {
   misconception_id: string;
@@ -312,16 +312,6 @@ export default function ValidationDetailPage() {
         <ArrowLeft size={14} /> Kembali ke antrian validasi
       </Link>
 
-      {error && (
-        <div
-          role="alert"
-          className="mt-4 flex items-center gap-3 rounded-lg border border-error/40 bg-error-container p-4 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-
       {notice && (
         <div
           role="status"
@@ -386,21 +376,38 @@ export default function ValidationDetailPage() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                       Pertanyaan Konseptual
                     </h3>
-                    <RichTextContent html={data.question.prompt} className="mt-1.5 text-sm font-medium leading-relaxed" />
+                    <RichTextContent
+                      html={data.question.prompt}
+                      className="mt-1.5 text-sm font-medium leading-relaxed"
+                    />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                       Jawaban Singkat (Referensi)
                     </h3>
-                    <RichTextContent html={data.question.reference?.short_answer ?? data.question.short_answer ?? ''} className="mt-1.5 text-sm text-on-surface-variant leading-relaxed" />
+                    <RichTextContent
+                      html={
+                        data.question.reference?.short_answer ??
+                        data.question.short_answer ??
+                        ""
+                      }
+                      className="mt-1.5 text-sm text-on-surface-variant leading-relaxed"
+                    />
                   </div>
 
                   <div className="border-t border-outline-variant/20 pt-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
                       Alasan Referensi
                     </h3>
-                    <RichTextContent html={data.question.reference?.reason ?? data.question.model_answer ?? ''} className="mt-1.5 text-sm text-on-surface-variant leading-relaxed" />
+                    <RichTextContent
+                      html={
+                        data.question.reference?.reason ??
+                        data.question.model_answer ??
+                        ""
+                      }
+                      className="mt-1.5 text-sm text-on-surface-variant leading-relaxed"
+                    />
                   </div>
 
                   {/* Heuristic Warnings */}
@@ -778,6 +785,11 @@ export default function ValidationDetailPage() {
           </div>
         </div>
       ) : null}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

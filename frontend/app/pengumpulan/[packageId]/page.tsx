@@ -15,7 +15,6 @@ import {
   Lightbulb,
   MessageSquare,
   PenLine,
-  TriangleAlert,
   XCircle,
 } from "lucide-react";
 
@@ -24,6 +23,7 @@ import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
+import FeedbackModal from "../../components/FeedbackModal";
 import { apiFetch } from "../../lib/api";
 import {
   fmtDate,
@@ -185,16 +185,6 @@ function SubmissionPackageDetailPageContent() {
         </Link>
       </div>
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-4 flex items-center gap-3 rounded-xl border border-error/40 bg-error-container p-4 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={20} />
-          <span>{error}</span>
-        </div>
-      )}
-
       {fetching ? (
         <p className="mt-8 text-sm text-on-surface-variant">
           Memuat rincian evaluasi diagnostik...
@@ -239,12 +229,16 @@ function SubmissionPackageDetailPageContent() {
                         </span>
                       ) : (
                         <AppSelect
-                          value={currentAttempt ? String(currentAttempt.attempt_no) : ""}
+                          value={
+                            currentAttempt
+                              ? String(currentAttempt.attempt_no)
+                              : ""
+                          }
                           onValueChange={(val) => {
                             if (val)
                               handleSelectAttempt(
                                 activeQuestion.question_id,
-                                Number.parseInt(val, 10)
+                                Number.parseInt(val, 10),
                               );
                           }}
                           ariaLabel="Pilih Percobaan"
@@ -267,7 +261,9 @@ function SubmissionPackageDetailPageContent() {
                         {getSemanticStatus(currentAttempt.status).badgeLabel}
                       </span>
                     ) : (
-                      <span className="badge badge-draft text-xs">Belum Dijawab</span>
+                      <span className="badge badge-draft text-xs">
+                        Belum Dijawab
+                      </span>
                     )}
                   </div>
                 </div>
@@ -279,17 +275,22 @@ function SubmissionPackageDetailPageContent() {
                       Pertanyaan Konseptual
                     </h3>
                   </div>
-                  <RichTextContent html={activeQuestion.prompt} className="mt-2.5 text-xl leading-relaxed font-semibold text-on-surface" />
+                  <RichTextContent
+                    html={activeQuestion.prompt}
+                    className="mt-2.5 text-xl leading-relaxed font-semibold text-on-surface"
+                  />
                 </div>
 
                 {!currentAttempt ? (
                   <div className="mt-4 flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-sm font-semibold text-on-surface">
-                        Anda belum mengumpulkan jawaban untuk butir pertanyaan ini.
+                        Anda belum mengumpulkan jawaban untuk butir pertanyaan
+                        ini.
                       </p>
                       <p className="text-xs text-on-surface-variant mt-0.5">
-                        Silakan buka lembar soal untuk melengkapi jawaban evaluasi.
+                        Silakan buka lembar soal untuk melengkapi jawaban
+                        evaluasi.
                       </p>
                     </div>
                     <Link
@@ -319,7 +320,9 @@ function SubmissionPackageDetailPageContent() {
                             1. Jawaban singkat
                           </span>
                           <p className="mt-1 text-base font-semibold text-on-surface">
-                            {currentAttempt.tier1_answer || currentAttempt.answer_text || "-"}
+                            {currentAttempt.tier1_answer ||
+                              currentAttempt.answer_text ||
+                              "-"}
                           </p>
                         </div>
 
@@ -329,7 +332,10 @@ function SubmissionPackageDetailPageContent() {
                           </span>
                           <p className="text-base font-bold text-primary font-mono-ui">
                             Skala {currentAttempt.tier2_confidence ?? 1} / 6 (
-                            {(currentAttempt.tier2_confidence ?? 1) >= 4 ? "Yakin" : "Tidak Yakin"})
+                            {(currentAttempt.tier2_confidence ?? 1) >= 4
+                              ? "Yakin"
+                              : "Tidak Yakin"}
+                            )
                           </p>
                         </div>
 
@@ -338,7 +344,9 @@ function SubmissionPackageDetailPageContent() {
                             3. Alasan jawaban
                           </span>
                           <p className="mt-1 text-base text-on-surface whitespace-pre-wrap leading-relaxed">
-                            {currentAttempt.tier3_reason || currentAttempt.answer_text || "-"}
+                            {currentAttempt.tier3_reason ||
+                              currentAttempt.answer_text ||
+                              "-"}
                           </p>
                         </div>
 
@@ -348,14 +356,18 @@ function SubmissionPackageDetailPageContent() {
                           </span>
                           <p className="text-base font-bold text-primary font-mono-ui">
                             Skala {currentAttempt.tier4_confidence ?? 1} / 6 (
-                            {(currentAttempt.tier4_confidence ?? 1) >= 4 ? "Yakin" : "Tidak Yakin"})
+                            {(currentAttempt.tier4_confidence ?? 1) >= 4
+                              ? "Yakin"
+                              : "Tidak Yakin"}
+                            )
                           </p>
                         </div>
                       </div>
                     </div>
 
                     {/* HASIL EVALUASI TERVALIDASI: STATUS BINER & 3 KARTU FEEDBACK */}
-                    {currentAttempt.status === "VALIDATED" && currentAttempt.evaluation ? (
+                    {currentAttempt.status === "VALIDATED" &&
+                    currentAttempt.evaluation ? (
                       <div className="mt-4 space-y-4 border-t border-outline-variant/20 pt-4">
                         {/* Status Biner Butir Soal Ini */}
                         <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-4">
@@ -365,7 +377,8 @@ function SubmissionPackageDetailPageContent() {
                                 Status Butir Soal Ini:
                               </span>
                               <div className="mt-1 flex items-center gap-2">
-                                {currentAttempt.evaluation.percentage_correct >= 99.9 ? (
+                                {currentAttempt.evaluation.percentage_correct >=
+                                99.9 ? (
                                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg font-mono-ui text-sm font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40">
                                     <CheckCircle2 size={16} />
                                     Jawaban Benar
@@ -380,17 +393,32 @@ function SubmissionPackageDetailPageContent() {
                             </div>
 
                             {currentAttempt.four_tier_diagnosis?.category &&
-                              STUDENT_FRIENDLY_CATEGORIES[currentAttempt.four_tier_diagnosis.category] && (
+                              STUDENT_FRIENDLY_CATEGORIES[
+                                currentAttempt.four_tier_diagnosis.category
+                              ] && (
                                 <div
                                   className={`diag-card ${
-                                    STUDENT_FRIENDLY_CATEGORIES[currentAttempt.four_tier_diagnosis.category].cardCls
+                                    STUDENT_FRIENDLY_CATEGORIES[
+                                      currentAttempt.four_tier_diagnosis
+                                        .category
+                                    ].cardCls
                                   } px-3 py-1.5 text-right max-w-xs`}
                                 >
                                   <span className="block text-xs font-bold font-mono-ui diag-title">
-                                    {STUDENT_FRIENDLY_CATEGORIES[currentAttempt.four_tier_diagnosis.category].label}
+                                    {
+                                      STUDENT_FRIENDLY_CATEGORIES[
+                                        currentAttempt.four_tier_diagnosis
+                                          .category
+                                      ].label
+                                    }
                                   </span>
                                   <span className="block text-xs diag-desc mt-0.5">
-                                    {STUDENT_FRIENDLY_CATEGORIES[currentAttempt.four_tier_diagnosis.category].desc}
+                                    {
+                                      STUDENT_FRIENDLY_CATEGORIES[
+                                        currentAttempt.four_tier_diagnosis
+                                          .category
+                                      ].desc
+                                    }
                                   </span>
                                 </div>
                               )}
@@ -408,8 +436,9 @@ function SubmissionPackageDetailPageContent() {
                           </div>
                           <p className="text-xs text-on-surface-variant leading-relaxed">
                             Area ini nantinya berisi daftar buku, referensi, dan
-                            sumber materi pilihan AI untuk membantu Anda memperbaiki
-                            miskonsepsi. Fitur sedang dalam pengembangan.
+                            sumber materi pilihan AI untuk membantu Anda
+                            memperbaiki miskonsepsi. Fitur sedang dalam
+                            pengembangan.
                           </p>
                         </div>
 
@@ -445,7 +474,9 @@ function SubmissionPackageDetailPageContent() {
                 <footer className="mt-4 flex items-center justify-between border-t border-outline-variant/20 pt-4">
                   <button
                     type="button"
-                    onClick={() => handleSelectQuestion(Math.max(0, activeQuestionIdx - 1))}
+                    onClick={() =>
+                      handleSelectQuestion(Math.max(0, activeQuestionIdx - 1))
+                    }
                     disabled={activeQuestionIdx === 0}
                     className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-40 cursor-pointer"
                   >
@@ -461,7 +492,10 @@ function SubmissionPackageDetailPageContent() {
                     type="button"
                     onClick={() =>
                       handleSelectQuestion(
-                        Math.min(group.questions.length - 1, activeQuestionIdx + 1)
+                        Math.min(
+                          group.questions.length - 1,
+                          activeQuestionIdx + 1,
+                        ),
                       )
                     }
                     disabled={activeQuestionIdx === group.questions.length - 1}
@@ -491,27 +525,35 @@ function SubmissionPackageDetailPageContent() {
                   {group.questions.map((q, idx) => {
                     const isCurrent = idx === activeQuestionIdx;
                     const isAnswered = q.attempts.length > 0;
-                    const isValidated = q.attempts.some((a) => a.status === "VALIDATED");
+                    const isValidated = q.attempts.some(
+                      (a) => a.status === "VALIDATED",
+                    );
                     const isCorrect = q.attempts.some(
-                      (a) => a.status === "VALIDATED" && (a.evaluation?.percentage_correct ?? 0) >= 99.9
+                      (a) =>
+                        a.status === "VALIDATED" &&
+                        (a.evaluation?.percentage_correct ?? 0) >= 99.9,
                     );
 
-                    let boxBorderCls = "border-outline-variant/50 bg-surface-container text-on-surface-variant";
+                    let boxBorderCls =
+                      "border-outline-variant/50 bg-surface-container text-on-surface-variant";
                     let dotColor = "bg-slate-400";
                     let statusTitle = "Belum Dijawab";
 
                     if (isValidated) {
                       if (isCorrect) {
-                        boxBorderCls = "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
+                        boxBorderCls =
+                          "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
                         dotColor = "bg-emerald-400";
                         statusTitle = "Jawaban Benar";
                       } else {
-                        boxBorderCls = "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
+                        boxBorderCls =
+                          "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
                         dotColor = "bg-rose-400";
                         statusTitle = "Jawaban Salah";
                       }
                     } else if (isAnswered) {
-                      boxBorderCls = "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
+                      boxBorderCls =
+                        "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
                       dotColor = "bg-amber-400";
                       statusTitle = "Menunggu Validasi";
                     }
@@ -566,6 +608,11 @@ function SubmissionPackageDetailPageContent() {
           </div>
         </div>
       ) : null}
+      <FeedbackModal
+        open={!!error}
+        message={error}
+        onClose={() => setError("")}
+      />
     </PageContainer>
   );
 }

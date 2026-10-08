@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, FileSpreadsheet, FileUp, TriangleAlert } from "lucide-react";
+import { Download, FileSpreadsheet, FileUp } from "lucide-react";
 import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
+import FeedbackModal from "./FeedbackModal";
 
 type Subject = {
   id: string;
@@ -42,7 +43,8 @@ export default function QuestionBankImport({
   const [error, setError] = useState("");
   const [showNewTopicConfirm, setShowNewTopicConfirm] = useState(false);
   const [detectedTopicName, setDetectedTopicName] = useState("");
-  const [pendingPackageData, setPendingPackageData] = useState<PendingPackage | null>(null);
+  const [pendingPackageData, setPendingPackageData] =
+    useState<PendingPackage | null>(null);
 
   useEffect(() => {
     if (subjectId) {
@@ -68,9 +70,12 @@ export default function QuestionBankImport({
     }
 
     try {
-      const response = await fetch(`/api/question-import-template?subject_id=${selectedSubjectId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetch(
+        `/api/question-import-template?subject_id=${selectedSubjectId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       if (!response.ok) throw new Error();
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -93,17 +98,24 @@ export default function QuestionBankImport({
     setError("");
 
     try {
-      const topicRes = await fetch(`/api/admin/subjects/${targetSubject}/topics`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+      const topicRes = await fetch(
+        `/api/admin/subjects/${targetSubject}/topics`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ name: detectedTopicName }),
         },
-        body: JSON.stringify({ name: detectedTopicName }),
-      });
+      );
       const topicData = await topicRes.json();
       if (!topicRes.ok) {
-        throw new Error(topicData.name?.[0] || topicData.detail || "Gagal membuat topik baru.");
+        throw new Error(
+          topicData.name?.[0] ||
+            topicData.detail ||
+            "Gagal membuat topik baru.",
+        );
       }
 
       const updatedPackage: PendingPackage = {
@@ -113,10 +125,15 @@ export default function QuestionBankImport({
         topic_name: topicData.name,
       };
 
-      sessionStorage.setItem("imported_package", JSON.stringify(updatedPackage));
+      sessionStorage.setItem(
+        "imported_package",
+        JSON.stringify(updatedPackage),
+      );
       window.location.href = "/questions/create";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal menambahkan topik baru.");
+      setError(
+        err instanceof Error ? err.message : "Gagal menambahkan topik baru.",
+      );
     } finally {
       setBusy(false);
       setShowNewTopicConfirm(false);
@@ -161,13 +178,19 @@ export default function QuestionBankImport({
       }
 
       if (data.package && data.package.questions?.length > 0) {
-        sessionStorage.setItem("imported_package", JSON.stringify(data.package));
+        sessionStorage.setItem(
+          "imported_package",
+          JSON.stringify(data.package),
+        );
         window.location.href = "/questions/create";
       } else {
         throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
       }
     } catch (caught) {
-      const msg = caught instanceof Error ? caught.message : "Terjadi error saat memproses file.";
+      const msg =
+        caught instanceof Error
+          ? caught.message
+          : "Terjadi error saat memproses file.";
       setError(msg.startsWith("Terjadi error") ? msg : `Terjadi error: ${msg}`);
     } finally {
       setBusy(false);
@@ -186,7 +209,9 @@ export default function QuestionBankImport({
           {fixedSubject ? (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/50 bg-surface-container-low px-3 py-2 text-xs">
               <span className="text-on-surface-variant">Mata Kuliah:</span>
-              <span className="font-semibold text-on-surface">{subjectName ?? "Mata kuliah ini"}</span>
+              <span className="font-semibold text-on-surface">
+                {subjectName ?? "Mata kuliah ini"}
+              </span>
             </span>
           ) : (
             <AppSelect
@@ -261,7 +286,9 @@ export default function QuestionBankImport({
 
           {file ? (
             <div className="space-y-1">
-              <p className="font-semibold text-sm text-on-surface">{file.name}</p>
+              <p className="font-semibold text-sm text-on-surface">
+                {file.name}
+              </p>
               <p className="text-xs text-on-surface-variant font-mono-ui">
                 {(file.size / 1024).toFixed(1)} KB
               </p>
@@ -280,13 +307,6 @@ export default function QuestionBankImport({
             </div>
           )}
         </label>
-
-        {error && (
-          <div role="alert" className="flex items-center gap-2 rounded-lg border border-error/40 bg-error-container p-3 text-xs text-on-error-container">
-            <TriangleAlert size={16} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
 
         <button
           type="submit"
@@ -308,6 +328,11 @@ export default function QuestionBankImport({
           setError("Impor dibatalkan karena topik baru tidak disetujui.");
         }}
         onConfirm={handleConfirmNewTopic}
+      />
+      <FeedbackModal
+        open={Boolean(error)}
+        message={error}
+        onClose={() => setError("")}
       />
     </div>
   );

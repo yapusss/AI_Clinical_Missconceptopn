@@ -392,6 +392,20 @@ main:not([data-scrolled]) > header {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
 }
 
+/* Native calendar icons do not inherit input text color. */
+.datetime-input {
+  color-scheme: dark;
+}
+
+.datetime-input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-theme="light"] .datetime-input {
+  color-scheme: light;
+}
+
 /* Rich Text Editor (TipTap) */
 .rte-editor {
   border: 1px solid var(--input-border);

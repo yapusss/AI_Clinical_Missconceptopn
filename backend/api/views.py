@@ -21,7 +21,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from .serializers import FourTierPackageSubmissionSerializer
+from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissionSerializer
 
 from .authentication import TokenAuthentication
 from .models import (
@@ -2379,6 +2379,7 @@ def exam_package_payload(package, question_count=0, question_ids=None):
         'opens_at': package.opens_at, 'closes_at': package.closes_at,
         'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
         'score_policy': package.score_policy,
+        'expiry_behavior': package.expiry_behavior,
         'password_required': bool(package.password_hash), 'created_at': package.created_at,
     }
     if question_ids is not None:
@@ -2426,6 +2427,15 @@ def package_access_error(package):
     return None
 
 
+def package_attempt_deadline(package, attempt):
+    deadlines = []
+    if package.duration_minutes:
+        deadlines.append(attempt.started_at + timedelta(minutes=package.duration_minutes))
+    if package.closes_at:
+        deadlines.append(package.closes_at)
+    return min(deadlines) if deadlines else None
+
+
 def start_or_get_package_attempt(package, student, password=None):
     """Start one resumable package attempt only after its access checks succeed."""
     error = package_access_error(package)
@@ -2437,7 +2447,8 @@ def start_or_get_package_attempt(package, student, password=None):
         exam_package=package, student=student, submitted_at__isnull=True,
     ).order_by('-attempt_number').first()
     if attempt:
-        if package.duration_minutes and timezone.now() > attempt.started_at + timedelta(minutes=package.duration_minutes):
+        deadline = package_attempt_deadline(package, attempt)
+        if deadline and timezone.now() >= deadline:
             return None, 'Batas waktu pengerjaan telah berakhir.'
         return attempt, None
     completed = ExamPackageAttempt.objects.filter(exam_package=package, student=student, submitted_at__isnull=False).count()
@@ -2501,6 +2512,7 @@ class ExamPackageListCreateView(APIView):
                 opens_at=data.get('opens_at'), closes_at=data.get('closes_at'),
                 duration_minutes=data.get('duration_minutes'), max_attempts=data.get('max_attempts'),
                 score_policy=data['score_policy'],
+                expiry_behavior=data['expiry_behavior'],
                 password_hash=make_password(data['password']) if data.get('password') else None,
             )
             for order_index, question_id in enumerate(data['question_ids'], start=1):
@@ -2544,6 +2556,7 @@ class ExamPackageDetailView(APIView):
             'is_active': package.is_active, 'opens_at': package.opens_at, 'closes_at': package.closes_at,
             'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
             'score_policy': package.score_policy,
+            'expiry_behavior': package.expiry_behavior,
         }
         merged.update(request.data)
         serializer = ExamPackageCreateSerializer(data=merged)
@@ -2567,6 +2580,7 @@ class ExamPackageDetailView(APIView):
             package.duration_minutes = data.get('duration_minutes')
             package.max_attempts = data.get('max_attempts')
             package.score_policy = data['score_policy']
+            package.expiry_behavior = data['expiry_behavior']
             if 'password' in request.data:
                 package.password_hash = make_password(data['password']) if data.get('password') else None
             package.save()
@@ -2629,6 +2643,7 @@ class ExamPackageDuplicateView(APIView):
                 duration_minutes=package.duration_minutes,
                 max_attempts=package.max_attempts,
                 score_policy=package.score_policy,
+                expiry_behavior=package.expiry_behavior,
                 # Copy the existing one-way hash; never expose it in the response.
                 password_hash=package.password_hash,
             )
@@ -2879,6 +2894,9 @@ class StudentSetLookupView(APIView):
             'duration_minutes': package.duration_minutes,
             'max_attempts': package.max_attempts,
             'attempt_number': attempt.attempt_number,
+            'attempt_deadline': package_attempt_deadline(package, attempt),
+            'server_time': timezone.now(),
+            'expiry_behavior': package.expiry_behavior,
             'questions': items,
         })
 
@@ -3116,6 +3134,90 @@ class StudentPackageSubmissionCreateView(APIView):
                 for question, version, submission_id in submission_ids
             ],
         }, status=status.HTTP_201_CREATED)
+
+
+class StudentTimedAutoSubmissionView(APIView):
+    """Finalize complete answers supplied by the active timer after expiry."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        serializer = TimedAutoSubmissionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        answers_by_question = {
+            answer['question_id']: answer
+            for answer in serializer.validated_data['answers']
+        }
+
+        try:
+            with transaction.atomic():
+                try:
+                    package = ExamPackage.objects.select_for_update().get(pk=pk)
+                except ExamPackage.DoesNotExist:
+                    return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+                if not is_active_student(request.user):
+                    return Response({'detail': 'Akun mahasiswa aktif diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+                if package.expiry_behavior != ExamPackage.ExpiryBehavior.AUTO_SUBMIT:
+                    return Response({'detail': 'Paket ini tidak menggunakan pengumpulan otomatis.'}, status=status.HTTP_403_FORBIDDEN)
+
+                attempt = ExamPackageAttempt.objects.select_for_update().filter(
+                    exam_package=package, student=request.user, submitted_at__isnull=True,
+                ).order_by('-attempt_number').first()
+                if not attempt:
+                    return Response({'detail': 'Percobaan ujian aktif tidak ditemukan.'}, status=status.HTTP_409_CONFLICT)
+                deadline = package_attempt_deadline(package, attempt)
+                if not deadline or timezone.now() < deadline:
+                    return Response({'detail': 'Pengumpulan otomatis hanya tersedia setelah waktu habis.'}, status=status.HTTP_403_FORBIDDEN)
+
+                published = [
+                    (item.question, item.question_version)
+                    for item in ExamPackageQuestion.objects.select_for_update()
+                    .select_related('question', 'question_version')
+                    .filter(exam_package=package).order_by('order_index')
+                ]
+                published_question_ids = {question.id for question, _ in published}
+                if not set(answers_by_question).issubset(published_question_ids):
+                    return Response({'detail': 'Jawaban memuat pertanyaan yang tidak ada dalam paket.'}, status=status.HTTP_400_BAD_REQUEST)
+
+                submission_ids = []
+                for question, version in published:
+                    item = answers_by_question.get(question.id)
+                    if not item:
+                        continue
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            CALL sp_submit_conceptual_answer(
+                                %s::uuid, %s::uuid, %s::varchar, %s::smallint,
+                                %s::text, %s::smallint, %s::jsonb, NULL,
+                                p_exam_package_id => %s::uuid
+                            );
+                            """,
+                            [
+                                str(request.user.id), str(version.id), item['tier1_answer'],
+                                item['tier2_confidence'], item['tier3_reason'],
+                                item['tier4_confidence'], json.dumps([]), str(package.id),
+                            ],
+                        )
+                        row = cursor.fetchone()
+                        submission_id = str(row[0]) if row and row[0] else None
+                    if not submission_id:
+                        raise RuntimeError('Gagal menyimpan salah satu jawaban.')
+                    Submission.objects.filter(pk=submission_id).update(exam_package=package)
+                    submission_ids.append(submission_id)
+
+                attempt.submitted_at = timezone.now()
+                attempt.save(update_fields=['submitted_at'])
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'package_id': str(package.id),
+            'submitted_count': len(submission_ids),
+            'detail': 'Waktu habis. Jawaban yang telah lengkap dikumpulkan otomatis.',
+        }, status=status.HTTP_201_CREATED)
+
 
 class StudentSubmissionListView(APIView):
     """Daftar pengumpulan mahasiswa (status state machine P3)."""
