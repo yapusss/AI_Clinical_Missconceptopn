@@ -89,21 +89,23 @@ function SubjectAverageBarChart({
     .filter((subject) => subject.average_score !== null)
     .sort((a, b) => (b.average_score ?? 0) - (a.average_score ?? 0));
   return (
-    <section className="glass-card p-5">
-      <div className="flex items-start justify-between gap-3">
+    <section className="glass-card overflow-hidden">
+      <div className="flex items-start justify-between gap-3 border-b border-outline-variant/40 px-5 py-4">
         <div>
           <h2 className="font-display text-base font-bold text-on-surface">
-            Rata-rata nilai mata kuliah
+            Perbandingan Nilai Mata Kuliah
           </h2>
           <p className="mt-1 text-xs text-on-surface-variant">
-            Perbandingan hasil analisis pada mata kuliah yang Anda ampu.
+            Nilai akhir setelah validasi dosen.
           </p>
         </div>
-        <BarChart3 size={19} className="text-primary" />
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary">
+          <BarChart3 size={19} />
+        </span>
       </div>
       {data.length ? (
-        <div className="mt-5 space-y-4">
-          {data.map((subject) => (
+        <div className="space-y-4 p-5">
+          {data.slice(0, 4).map((subject) => (
             <div key={subject.id}>
               <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
                 <span className="truncate font-medium text-on-surface">
@@ -125,7 +127,7 @@ function SubjectAverageBarChart({
           ))}
         </div>
       ) : (
-        <p className="mt-5 rounded-xl bg-surface-container p-4 text-sm text-on-surface-variant">
+        <p className="m-5 rounded-xl bg-surface-container p-4 text-sm text-on-surface-variant">
           Rata-rata nilai tersedia setelah ada hasil analisis AI.
         </p>
       )}
@@ -166,22 +168,21 @@ function SubjectMasteryDonut({ dashboard }: { dashboard: Dashboard }) {
   });
 
   return (
-    <section className="glass-card p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <section className="glass-card overflow-hidden">
+      <div className="border-b border-outline-variant/40 px-5 py-4">
         <div>
           <h2 className="font-display text-lg font-bold text-on-surface">
-            Distribusi capaian mahasiswa
+            Distribusi Capaian Mahasiswa
           </h2>
           <p className="mt-1 text-sm text-on-surface-variant">
-            Rata-rata nilai final tiap mahasiswa dari seluruh paket ujian pada
-            mata kuliah terpilih.
+            Rata-rata nilai final dari seluruh paket ujian mata kuliah.
           </p>
         </div>
         <AppSelect
           value={subjectId}
           onValueChange={setSubjectId}
           ariaLabel="Pilih mata kuliah untuk distribusi capaian"
-          className="min-w-[220px]"
+          className="mt-3 w-full"
           options={dashboard.subjects.map((item) => ({
             value: item.id,
             label: item.name,
@@ -189,18 +190,18 @@ function SubjectMasteryDonut({ dashboard }: { dashboard: Dashboard }) {
         />
       </div>
       {subject ? (
-        <div className="mt-5 flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
+        <div className="grid items-center gap-5 p-5 sm:grid-cols-[132px_1fr]">
           <div
             aria-label={`Distribusi capaian ${subject.name}: ${total} mahasiswa`}
-            className="relative grid h-40 w-40 shrink-0 place-items-center rounded-full"
+            className="relative mx-auto grid h-32 w-32 shrink-0 place-items-center rounded-full"
             style={{
               background: total
                 ? `conic-gradient(${segments.join(", ")})`
                 : "var(--bg-card-hover)",
             }}
           >
-            <div className="grid h-28 w-28 place-items-center rounded-full bg-surface-container-lowest text-center">
-              <strong className="font-mono-ui text-3xl text-on-surface">
+            <div className="grid h-[90px] w-[90px] place-items-center rounded-full bg-surface-container-lowest text-center">
+              <strong className="font-mono-ui text-2xl text-on-surface">
                 {total}
               </strong>
               <span className="text-[10px] text-on-surface-variant">
@@ -208,26 +209,31 @@ function SubjectMasteryDonut({ dashboard }: { dashboard: Dashboard }) {
               </span>
             </div>
           </div>
-          <ul className="w-full max-w-sm space-y-3">
+          <ul className="space-y-2">
             {data.map((item) => (
               <li
                 key={item.label}
-                className="flex items-center justify-between gap-4"
+                className="flex items-center justify-between gap-3 rounded-lg bg-surface-container px-3 py-2"
               >
-                <span className="flex items-center gap-2 text-sm text-on-surface-variant">
+                <span className="flex items-center gap-2 text-xs text-on-surface-variant">
                   <i
                     className="h-2.5 w-2.5 rounded-full"
                     style={{ background: item.color }}
                   />
                   {item.label}
                 </span>
-                <strong className="text-on-surface">{item.value}</strong>
+                <strong className="shrink-0 text-sm text-on-surface">
+                  {item.value}{" "}
+                  <span className="font-normal text-on-surface-variant">
+                    ({total ? Math.round((item.value / total) * 100) : 0}%)
+                  </span>
+                </strong>
               </li>
             ))}
           </ul>
         </div>
       ) : (
-        <p className="mt-5 rounded-xl bg-surface-container p-4 text-sm text-on-surface-variant">
+        <p className="m-5 rounded-xl bg-surface-container p-4 text-sm text-on-surface-variant">
           Belum ada mata kuliah yang dapat dipilih.
         </p>
       )}
@@ -240,6 +246,7 @@ function PackagesPendingValidation({
 }: {
   packages: Dashboard["packages_pending_validation"];
 }) {
+  const visiblePackages = packages.slice(0, 3);
   return (
     <section className="glass-card overflow-hidden">
       <div className="flex items-start justify-between gap-3 border-b border-outline-variant/40 px-5 py-4">
@@ -251,21 +258,20 @@ function PackagesPendingValidation({
             Paket dengan minimal satu jawaban yang masih menunggu validasi.
           </p>
         </div>
-        <ClipboardCheck size={19} className="text-status-draft" />
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-status-draft/10 text-status-draft">
+          <ClipboardCheck size={19} />
+        </span>
       </div>
       {packages.length ? (
         <div className="divide-y divide-outline-variant/30">
-          {packages.map((item) => (
+          {visiblePackages.map((item) => (
             <Link
               key={item.id}
               href={`/exam-packages/${item.id}`}
               className="flex items-center justify-between gap-3 px-5 py-3.5 no-underline transition-colors hover:bg-surface-container"
             >
               <div className="min-w-0">
-                <p className="font-mono-ui text-xs font-bold text-primary">
-                  {item.code}
-                </p>
-                <p className="mt-1 truncate text-sm font-semibold text-on-surface">
+                <p className="truncate text-sm font-semibold text-on-surface">
                   {item.title}
                 </p>
                 <p className="mt-1 text-xs text-on-surface-variant">
@@ -343,11 +349,23 @@ export default function LecturerDashboard({
         })}
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-2">
-        <SubjectAverageBarChart subjects={dashboard.subjects} />
-        <PackagesPendingValidation
-          packages={dashboard.packages_pending_validation}
-        />
+      <section>
+        <div className="mb-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">
+              Ringkasan Evaluasi
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-5 xl:grid-cols-2">
+          <SubjectMasteryDonut dashboard={dashboard} />
+          <div className="grid content-start gap-5">
+            <SubjectAverageBarChart subjects={dashboard.subjects} />
+            <PackagesPendingValidation
+              packages={dashboard.packages_pending_validation}
+            />
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-2">
@@ -484,8 +502,6 @@ export default function LecturerDashboard({
           )}
         </section>
       </section>
-
-      <SubjectMasteryDonut dashboard={dashboard} />
 
       <section className="glass-card p-5">
         <div className="flex items-start gap-3">
