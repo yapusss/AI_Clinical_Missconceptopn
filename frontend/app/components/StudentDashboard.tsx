@@ -121,11 +121,11 @@ const fmtDate = (value: string | null) => {
   }
 };
 
-const CHART_HEIGHT = 240;
-const CHART_PAD_TOP = 22;
-const CHART_PAD_BOTTOM = 34;
-const CHART_PAD_LEFT = 46;
-const CHART_PAD_RIGHT = 18;
+const CHART_HEIGHT = 200;
+const CHART_PAD_TOP = 20;
+const CHART_PAD_BOTTOM = 30;
+const CHART_PAD_LEFT = 42;
+const CHART_PAD_RIGHT = 16;
 const Y_TICKS = [0, 25, 50, 75, 100] as const;
 
 function useContainerWidth<T extends HTMLElement>() {
@@ -362,15 +362,15 @@ function SubjectExamTrendCard({ trends }: { trends: StudentSubjectExamTrend[] })
   const exams = active?.exams ?? [];
 
   return (
-    <section className="glass-card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="glass-card flex h-full flex-col p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex items-start gap-2">
-          <TrendingUp size={19} className="mt-0.5 shrink-0 text-primary" />
+          <TrendingUp size={18} className="mt-0.5 shrink-0 text-primary" />
           <div>
             <h2 className="font-display text-base font-bold text-on-surface">
               Tren Perkembangan Nilai per Ujian
             </h2>
-            <p className="mt-1 text-xs text-on-surface-variant">
+            <p className="mt-0.5 text-xs text-on-surface-variant">
               Riwayat nilai evaluasi tervalidasi untuk setiap paket ujian.
             </p>
           </div>
@@ -381,12 +381,12 @@ function SubjectExamTrendCard({ trends }: { trends: StudentSubjectExamTrend[] })
             onValueChange={setSelectedSubject}
             options={options}
             ariaLabel="Pilih mata kuliah"
-            className="w-full sm:w-64"
+            className="w-full sm:w-52"
           />
         )}
       </div>
 
-      <div className="mt-5">
+      <div className="mt-4">
         {!options.length ? (
           <EmptyTrendState message="Belum ada riwayat ujian yang tervalidasi." />
         ) : exams.length ? (
@@ -404,18 +404,18 @@ function ActiveExamBanner({ exam }: { exam: StudentActiveExam }) {
     ? new Date(new Date(exam.started_at).getTime() + exam.duration_minutes * 60000)
     : null;
   return (
-    <section className="glass-card border border-primary/40 bg-primary/5 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <section className="glass-card border border-primary/40 bg-primary/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
-            <Clock3 size={22} />
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
+            <Clock3 size={20} />
           </span>
           <div className="min-w-0">
             <span className="badge badge-active">Sedang Berjalan</span>
-            <h2 className="mt-2 font-display text-base font-bold text-on-surface">
+            <h2 className="mt-1.5 font-display text-base font-bold text-on-surface">
               {exam.package_title}
             </h2>
-            <p className="mt-1 text-xs text-on-surface-variant">
+            <p className="mt-0.5 text-xs text-on-surface-variant">
               {exam.subject_name} · Mulai {fmtDateTime(exam.started_at)}
               {deadline ? ` · Berakhir ${fmtDateTime(deadline.toISOString())}` : ""}
             </p>
@@ -445,13 +445,13 @@ function Doughnut({ data }: { data: Record<string, number> }) {
   });
 
   return (
-    <section className="glass-card p-5">
+    <section className="glass-card flex h-full flex-col p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-base font-bold text-on-surface">
             Profil Pemahaman Konsep
           </h2>
-          <p className="mt-1 text-xs text-on-surface-variant">
+          <p className="mt-0.5 text-xs text-on-surface-variant">
             Distribusi diagnosis four-tier dari evaluasi Anda.
           </p>
         </div>
@@ -459,16 +459,16 @@ function Doughnut({ data }: { data: Record<string, number> }) {
           {total} evaluasi
         </span>
       </div>
-      <div className="mt-5 flex flex-col items-center gap-7 sm:flex-row">
+      <div className="mt-4 flex flex-1 flex-col items-center gap-5 sm:flex-row sm:justify-center lg:justify-start">
         <div
-          className="relative grid h-36 w-36 shrink-0 place-items-center rounded-full"
+          className="relative grid h-32 w-32 shrink-0 place-items-center rounded-full"
           style={{
             background: total
               ? `conic-gradient(${segments.join(", ")})`
               : "var(--bg-card-hover)",
           }}
         >
-          <div className="grid h-24 w-24 place-items-center rounded-full bg-surface-container-lowest text-center">
+          <div className="grid h-20 w-20 place-items-center rounded-full bg-surface-container-lowest text-center">
             <div>
               <strong className="block text-2xl text-on-surface">{total}</strong>
               <span className="text-[10px] text-on-surface-variant">evaluasi</span>
@@ -548,9 +548,11 @@ export default function StudentDashboard({ dashboard }: { dashboard: StudentDash
         })}
       </section>
 
-      <SubjectExamTrendCard trends={subjectTrends} />
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
+        <SubjectExamTrendCard trends={subjectTrends} />
 
-      <Doughnut data={distribution} />
+        <Doughnut data={distribution} />
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="glass-card overflow-hidden">
