@@ -2,8 +2,11 @@ import csv
 import io
 import json
 import os
+import re
 import uuid
+import zipfile
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from datetime import timedelta
 from django.contrib.auth.hashers import check_password, make_password
@@ -1153,13 +1156,115 @@ def _read_xlsx_rows(upload, subject_name=None):
     if not rows:
         raise ValueError(f'Sheet "{target_sheet.title}" tidak memiliki baris data soal.')
     return rows, target_sheet.title
-    
+
+
+QUESTION_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+QUESTION_IMAGE_TAG_RE = re.compile(r'\[img:(.*?)\]', re.IGNORECASE)
+QUESTION_IMAGE_TAG_TEMPLATE = '<img src="{url}" style="max-width:100%;height:auto;" />'
+
+
+def _is_zip_upload(upload):
+    name = (getattr(upload, 'name', '') or '').lower()
+    content_type = (getattr(upload, 'content_type', '') or '').lower()
+    return name.endswith('.zip') or content_type in (
+        'application/zip',
+        'application/x-zip-compressed',
+        'multipart/x-zip',
+    )
+
+
+def _find_bundle_xlsx(archive):
+    candidates = []
+    for name in archive.namelist():
+        if name.endswith('/') or '__MACOSX' in name:
+            continue
+        base = os.path.basename(name)
+        if not base or base.startswith('.'):
+            continue
+        if base.lower().endswith(('.xlsx', '.xlsm')):
+            candidates.append(name)
+    if not candidates:
+        return None
+    # Prefer a workbook located at the archive root, otherwise the shallowest one.
+    candidates.sort(key=lambda item: (item.count('/'), len(item)))
+    return candidates[0]
+
+
+def _extract_bundle_images(archive):
+    image_map = {}
+    for name in archive.namelist():
+        if name.endswith('/') or '__MACOSX' in name:
+            continue
+        base = os.path.basename(name)
+        if not base or base.startswith('.'):
+            continue
+        ext = os.path.splitext(base)[1].lower()
+        if ext not in QUESTION_IMAGE_EXTENSIONS:
+            continue
+        parent = os.path.basename(os.path.dirname(name)).lower()
+        if parent != 'images':
+            continue
+        try:
+            content = archive.read(name)
+        except Exception:
+            continue
+        saved_name = default_storage.save(f'uploads/{uuid.uuid4().hex}{ext}', ContentFile(content))
+        media_url = f"{settings.MEDIA_URL.rstrip('/')}/{saved_name.lstrip('/')}"
+        image_map[base] = media_url
+        image_map[name.lstrip('/')] = media_url
+    return image_map
+
+
+def _replace_question_image_tags(text, image_map):
+    if not text:
+        return text
+
+    def repl(match):
+        key = match.group(1).strip()
+        url = image_map.get(key) or image_map.get(os.path.basename(key)) or image_map.get(f'images/{key}')
+        if not url:
+            return match.group(0)
+        return QUESTION_IMAGE_TAG_TEMPLATE.format(url=url)
+
+    return QUESTION_IMAGE_TAG_RE.sub(repl, text)
+
+
+def _read_zip_bundle(upload, subject_name=None):
+    if hasattr(upload, 'seek'):
+        upload.seek(0)
+    try:
+        archive = zipfile.ZipFile(upload)
+    except zipfile.BadZipFile as exc:
+        raise ValueError('File ZIP tidak valid atau rusak.') from exc
+
+    xlsx_name = _find_bundle_xlsx(archive)
+    if not xlsx_name:
+        raise ValueError('File .xlsx tidak ditemukan di dalam bundle .zip.')
+
+    with archive.open(xlsx_name) as xlsx_file:
+        xlsx_buffer = io.BytesIO(xlsx_file.read())
+
+    raw_rows, detected_sheet = _read_xlsx_rows(xlsx_buffer, subject_name=subject_name)
+
+    image_map = _extract_bundle_images(archive)
+    for row in raw_rows:
+        if row.get('prompt'):
+            row['prompt'] = _replace_question_image_tags(row['prompt'], image_map)
+        if row.get('alasan'):
+            row['alasan'] = _replace_question_image_tags(row['alasan'], image_map)
+
+    return raw_rows, detected_sheet
+
+
 def _read_question_import(upload, subject_name=None):
     if not upload:
-        raise ValueError('File CSV atau Excel wajib diunggah.')
+        raise ValueError('File CSV, Excel, atau ZIP bundle wajib diunggah.')
     if upload.size > 10 * 1024 * 1024:
         raise ValueError('Ukuran file maksimal 10 MB.')
-    if upload.name.lower().endswith(('.xlsx', '.xlsm')):
+    if _is_zip_upload(upload):
+        raw_rows, detected_sheet = _read_zip_bundle(upload, subject_name=subject_name)
+        headers = set(raw_rows[0]) if raw_rows else set()
+    elif upload.name.lower().endswith(('.xlsx', '.xlsm')):
         raw_rows, detected_sheet = _read_xlsx_rows(upload, subject_name=subject_name)
         headers = set(raw_rows[0]) if raw_rows else set()
     else:

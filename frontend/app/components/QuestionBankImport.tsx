@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, FileSpreadsheet, FileUp } from "lucide-react";
+import { Download, FileArchive, FileSpreadsheet, FileUp } from "lucide-react";
 import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
 import FeedbackModal from "./FeedbackModal";
@@ -37,6 +37,7 @@ export default function QuestionBankImport({
   const fixedSubject = Boolean(subjectId);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState(subjectId ?? "");
+  const [importMode, setImportMode] = useState<"standard" | "bundle">("standard");
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -143,7 +144,11 @@ export default function QuestionBankImport({
   async function upload(event: React.FormEvent) {
     event.preventDefault();
     if (!file) {
-      setError("Silakan pilih atau tarik file Excel terlebih dahulu.");
+      setError(
+        importMode === "bundle"
+          ? "Silakan pilih atau tarik file ZIP bundle terlebih dahulu."
+          : "Silakan pilih atau tarik file Excel terlebih dahulu.",
+      );
       return;
     }
     setBusy(true);
@@ -248,6 +253,58 @@ export default function QuestionBankImport({
       </div>
 
       <form onSubmit={upload} className="space-y-4">
+        <div
+          role="tablist"
+          aria-label="Mode impor bank soal"
+          className="flex flex-col gap-1 rounded-xl border border-outline-variant/50 bg-surface-container-low p-1 sm:flex-row"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={importMode === "standard"}
+            onClick={() => {
+              setImportMode("standard");
+              setFile(null);
+              setError("");
+            }}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              importMode === "standard"
+                ? "bg-primary text-on-primary shadow-sm"
+                : "text-on-surface-variant hover:bg-surface-container"
+            }`}
+          >
+            <FileSpreadsheet size={15} /> Format Standar (.xlsx)
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={importMode === "bundle"}
+            onClick={() => {
+              setImportMode("bundle");
+              setFile(null);
+              setError("");
+            }}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              importMode === "bundle"
+                ? "bg-primary text-on-primary shadow-sm"
+                : "text-on-surface-variant hover:bg-surface-container"
+            }`}
+          >
+            <FileArchive size={15} /> Bundle Soal Bergambar (.zip)
+          </button>
+        </div>
+
+        {importMode === "bundle" && (
+          <p className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2.5 text-xs leading-relaxed text-on-surface-variant">
+            Kemas file Excel dan folder <span className="font-semibold text-on-surface">images/</span> Anda
+            ke dalam satu file .zip. Di dalam Excel, sertakan tag{" "}
+            <code className="rounded bg-surface-container px-1 py-0.5 font-mono-ui text-[11px] text-primary">
+              [img:nama_file.png]
+            </code>{" "}
+            pada teks pertanyaan atau alasan.
+          </p>
+        )}
+
         <label
           onDragOver={(e) => {
             e.preventDefault();
@@ -270,7 +327,11 @@ export default function QuestionBankImport({
         >
           <input
             type="file"
-            accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept={
+              importMode === "bundle"
+                ? ".zip,application/zip"
+                : ".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
             onChange={(e) => {
               if (e.target.files?.[0]) {
                 setFile(e.target.files[0]);
@@ -299,7 +360,9 @@ export default function QuestionBankImport({
           ) : (
             <div className="space-y-1">
               <p className="font-semibold text-sm text-on-surface">
-                Tarik &amp; lepas file Excel (.xlsx) di sini
+                {importMode === "bundle"
+                  ? "Tarik & lepas file ZIP bundle (.zip) di sini"
+                  : "Tarik & lepas file Excel (.xlsx) di sini"}
               </p>
               <p className="text-xs text-on-surface-variant">
                 atau klik untuk memilih file dari perangkat Anda

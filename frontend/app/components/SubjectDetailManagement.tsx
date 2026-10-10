@@ -681,7 +681,7 @@ function LecturerWorkspace({
                 <thead className="bg-surface-container-low text-xs font-semibold uppercase text-on-surface-variant">
                   <tr>
                     <th className="px-5 py-3">Kode</th>
-                    <th className="px-5 py-3">Paket</th>
+                    <th className="px-5 py-3">Judul Paket Soal</th>
                     <th className="px-5 py-3">Soal</th>
                     <th className="px-5 py-3">Status</th>
                     <th className="px-5 py-3 text-right">Aksi</th>
