@@ -387,6 +387,10 @@ class LlmAnalysis(models.Model):
     module_c_code = models.CharField(max_length=100, null=True, blank=True)
     four_tier_category = models.CharField(max_length=10, null=True, blank=True)
     risk_level = models.CharField(max_length=20, null=True, blank=True)
+    grounding_similarity = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    grounding_similarity_max = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    grounding_citation_count = models.IntegerField(null=True, blank=True)
+    grounding_payload_json = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -417,4 +421,52 @@ class Validation(models.Model):
 
     class Meta:
         db_table = 'validations'
+        managed = False
+
+
+class KnowledgeDocument(models.Model):
+    # Read-model: rows are written by ingestion (raw SQL), never by ORM save().
+    class IngestStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Menunggu ingest'
+        READY = 'READY', 'Siap digunakan'
+        FAILED = 'FAILED', 'Gagal ingest'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, db_column='topic_id', null=True, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='uploaded_by')
+    title = models.CharField(max_length=255)
+    file_path = models.CharField(max_length=1024, null=True, blank=True)
+    mime_type = models.CharField(max_length=100, default='text/plain')
+    raw_text = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    ingest_status = models.CharField(max_length=20, choices=IngestStatus, default=IngestStatus.PENDING)
+    ingest_error = models.TextField(null=True, blank=True)
+    chunk_count = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'knowledge_documents'
+        managed = False
+
+    def __str__(self):
+        return self.title
+
+
+class KnowledgeChunk(models.Model):
+    # Read-model: written by ingestion via raw SQL (%s::vector cast), searched via
+    # fn_search_knowledge_chunks. `embedding` is pgvector vector(1536) in the DB;
+    # this field exposes its text form for reads only.
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE, db_column='document_id', related_name='chunks')
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, db_column='topic_id', null=True, blank=True)
+    chunk_index = models.IntegerField()
+    content = models.TextField()
+    token_count = models.IntegerField(null=True, blank=True)
+    embedding = models.TextField(null=True, blank=True)
+    metadata_json = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'knowledge_chunks'
         managed = False

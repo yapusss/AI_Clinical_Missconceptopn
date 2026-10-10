@@ -158,3 +158,13 @@ LLM_API_KEY = os.environ.get('LLM_API_KEY', 'local-llama-cpp')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:3b-instruct')
 LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '120'))
 LLM_MAX_RUNS = int(os.environ.get('LLM_MAX_RUNS', '3'))
+
+# Embeddings (OpenRouter — dims MUST match the knowledge_chunks vector(1536) column)
+EMBEDDINGS_BASE_URL = os.environ.get('EMBEDDINGS_BASE_URL', 'https://openrouter.ai/api/v1')
+EMBEDDINGS_API_KEY  = os.environ.get('EMBEDDINGS_API_KEY', '')
+EMBEDDINGS_MODEL    = os.environ.get('EMBEDDINGS_MODEL', 'openai/text-embedding-3-small')
+EMBEDDINGS_DIMENSIONS = int(os.environ.get('EMBEDDINGS_DIMENSIONS', '1536'))
+
+# Retrieval
+RETRIEVAL_TOP_K = int(os.environ.get('RETRIEVAL_TOP_K', '5'))
+RETRIEVAL_SIMILARITY_THRESHOLD = float(os.environ.get('RETRIEVAL_SIMILARITY_THRESHOLD', '0.22'))
