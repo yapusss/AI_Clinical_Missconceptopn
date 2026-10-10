@@ -8,6 +8,8 @@ import {
   ArrowRight,
   BookOpenCheck,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Lightbulb,
   LineChart,
@@ -428,6 +430,8 @@ function ActiveExamBanner({ exam }: { exam: StudentActiveExam }) {
   );
 }
 
+const MASTERY_PAGE_SIZE = 2;
+
 type SubjectMastery = {
   subject_id: string;
   subject_name: string;
@@ -483,6 +487,17 @@ function masteryStatus(average: number | null): { label: string; badge: string; 
 
 function SubjectMasteryCard({ trends }: { trends: StudentSubjectExamTrend[] }) {
   const subjects = useMemo(() => buildSubjectMastery(trends), [trends]);
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(subjects.length / MASTERY_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const visibleSubjects = subjects.slice(
+    safePage * MASTERY_PAGE_SIZE,
+    safePage * MASTERY_PAGE_SIZE + MASTERY_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage(0);
+  }, [trends]);
 
   return (
     <section className="glass-card flex h-full flex-col p-4">
@@ -499,43 +514,70 @@ function SubjectMasteryCard({ trends }: { trends: StudentSubjectExamTrend[] }) {
       </div>
 
       {subjects.length ? (
-        <ul className="mt-4 flex-1 space-y-3">
-          {subjects.map((subject) => {
-            const status = masteryStatus(subject.average);
-            const percent = subject.average === null ? 0 : Math.max(0, Math.min(100, subject.average));
-            return (
-              <li
-                key={subject.subject_id}
-                className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest/60 p-3"
+        <>
+          <ul className="mt-4 flex-1 space-y-3">
+            {visibleSubjects.map((subject) => {
+              const status = masteryStatus(subject.average);
+              const percent =
+                subject.average === null ? 0 : Math.max(0, Math.min(100, subject.average));
+              return (
+                <li
+                  key={subject.subject_id}
+                  className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest/60 p-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-on-surface">
+                        {subject.subject_name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-on-surface-variant">
+                        {subject.validatedCount
+                          ? `${subject.validatedCount} ujian tervalidasi`
+                          : "Belum ada ujian tervalidasi"}
+                      </p>
+                    </div>
+                    <span className={`badge shrink-0 border ${status.badge}`}>{status.label}</span>
+                  </div>
+                  <div className="mt-2.5 flex items-center gap-3">
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-container">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${status.bar}`}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                    <span className="w-12 shrink-0 text-right text-sm font-bold text-on-surface">
+                      {subject.average === null ? "-" : fmtPercent(subject.average)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          {totalPages > 1 && (
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-outline-variant/40 pt-3">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+                disabled={safePage <= 0}
+                className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-on-surface">
-                      {subject.subject_name}
-                    </p>
-                    <p className="mt-0.5 text-xs text-on-surface-variant">
-                      {subject.validatedCount
-                        ? `${subject.validatedCount} ujian tervalidasi`
-                        : "Belum ada ujian tervalidasi"}
-                    </p>
-                  </div>
-                  <span className={`badge shrink-0 border ${status.badge}`}>{status.label}</span>
-                </div>
-                <div className="mt-2.5 flex items-center gap-3">
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-container">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${status.bar}`}
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
-                  <span className="w-12 shrink-0 text-right text-sm font-bold text-on-surface">
-                    {subject.average === null ? "-" : fmtPercent(subject.average)}
-                  </span>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                <ChevronLeft size={14} /> Sebelumnya
+              </button>
+              <span className="text-xs font-semibold text-on-surface-variant">
+                {safePage + 1} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
+                disabled={safePage >= totalPages - 1}
+                className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Berikutnya <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant/60 px-4 py-12 text-center">
           <LineChart size={22} className="text-on-surface-variant" />
