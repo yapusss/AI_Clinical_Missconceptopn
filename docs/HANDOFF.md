@@ -26,9 +26,26 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   `fn_search_knowledge_chunks("second law of thermodynamics")` returns on-topic entropy/Clausius passages
   (pp. 133–157); `cosine()` handles identical/orthogonal/zero vectors; chunk-count stayed 329 after a
   second `--replace` pass (no doubling).
-- **Next: R3** — `api/llm.py`: retrieval in `FourTierContext`, Modul B/C prompt injection + `referensi`
-  schema, citation validation, grounding similarity + payload, `PROMPT_VERSION → four-tier-v2.9-rag`,
-  21-placeholder `CALL sp_record_llm_analysis`. Write `docs/R3_TASK.md` from brief §8 first.
+- **Next: R3** — task file ready at `docs/R3_TASK.md` (retrieval + prompt injection + grounding recording
+  in `api/llm.py`, per brief §8). Verified live facts baked into the task file: PROMPT_VERSION v2.8 at line 37,
+  context at 149, concept_breakdown at 599–619, 17-placeholder CALL at 624–650, 20-arg proc overload,
+  Physics chunk count 329.
+
+## R3 dispatch (ready)
+
+```bash
+cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
+  env -u PWD -u OLDPWD \
+  "C:/Users/Pongo/AppData/Local/Programs/@opencodedesktop/resources/opencode-cli.exe" \
+  run --standalone --auto --model alibaba-token-plan/qwen3.8-max \
+  "Read docs/R3_TASK.md in this repository and execute it exactly."
+```
+
+R3 scope for the child: `backend/api/llm.py` + new `backend/api/tests_reference_materials.py` ONLY. key risks
+to verify after it reports: (a) the CALL now has 21 placeholders and does NOT error with "procedure does not
+exist"; (b) a real Physics submission yields non-null grounding_similarity + populated payload;
+(c) a no-materials subject still analyses (regression); (d) an unreachable EMBEDDINGS_BASE_URL does NOT mark
+the submission ANALYSIS_FAILED.
 
 ## R2 dispatch (ready)
 
