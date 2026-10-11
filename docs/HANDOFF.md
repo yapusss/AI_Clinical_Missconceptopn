@@ -20,7 +20,15 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   `KnowledgeChunk` read-models + `LlmAnalysis` grounding fields + `EMBEDDINGS_*`/`RETRIEVAL_*` settings + `pymupdf`.
   Proven by a forward → reverse → forward cycle (cols 0→7→0→7, proc arities 11/16→11/20), `vector(1536)` and the HNSW
   index untouched.
-- **Next: R2** — task file ready at `docs/R2_TASK.md` (embeddings module + `ingest_materials`, per brief §6–§7).
+- **R2 — done, verified by independent audit (2026-10-11, commit `7c50c2e`).** `api/embeddings.py` +
+  `manage.py ingest_materials` match the brief. Personally re-ran: dry-run = 462 pp → **329 chunks**,
+  256,004 tokens, $0.0051, zero network calls; real ingest → `READY`, 329/329 rows with non-null embeddings;
+  `fn_search_knowledge_chunks("second law of thermodynamics")` returns on-topic entropy/Clausius passages
+  (pp. 133–157); `cosine()` handles identical/orthogonal/zero vectors; chunk-count stayed 329 after a
+  second `--replace` pass (no doubling).
+- **Next: R3** — `api/llm.py`: retrieval in `FourTierContext`, Modul B/C prompt injection + `referensi`
+  schema, citation validation, grounding similarity + payload, `PROMPT_VERSION → four-tier-v2.9-rag`,
+  21-placeholder `CALL sp_record_llm_analysis`. Write `docs/R3_TASK.md` from brief §8 first.
 
 ## R2 dispatch (ready)
 
@@ -32,8 +40,8 @@ cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
   "Read docs/R2_TASK.md in this repository and execute it exactly."
 ```
 
-R2 scope for the child: `backend/api/embeddings.py` + `backend/api/management/commands/ingest_materials.py`
-ONLY. Reference run = the Sears PDF (462 pp → ~300 chunks, ~$0.005). Verify its claims yourself per §12; the
+R2 scope for the child: ~~`backend/api/embeddings.py` + `backend/api/management/commands/ingest_materials.py`
+ONLY~~ **DONE, commit `7c50c2e` — do not rerun.** Reference run = the Sears PDF → 329 chunks, $0.0051. Verify its claims yourself per §12; the
 `--dry-run` must print chunk/token/cost numbers without any network call, and re-running with `--replace` must
 not double the chunk count.
 
