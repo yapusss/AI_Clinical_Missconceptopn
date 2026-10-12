@@ -18,8 +18,10 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
@@ -342,13 +344,14 @@ def _insert_chunks(document_id, subject_id, topic_id, chunks, vectors, batch_siz
             )
 
 
-def _mark_ready(document_id: str, chunk_count: int) -> None:
+def _mark_ready(document_id: str, chunk_count: int, raw_text: str | None = None) -> None:
     with connection.cursor() as cur:
         cur.execute(
             """UPDATE knowledge_documents
-               SET ingest_status = 'READY', chunk_count = %s, ingest_error = NULL
+               SET ingest_status = 'READY', chunk_count = %s, ingest_error = NULL,
+                   raw_text = COALESCE(%s, raw_text)
                WHERE id = %s""",
-            [chunk_count, document_id],
+            [chunk_count, raw_text, document_id],
         )
 
 
@@ -363,6 +366,28 @@ def _mark_failed(document_id: str, error: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pending-upload drain (POST /api/materials writes PENDING; this drains it)
+# ---------------------------------------------------------------------------
+
+def _resolve_stored_path(file_path: str) -> str:
+    """Uploaded docs store a MEDIA_ROOT-relative path; CLI paths are absolute."""
+    if os.path.isabs(file_path):
+        return file_path
+    return os.path.join(str(settings.MEDIA_ROOT), file_path)
+
+
+def _select_pending() -> list[tuple]:
+    with connection.cursor() as cur:
+        cur.execute(
+            """SELECT id, subject_id, topic_id, title, file_path, mime_type
+               FROM knowledge_documents
+               WHERE ingest_status = 'PENDING' AND file_path IS NOT NULL
+               ORDER BY created_at"""
+        )
+        return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
 # Command
 # ---------------------------------------------------------------------------
 
@@ -370,8 +395,9 @@ class Command(BaseCommand):
     help = 'Ingest a PDF/MD/TXT reference document into knowledge_documents/knowledge_chunks.'
 
     def add_arguments(self, parser):
-        parser.add_argument('path', help='Path to the source file (.pdf, .md, .txt)')
-        parser.add_argument('--subject', required=True, help='Subject uuid, slug or name')
+        parser.add_argument('path', nargs='?', default=None,
+                            help='Path to the source file (.pdf, .md, .txt)')
+        parser.add_argument('--subject', default=None, help='Subject uuid, slug or name')
         parser.add_argument('--topic', default=None, help='Topic uuid or name (optional)')
         parser.add_argument('--title', default=None, help='Document title (default: filename stem)')
         parser.add_argument('--uploaded-by', default=None,
@@ -382,13 +408,27 @@ class Command(BaseCommand):
                             help='Extract + chunk + cost only; makes zero network calls')
         parser.add_argument('--limit-pages', default=None, help='Restrict to pages "A-B" (1-based)')
         parser.add_argument('--batch-size', type=int, default=64, help='Embed/insert batch size')
+        parser.add_argument('--pending', action='store_true',
+                            help='Ingest every PENDING uploaded document once, then exit')
+        parser.add_argument('--loop', action='store_true',
+                            help='With --pending: keep draining every --interval seconds')
+        parser.add_argument('--interval', type=int, default=10,
+                            help='Poll interval seconds for --pending --loop')
 
     def handle(self, *args, **options):
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s %(levelname)s %(name)s: %(message)s',
         )
+        if options['pending'] or options['loop']:
+            self._drain(options)
+            return
+
         path = options['path']
+        if not path:
+            raise CommandError('Provide a <path> to ingest, or use --pending to drain uploads.')
+        if not options['subject']:
+            raise CommandError('--subject is required when ingesting a <path>.')
         if not os.path.exists(path):
             raise CommandError(f'File not found: {path}')
         if options['batch_size'] < 1:
@@ -469,3 +509,62 @@ class Command(BaseCommand):
         self.stdout.write(f'  Chunks       : {chunk_count}')
         self.stdout.write(f'  Approx tokens: {total_tokens:,} (len/4 approximation)')
         self.stdout.write(f'  Est. cost    : ${cost:.6f} ({total_tokens}/1e6 * {COST_PER_MILLION_TOKENS_USD})')
+
+    # -- Pending-upload drain -------------------------------------------------
+
+    def _drain(self, options):
+        """Process PENDING uploaded documents, oldest first, once (or looped).
+
+        Per-document failure isolation: one corrupt document is marked FAILED
+        with its error and the run (or loop) continues with the next.
+        """
+        while True:
+            pending = _select_pending()
+            if not pending:
+                self.stdout.write('Nothing pending.')
+                if not options['loop']:
+                    return
+                time.sleep(max(1, options['interval']))
+                continue
+
+            for row in pending:
+                document_id = str(row[0])
+                subject_id = str(row[1])
+                topic_id = str(row[2]) if row[2] else None
+                title = row[3]
+                file_path = row[4]
+                try:
+                    chunk_count = self._ingest_pending_document(
+                        document_id, subject_id, topic_id, file_path,
+                        options['batch_size'],
+                    )
+                    self.stdout.write(self.style.SUCCESS(
+                        f'{document_id} "{title}" -> READY ({chunk_count} chunks)'
+                    ))
+                except Exception as e:  # noqa: BLE001 — isolate per document
+                    logger.exception('Pending ingest failed for %s', document_id)
+                    _mark_failed(document_id, f'{type(e).__name__}: {e}')
+                    self.stderr.write(f'{document_id} "{title}" -> FAILED: {e}')
+
+            if not options['loop']:
+                return
+            time.sleep(max(1, options['interval']))
+
+    def _ingest_pending_document(self, document_id, subject_id, topic_id, file_path, batch_size):
+        resolved = _resolve_stored_path(file_path)
+        if not os.path.exists(resolved):
+            raise CommandError(f'File not found on disk: {file_path}')
+        pages, _ = _read_pages(resolved)
+        if not pages:
+            raise CommandError('No pages extracted from document')
+        running_heads = _collect_running_heads(pages)
+        full_text, offsets = _build_document(pages, running_heads)
+        chunks = _chunk_text(full_text, offsets)
+        vectors = embed_texts([c.content for c in chunks], batch_size=batch_size)
+        if len(vectors) != len(chunks):
+            raise EmbeddingError(
+                f'Embedding count mismatch: {len(vectors)} vectors for {len(chunks)} chunks'
+            )
+        _insert_chunks(document_id, subject_id, topic_id, chunks, vectors, batch_size)
+        _mark_ready(document_id, len(chunks), raw_text=full_text)
+        return len(chunks)

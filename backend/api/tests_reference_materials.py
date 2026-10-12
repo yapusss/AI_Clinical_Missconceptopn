@@ -9,6 +9,7 @@ the pipeline test monkeypatches `load_context`, retrieval, the three modules and
 
 import json
 from decimal import Decimal
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,8 @@ from api.llm import (
     run_module_c,
     validate_citations,
 )
+from api.management.commands import ingest_materials as ingest_cmd
+from api.materials_views import MATERIAL_UPLOAD_MAX_BYTES, validate_material_upload
 from api.validation_views import (
     _by_model_row,
     _compute_metrics,
@@ -31,6 +34,7 @@ from api.validation_views import (
     _grounding_metrics,
     _zero_validation_payload,
 )
+from api.views import is_lecturer_for_subject
 
 
 def make_ctx(**overrides) -> FourTierContext:
@@ -410,3 +414,75 @@ class GroundingDetailShapeTests(SimpleTestCase):
         self.assertIsNone(detail['grounding']['similarity_max'])
         self.assertIsNone(detail['grounding']['citation_count'])
         self.assertEqual(detail['grounding']['payload'], {})
+
+
+class MaterialUploadValidationTests(SimpleTestCase):
+    def test_allowed_extensions(self):
+        for name in ('notes.pdf', 'notes.md', 'notes.markdown', 'notes.txt'):
+            extension, error = validate_material_upload(name, 10)
+            self.assertIsNone(error, name)
+            self.assertTrue(extension.startswith('.'))
+
+    def test_rejects_other_extensions(self):
+        extension, error = validate_material_upload('notes.docx', 10)
+        self.assertIsNone(extension)
+        self.assertIn('PDF', error)
+
+    def test_missing_file(self):
+        extension, error = validate_material_upload(None, None)
+        self.assertIsNone(extension)
+        self.assertIn('tidak ditemukan', error)
+
+    def test_size_cap(self):
+        extension, error = validate_material_upload('notes.pdf', MATERIAL_UPLOAD_MAX_BYTES + 1)
+        self.assertIsNone(extension)
+        self.assertIn('25MB', error)
+        extension, error = validate_material_upload('notes.pdf', MATERIAL_UPLOAD_MAX_BYTES)
+        self.assertIsNone(error)
+
+
+class MaterialScopeTests(SimpleTestCase):
+    def test_superuser_is_allowed(self):
+        self.assertTrue(is_lecturer_for_subject(SimpleNamespace(is_superuser=True), 'subj'))
+
+    def test_non_lecturer_subject_is_rejected(self):
+        user = SimpleNamespace(is_superuser=False)
+        with patch('api.views.UserSubjectRole') as role:
+            role.objects.filter.return_value.exists.return_value = False
+            self.assertFalse(is_lecturer_for_subject(user, 'subj'))
+            role.objects.filter.return_value.exists.return_value = True
+            self.assertTrue(is_lecturer_for_subject(user, 'subj'))
+
+
+class PendingDrainTests(SimpleTestCase):
+    def _options(self, loop=False):
+        return {'loop': loop, 'interval': 10, 'batch_size': 64}
+
+    def test_nothing_pending(self):
+        out = StringIO()
+        with patch.object(ingest_cmd, '_select_pending', return_value=[]):
+            ingest_cmd.Command(stdout=out)._drain(self._options())
+        self.assertIn('Nothing pending.', out.getvalue())
+
+    def test_failure_isolation_marks_failed_and_continues(self):
+        docs = [
+            ('doc-1', 'subj-1', None, 'Broken', 'materials/broken.pdf', 'application/pdf'),
+            ('doc-2', 'subj-1', None, 'Good', 'materials/good.md', 'text/markdown'),
+        ]
+        calls = []
+
+        def fake_ingest(self, document_id, subject_id, topic_id, file_path, batch_size):
+            calls.append(document_id)
+            if document_id == 'doc-1':
+                raise RuntimeError('corrupt pdf')
+            return 3
+
+        with patch.object(ingest_cmd, '_select_pending', return_value=docs), \
+                patch.object(ingest_cmd.Command, '_ingest_pending_document', fake_ingest), \
+                patch.object(ingest_cmd, '_mark_failed') as mark_failed:
+            ingest_cmd.Command()._drain(self._options())
+
+        self.assertEqual(calls, ['doc-1', 'doc-2'])          # both attempted
+        mark_failed.assert_called_once()
+        self.assertEqual(mark_failed.call_args[0][0], 'doc-1')
+        self.assertIn('corrupt pdf', mark_failed.call_args[0][1])
