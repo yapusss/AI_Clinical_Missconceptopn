@@ -263,6 +263,14 @@ pointer, so the CLI arg cannot be mangled. Verify the child's claims yourself: i
   `knowledge_documents` row; `manage.py ingest_materials --pending` (a poller, like `analyze_submissions --loop`)
   does extract → chunk → embed → READY. Nothing embeds inside a web request, and a corrupt document is marked
   `FAILED` with `ingest_error` without killing the run.
+- **An upload is not usable until it is drained, and nothing drains it automatically.** The file goes to
+  `MEDIA_ROOT/materials/<uuid4().hex><ext>` (`backend/media/`, **gitignored**), the row is `PENDING` with
+  `raw_text NULL` and `chunk_count NULL`, so there are **no `knowledge_chunks` rows** and analysis-time retrieval
+  cannot see the document at all. No compose service, cron or systemd unit references `ingest_materials` — the
+  only trigger is a human running `--pending` / `--loop`. Consequences for any deployment: `MEDIA_ROOT` must be a
+  mounted volume (rows without files drain into `FAILED: file not found`), and the Sears row's `file_path` is an
+  **absolute Windows path** from the R2 CLI ingest, so it is not portable. Open items plan §9b #11–#12; the upload
+  endpoint also saves the file before inserting the row, with no cleanup if the INSERT fails.
 - **The dev DB contains audit fixtures that are NOT real course data — and `grounding_similarity` alone cannot tell
   them apart.** Created during R4/R5 verification (2026-10-12): the Chemistry subject
   `0b000000-0000-0000-0000-000000000030` (+ its set/question/submission/role grants), the ad-hoc `.md` upload
