@@ -26,10 +26,16 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   `fn_search_knowledge_chunks("second law of thermodynamics")` returns on-topic entropy/Clausius passages
   (pp. 133–157); `cosine()` handles identical/orthogonal/zero vectors; chunk-count stayed 329 after a
   second `--replace` pass (no doubling).
-- **Next: R3** — task file ready at `docs/R3_TASK.md` (retrieval + prompt injection + grounding recording
-  in `api/llm.py`, per brief §8). Verified live facts baked into the task file: PROMPT_VERSION v2.8 at line 37,
-  context at 149, concept_breakdown at 599–619, 17-placeholder CALL at 624–650, 20-arg proc overload,
-  Physics chunk count 329.
+- **R3 — done, verified by independent audit (2026-10-11, commit `d6f99e2`).** `llm.py` diff matches brief §8.1–8.6
+  (context fields, non-fatal retrieval via `fn_search_knowledge_chunks` + second query for embeddings/titles,
+  Modul B/C citation rules + zero-chunk prompts byte-identical, `validate_citations`, 1 advisory embedding call,
+  21-placeholder CALL with typed casts, PROMPT version `four-tier-v2.9-rag`). Personally verified: 15/15 tests
+  green; real Physics submission re-analysed → grounding 0.5679/0.5769, 2 valid citations (entropy passages
+  pp. 133/142), populated `what_should_be_learned`; no-materials subject with DEAD `EMBEDDINGS_BASE_URL` still
+  reached `PENDING_VALIDATION` with NULL grounding + `[]` materials (outage + zero-chunk regression in one).
+- **Next: R4** — metrics + API exposure per brief §9–10.1 (`._compute_metrics` grounding keys,
+  `grounding_by_category`, `grounding_by_prompt_version`, `ValidationDetailView` new keys incl. the
+  `concept_breakdown_json` UI bug fix). Write `docs/R4_TASK.md` from brief §9–10 first.
 
 ## R3 dispatch (ready)
 
