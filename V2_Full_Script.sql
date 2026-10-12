@@ -373,8 +373,25 @@ CREATE TABLE llm_models (
     context_window INT,
     cost_per_1k_input NUMERIC(10,6),
     cost_per_1k_output NUMERIC(10,6),
+    display_name VARCHAR(150) NOT NULL DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     deprecated_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ai_runtime_settings (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id = TRUE),
+    active_model_id UUID NOT NULL REFERENCES llm_models(id) ON DELETE RESTRICT,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ai_model_changes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    previous_model_identifier VARCHAR(100) NOT NULL DEFAULT '',
+    active_model_id UUID NOT NULL REFERENCES llm_models(id) ON DELETE RESTRICT,
+    changed_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 

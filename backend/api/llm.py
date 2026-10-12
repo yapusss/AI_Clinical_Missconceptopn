@@ -102,6 +102,26 @@ def get_llm_client() -> OpenAI:
     )
 
 
+def get_active_model_identifier() -> str:
+    """Use the admin-approved model, with the deployment setting as a safe fallback."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.identifier
+                FROM ai_runtime_settings s
+                JOIN llm_models m ON m.id = s.active_model_id
+                WHERE s.id = TRUE AND m.is_enabled = TRUE AND m.deprecated_at IS NULL
+                """
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                return row[0]
+    except Exception:
+        logger.warning('Tidak dapat membaca konfigurasi model AI; memakai model deployment.', exc_info=True)
+    return settings.LLM_MODEL
+
+
 # ----------------------------------------------------------------------------
 # 1. Deterministic Heuristic Pre-Checks
 # ----------------------------------------------------------------------------
@@ -283,7 +303,7 @@ def _extract_json(raw: str) -> dict:
         raise LlmAnalysisError('LLM output is not valid JSON')
 
 
-def _call_llm_json(system_prompt: str, user_prompt: str) -> dict:
+def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str) -> dict:
     client = get_llm_client()
     messages = [
         {'role': 'system', 'content': system_prompt},
@@ -293,7 +313,7 @@ def _call_llm_json(system_prompt: str, user_prompt: str) -> dict:
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
             kwargs = {
-                'model': settings.LLM_MODEL,
+                'model': model_identifier,
                 'messages': messages,
                 'temperature': LLM_TEMPERATURE,
             }
@@ -317,7 +337,7 @@ def _call_llm_json(system_prompt: str, user_prompt: str) -> dict:
 # 4. Modular AI Evaluation Modules
 # ----------------------------------------------------------------------------
 
-def run_module_a(ctx: FourTierContext) -> tuple[str, str]:
+def run_module_a(ctx: FourTierContext, model_identifier: str) -> tuple[str, str]:
     """Modul A — Penilai Jawaban Singkat (Tier 1)."""
     sys_prompt = (
         "Anda adalah Modul A: Penilai Kesimpulan Jawaban (Tier 1) untuk asesmen Four-Tier.\n"
@@ -336,14 +356,14 @@ def run_module_a(ctx: FourTierContext) -> tuple[str, str]:
     if ctx.rejection_notes:
         user_prompt += f"\n\n[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]:\n{ctx.rejection_notes}"
 
-    data = _call_llm_json(sys_prompt, user_prompt)
+    data = _call_llm_json(sys_prompt, user_prompt, model_identifier)
     score = str(data.get('score', '')).upper()
     if score not in ('BENAR', 'BENAR_SEBAGIAN', 'SALAH'):
         score = 'SALAH'
     return score, str(data.get('reasoning', ''))
 
 
-def run_module_b(ctx: FourTierContext) -> tuple[str, str, dict]:
+def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, dict]:
     """Modul B — Penilai Alasan Ilmiah (Tier 3) langsung terhadap Model Answer & Penghasil Umpan Balik Mahasiswa."""
     sys_prompt = (
         "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3) serta Asisten Pedagogis Fisika/Sains.\n"
@@ -379,7 +399,7 @@ def run_module_b(ctx: FourTierContext) -> tuple[str, str, dict]:
     if ctx.rejection_notes:
         user_prompt += f"\n\n[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]:\n{ctx.rejection_notes}"
 
-    data = _call_llm_json(sys_prompt, user_prompt)
+    data = _call_llm_json(sys_prompt, user_prompt, model_identifier)
     score = str(data.get('score', '')).upper()
     if score not in ('BENAR', 'SALAH'):
         score = 'SALAH'
@@ -402,7 +422,7 @@ def run_module_b(ctx: FourTierContext) -> tuple[str, str, dict]:
     return score, reasoning, student_feedback
 
 
-def run_module_c(ctx: FourTierContext) -> tuple[str, str, float, str]:
+def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, float, str]:
     """Modul C — Klasifikasi Tipe Miskonsepsi dari Katalog."""
     misc_label_map = {str(m['id']): str(m['label']) for m in ctx.misconceptions}
     
@@ -439,7 +459,7 @@ def run_module_c(ctx: FourTierContext) -> tuple[str, str, float, str]:
         f"Jawaban (Tier 1): {ctx.tier1_answer}\n"
         f"Alasan (Tier 3): {ctx.tier3_reason}"
     )
-    data = _call_llm_json(sys_prompt, user_prompt)
+    data = _call_llm_json(sys_prompt, user_prompt, model_identifier)
     code = str(data.get('misconception_code') or 'MK-LAIN').strip()
     
     raw_name = str(data.get('misconception_name') or '').strip()
@@ -493,6 +513,8 @@ def analyze_submission(submission_id: str) -> str:
 
     try:
         ctx = load_context(submission_id)
+        # Resolve once so every module and the audit record use the same model.
+        model_identifier = get_active_model_identifier()
 
         # 1. Deterministic Heuristic Pre-Checks
         flags = compute_heuristic_flags(ctx.tier1_answer, ctx.tier3_reason)
@@ -504,7 +526,7 @@ def analyze_submission(submission_id: str) -> str:
 
         # 2. Penanganan t3_kosong (< 5 kata / kosong)
         if 't3_kosong' in flags:
-            mod_a_score, mod_a_exp = run_module_a(ctx)
+            mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
             mod_b_score = 'SALAH'
             mod_b_exp = 'Alasan tidak diisi atau kurang dari 5 kata (t3_kosong). Diarahkan ke LK untuk penguatan materi dasar.'
             student_feedback = {
@@ -527,8 +549,8 @@ def analyze_submission(submission_id: str) -> str:
             else:
                 eval_b_ctx = ctx
 
-            mod_a_score, mod_a_exp = run_module_a(ctx)
-            mod_b_score, mod_b_exp, student_feedback = run_module_b(eval_b_ctx)
+            mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
+            mod_b_score, mod_b_exp, student_feedback = run_module_b(eval_b_ctx, model_identifier)
 
             # Safeguard C: Validasi di Python
             t3_words = [w for w in ctx.tier3_reason.strip().split() if w]
@@ -545,7 +567,7 @@ def analyze_submission(submission_id: str) -> str:
             mod_c_exp = ''
             mod_c_conf = 0.0
             if mod_b_score == 'SALAH' or 't1_berisi_alasan' in flags:
-                mod_c_code, mod_c_label, mod_c_conf, mod_c_exp = run_module_c(ctx)
+                mod_c_code, mod_c_label, mod_c_conf, mod_c_exp = run_module_c(ctx, model_identifier)
 
             # Matriks Keputusan
             category, meaning, risk = evaluate_decision_matrix(
@@ -631,7 +653,7 @@ def analyze_submission(submission_id: str) -> str:
                 """,
                 [
                     submission_id,
-                    settings.LLM_MODEL[:100],
+                    model_identifier[:100],
                     PROMPT_VERSION,
                     percentage_correct,
                     tier_level,

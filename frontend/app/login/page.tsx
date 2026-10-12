@@ -133,6 +133,7 @@ export default function LoginPage() {
         >
           {isRegister && (
             <label
+              htmlFor="register-full-name"
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -155,6 +156,7 @@ export default function LoginPage() {
                   }}
                 />
                 <input
+                  id="register-full-name"
                   type="text"
                   autoComplete="name"
                   required
@@ -169,6 +171,7 @@ export default function LoginPage() {
           )}
           {isRegister && (
             <label
+              htmlFor="register-nim"
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -191,6 +194,7 @@ export default function LoginPage() {
                   }}
                 />
                 <input
+                  id="register-nim"
                   type="text"
                   autoComplete="username"
                   required
@@ -204,6 +208,7 @@ export default function LoginPage() {
             </label>
           )}
           <label
+            htmlFor="auth-email"
             style={{
               display: "flex",
               flexDirection: "column",
@@ -226,6 +231,7 @@ export default function LoginPage() {
                 }}
               />
               <input
+                id="auth-email"
                 type="email"
                 autoComplete="email"
                 required
@@ -239,6 +245,7 @@ export default function LoginPage() {
           </label>
 
           <label
+            htmlFor="auth-password"
             style={{
               display: "flex",
               flexDirection: "column",
@@ -261,6 +268,7 @@ export default function LoginPage() {
                 }}
               />
               <input
+                id="auth-password"
                 type={showPassword ? "text" : "password"}
                 autoComplete={isRegister ? "new-password" : "current-password"}
                 required
@@ -294,6 +302,7 @@ export default function LoginPage() {
 
           {isRegister && (
             <label
+              htmlFor="register-password-confirmation"
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -316,6 +325,7 @@ export default function LoginPage() {
                   }}
                 />
                 <input
+                  id="register-password-confirmation"
                   type={showPassword ? "text" : "password"}
                   autoComplete="new-password"
                   required

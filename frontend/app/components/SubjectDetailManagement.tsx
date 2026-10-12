@@ -57,6 +57,7 @@ type ExamPackage = {
   subject_id: string;
   question_count: number;
   is_active: boolean;
+  is_closed: boolean;
   created_at: string;
 };
 const blankTopic = { name: "", description: "" };
@@ -738,13 +739,14 @@ function LecturerWorkspace({
                               event.stopPropagation();
                               onTogglePackage(item.id);
                             }}
+                            disabled={item.is_closed}
                             className="btn-secondary table-action-button"
                             aria-label={
                               item.is_active
                                 ? `Nonaktifkan ${item.title}`
                                 : `Aktifkan ${item.title}`
                             }
-                            title={item.is_active ? "Nonaktifkan" : "Aktifkan"}
+                            title={item.is_closed ? "Paket sudah ditutup" : item.is_active ? "Nonaktifkan" : "Aktifkan"}
                           >
                             {item.is_active ? (
                               <CircleStop
@@ -785,9 +787,10 @@ function LecturerWorkspace({
                                 `/exam-packages/${item.id}/edit?subject_id=${item.subject_id}`,
                               );
                             }}
+                            disabled={item.is_closed}
                             className="btn-secondary table-action-button"
                             aria-label={`Edit ${item.title}`}
-                            title="Edit paket"
+                            title={item.is_closed ? "Paket sudah ditutup" : "Edit paket"}
                           >
                             <Pencil
                               size={18}
