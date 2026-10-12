@@ -1,18 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Bell,
-  Building2,
-  CircleCheck,
-  KeyRound,
-  Moon,
-  Palette,
-  Save,
-  ShieldCheck,
-  Sun,
-} from "lucide-react";
+import { BrainCircuit, Building2, Check, ChevronDown, Palette, ShieldCheck, Sun } from "lucide-react";
 
 import { useAuth } from "../components/AuthProvider";
 import { apiFetch } from "../lib/api";
@@ -22,132 +12,11 @@ import PageHeader from "../components/PageHeader";
 import FeedbackModal from "../components/FeedbackModal";
 
 type SubjectSummary = { slug: string; name: string };
-type NotifSettings = {
-  submissionAlerts: boolean;
-  emailDigest: boolean;
-  marketing: boolean;
-};
-type SystemSettings = {
-  registrationOpen: boolean;
-  requireValidation: boolean;
-  autoPublish: boolean;
-};
-
-const DEFAULT_SETTINGS = {
-  notifications: {
-    submissionAlerts: true,
-    emailDigest: false,
-    marketing: false,
-  },
-  system: {
-    registrationOpen: true,
-    requireValidation: false,
-    autoPublish: false,
-  },
-};
-
-function loadPrefs(): { notifications: NotifSettings; system: SystemSettings } {
-  try {
-    const raw = localStorage.getItem("app_settings");
-    if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<{
-      notifications: NotifSettings;
-      system: SystemSettings;
-    }>;
-    return {
-      notifications: {
-        ...DEFAULT_SETTINGS.notifications,
-        ...(parsed.notifications ?? {}),
-      },
-      system: { ...DEFAULT_SETTINGS.system, ...(parsed.system ?? {}) },
-    };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
-}
-
-function Switch({
-  checked,
-  onChange,
-  label,
-  desc,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-  desc: string;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "12px",
-        padding: "0.75rem 0.9rem",
-        borderRadius: "var(--radius-sm)",
-        background: "var(--input-bg)",
-        border: "1px solid var(--border-color)",
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <p
-          style={{
-            fontSize: "0.85rem",
-            fontWeight: 600,
-            color: "var(--text-main)",
-            margin: 0,
-          }}
-        >
-          {label}
-        </p>
-        <p
-          style={{
-            fontSize: "0.75rem",
-            color: "var(--text-muted)",
-            margin: "0.2rem 0 0",
-          }}
-        >
-          {desc}
-        </p>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        style={{
-          appearance: "none",
-          width: "44px",
-          height: "24px",
-          borderRadius: "9999px",
-          background: checked ? "var(--primary)" : "var(--input-border)",
-          border: "none",
-          cursor: "pointer",
-          flexShrink: 0,
-          position: "relative",
-          transition: "background 0.2s ease",
-        }}
-      >
-        <span
-          style={{
-            position: "absolute",
-            top: "3px",
-            left: checked ? "23px" : "3px",
-            width: "18px",
-            height: "18px",
-            borderRadius: "50%",
-            background: "#ffffff",
-            transition: "left 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-          }}
-        />
-      </button>
-    </div>
-  );
-}
+type AiModel = { identifier: string; display_name: string; provider: string };
+type AiSettings = { active_model_identifier: string; models: AiModel[] };
 
 function SectionCard({
-  icon,
+  icon: Icon,
   title,
   desc,
   children,
@@ -155,49 +24,17 @@ function SectionCard({
   icon: typeof ShieldCheck;
   title: string;
   desc: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
-  const Icon = icon;
   return (
-    <section
-      className="glass-card"
-      style={{ padding: "1.25rem", borderRadius: "var(--radius-lg)" }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          marginBottom: "0.25rem",
-        }}
-      >
-        <div
-          style={{
-            width: "36px",
-            height: "36px",
-            borderRadius: "var(--radius-sm)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(99, 102, 241, 0.15)",
-            color: "var(--primary)",
-          }}
-        >
+    <section className="glass-card" style={{ padding: "1.25rem", borderRadius: "var(--radius-lg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "0.25rem" }}>
+        <div style={{ width: "36px", height: "36px", borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(99, 102, 241, 0.15)", color: "var(--primary)" }}>
           <Icon size={19} />
         </div>
         <div>
-          <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>
-            {title}
-          </h2>
-          <p
-            style={{
-              fontSize: "0.78rem",
-              color: "var(--text-muted)",
-              margin: "0.15rem 0 0",
-            }}
-          >
-            {desc}
-          </p>
+          <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{title}</h2>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.15rem 0 0" }}>{desc}</p>
         </div>
       </div>
       <div style={{ marginTop: "0.9rem" }}>{children}</div>
@@ -209,15 +46,15 @@ export default function SettingsPage() {
   const { user, token, loading } = useAuth();
   const router = useRouter();
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
-  // Loaded in an effect (not during render) so the server and first client render agree.
-  const [notifications, setNotifications] = useState<NotifSettings>(
-    DEFAULT_SETTINGS.notifications,
-  );
-  const [system, setSystem] = useState<SystemSettings>(DEFAULT_SETTINGS.system);
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+
+  const isAdmin = user?.is_superuser === true;
+  const modelMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!loading && (!user || !token)) {
@@ -225,355 +62,138 @@ export default function SettingsPage() {
       return;
     }
     if (!user || !token) return;
-    apiFetch<{ summary: { my_subjects?: SubjectSummary[] } }>(
-      "/dashboard/summary",
-    )
-      .then((d) => {
-        const subs = d?.summary?.my_subjects ?? [];
-        setSubjects(subs);
-      })
+
+    apiFetch<{ summary: { my_subjects?: SubjectSummary[] } }>("/dashboard/summary")
+      .then((data) => setSubjects(data?.summary?.my_subjects ?? []))
       .catch(() => {});
+
+    if (user.is_superuser) {
+      apiFetch<AiSettings>("/admin/ai/settings")
+        .then((data) => {
+          setAiSettings(data);
+          setSelectedModel(data.active_model_identifier);
+        })
+        .catch((err: Error) => setError(err.message));
+    }
   }, [user, token, loading, router]);
 
-  function persistNotifications(next: NotifSettings) {
-    setNotifications(next);
-    const prefs = loadPrefs();
-    localStorage.setItem(
-      "app_settings",
-      JSON.stringify({ ...prefs, notifications: next }),
-    );
-  }
+  useEffect(() => {
+    function closeMenu(event: MouseEvent) {
+      if (!modelMenuRef.current?.contains(event.target as Node)) setModelMenuOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setModelMenuOpen(false);
+    }
+    document.addEventListener("mousedown", closeMenu);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeMenu);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
 
-  function persistSystem(next: SystemSettings) {
-    setSystem(next);
-    const prefs = loadPrefs();
-    localStorage.setItem(
-      "app_settings",
-      JSON.stringify({ ...prefs, system: next }),
-    );
-  }
-
-  function handlePasswordChange(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function activateModel() {
+    if (!selectedModel) return;
+    setAiLoading(true);
     setError("");
     setNotice("");
-    if (password.length < 8) {
-      setError("Kata sandi minimal 8 karakter.");
-      return;
+    try {
+      const data = await apiFetch<{ active_model_identifier: string }>("/admin/ai/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ identifier: selectedModel }),
+      });
+      setAiSettings((current) => current && { ...current, active_model_identifier: data.active_model_identifier });
+      setNotice("Model aktif diperbarui. Analisis baru akan memakai model ini.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Model tidak dapat diperbarui.");
+    } finally {
+      setAiLoading(false);
     }
-    if (password !== confirmPassword) {
-      setError("Konfirmasi kata sandi tidak matc.");
-      return;
+  }
+
+  async function testModel() {
+    if (!selectedModel) return;
+    setAiLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const data = await apiFetch<{ detail: string }>("/admin/ai/test", {
+        method: "POST",
+        body: JSON.stringify({ identifier: selectedModel }),
+      });
+      setNotice(data.detail);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Koneksi model gagal.");
+    } finally {
+      setAiLoading(false);
     }
-    setPassword("");
-    setConfirmPassword("");
-    setNotice("Perubahan kata sandi akan tersedia di fase berikutnya.");
   }
 
   return (
     <PageContainer>
-      <PageHeader
-        className="mb-6"
-        title="Settings"
-        description="Konfigurasi akun, tampilan, notifikasi dan sistem."
-        icon={ShieldCheck}
-      />
+      <PageHeader className="mb-6" title="Settings" description="Informasi akun dan preferensi tampilan aplikasi." icon={ShieldCheck} />
 
-      {notice && (
-        <div
-          role="status"
-          style={{
-            borderRadius: "var(--radius-sm)",
-            border: "1px solid rgba(99, 102, 241, 0.25)",
-            background: "rgba(99, 102, 241, 0.1)",
-            color: "var(--text-muted)",
-            fontSize: "0.85rem",
-            padding: "0.7rem 1rem",
-            marginBottom: "1.25rem",
-          }}
-        >
-          <CircleCheck
-            size={16}
-            style={{ marginRight: "8px", verticalAlign: "middle" }}
-          />
-          {notice}
-        </div>
-      )}
+      {notice && <p role="status" style={{ margin: "0 0 1.25rem", color: "var(--success, #16a34a)", fontSize: "0.85rem" }}>{notice}</p>}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
-          gap: "20px",
-        }}
-      >
-        <SectionCard
-          icon={KeyRound}
-          title="Akun & Keamanan"
-          desc="Informasi identitas dan kata sandi."
-        >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "10px",
-            }}
-          >
-            <p
-              style={{
-                fontSize: "0.75rem",
-                color: "var(--text-muted)",
-                margin: 0,
-              }}
-            >
-              Nama
-            </p>
-            <p
-              style={{
-                fontSize: "0.85rem",
-                fontWeight: 600,
-                color: "var(--text-main)",
-                margin: 0,
-              }}
-            >
-              {user?.full_name}
-            </p>
-            <p
-              style={{
-                fontSize: "0.75rem",
-                color: "var(--text-muted)",
-                margin: 0,
-              }}
-            >
-              Email
-            </p>
-            <p
-              style={{
-                fontSize: "0.85rem",
-                fontWeight: 600,
-                color: "var(--text-main)",
-                margin: 0,
-              }}
-            >
-              {user?.email}
-            </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "20px" }}>
+        <SectionCard icon={ShieldCheck} title="Akun" desc="Informasi identitas akun Anda.">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.85rem" }}>
+            <span style={{ color: "var(--text-muted)" }}>Nama</span><strong>{user?.full_name}</strong>
+            <span style={{ color: "var(--text-muted)" }}>Email</span><strong>{user?.email}</strong>
           </div>
-          <form
-            onSubmit={handlePasswordChange}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "10px",
-              marginTop: "1rem",
-            }}
-          >
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Kata sandi baru"
-              className="form-input"
-            />
-            <input
-              type="password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Konfirmasi kata sandi"
-              className="form-input"
-            />
-            <button
-              type="submit"
-              className="btn-secondary"
-              style={{ justifyContent: "flex-start", padding: "0.6rem 0.9rem" }}
-            >
-              <Save size={16} color="var(--primary)" />
-              Perbarui Kata Sandi
-            </button>
-          </form>
         </SectionCard>
 
-        <SectionCard
-          icon={Palette}
-          title="Tampilan"
-          desc="Mode kolor dan tampilan aplikasi."
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "0.75rem 0.9rem",
-              borderRadius: "var(--radius-sm)",
-              background: "var(--input-bg)",
-              border: "1px solid var(--border-color)",
-            }}
-          >
+        <SectionCard icon={Palette} title="Tampilan" desc="Mode warna aplikasi.">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "0.75rem 0.9rem", borderRadius: "var(--radius-sm)", background: "var(--input-bg)", border: "1px solid var(--border-color)" }}>
             <div>
-              <p
-                style={{
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  color: "var(--text-main)",
-                  margin: 0,
-                }}
-              >
-                <Sun
-                  size={14}
-                  style={{
-                    marginRight: "6px",
-                    verticalAlign: "middle",
-                    color: "var(--primary)",
-                  }}
-                />
-                Mode Gelap / Terang
-              </p>
-              <p
-                style={{
-                  fontSize: "0.75rem",
-                  color: "var(--text-muted)",
-                  margin: "0.2rem 0 0",
-                }}
-              >
-                Beralih antara tema gelap dan terang.
-              </p>
+              <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-main)", margin: 0 }}><Sun size={14} style={{ marginRight: "6px", verticalAlign: "middle", color: "var(--primary)" }} />Mode Gelap / Terang</p>
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>Beralih antara tema gelap dan terang.</p>
             </div>
             <ThemeToggle />
           </div>
-          <p
-            style={{
-              fontSize: "0.78rem",
-              color: "var(--text-muted)",
-              marginTop: "0.9rem",
-            }}
-          >
-            <Moon
-              size={14}
-              style={{
-                marginRight: "6px",
-                verticalAlign: "middle",
-                color: "var(--primary)",
-              }}
-            />
-            Preferensi tema disimpan lokalis dan aktif untuk seluruh halaman.
-          </p>
         </SectionCard>
 
-        <SectionCard
-          icon={Bell}
-          title="Notifikasi"
-          desc="Kontrol peransman alert dan laporan."
-        >
-          <Switch
-            checked={notifications.submissionAlerts}
-            onChange={(next) =>
-              persistNotifications({ ...notifications, submissionAlerts: next })
-            }
-            label="Alert pengumpulan"
-            desc="Notifikasi wanneer mahasiswa indient een pengumpulan."
-          />
-          <Switch
-            checked={notifications.emailDigest}
-            onChange={(next) =>
-              persistNotifications({ ...notifications, emailDigest: next })
-            }
-            label="Digest email"
-            desc="Ringkasan aktivitas periodek via email."
-          />
-          <Switch
-            checked={notifications.marketing}
-            onChange={(next) =>
-              persistNotifications({ ...notifications, marketing: next })
-            }
-            label="Update produk"
-            desc="Berita functie en aankondiging platform."
-          />
+        <SectionCard icon={Building2} title="Mata Kuliah" desc="Mata kuliah yang Anda akses.">
+          {subjects.length ? <ul style={{ margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "8px", listStyle: "none" }}>
+            {subjects.map((subject) => <li key={subject.slug} style={{ padding: "0.6rem 0.9rem", borderRadius: "var(--radius-sm)", background: "var(--input-bg)", border: "1px solid var(--border-color)", fontSize: "0.85rem", fontWeight: 600 }}>{subject.name}</li>)}
+          </ul> : <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Belum ada mata kuliah terdaftar.</p>}
         </SectionCard>
 
-        <SectionCard
-          icon={Building2}
-          title="Mata Kuliah"
-          desc="Mata kuliah yang terdireksi op platform."
-        >
-          {subjects.length > 0 ? (
-            <ul
-              style={{
-                margin: 0,
-                padding: 0,
-                display: "flex",
-                flexDirection: "column",
-                gap: "8px",
-                listStyle: "none",
-              }}
+        {isAdmin && <SectionCard icon={BrainCircuit} title="Analisis AI" desc="Model yang dipakai untuk analisis baru.">
+          <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: "6px" }} htmlFor="ai-model">Model disetujui</label>
+          <div ref={modelMenuRef} style={{ position: "relative" }}>
+            <button
+              id="ai-model"
+              type="button"
+              className="form-select"
+              aria-haspopup="listbox"
+              aria-expanded={modelMenuOpen}
+              aria-controls="ai-model-options"
+              disabled={aiLoading || !aiSettings}
+              onClick={() => setModelMenuOpen((open) => !open)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", textAlign: "left", cursor: "pointer" }}
             >
-              {subjects.map((s) => (
-                <li
-                  key={s.slug}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "0.6rem 0.9rem",
-                    borderRadius: "var(--radius-sm)",
-                    background: "var(--input-bg)",
-                    border: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "0.85rem",
-                      fontWeight: 600,
-                      color: "var(--text-main)",
-                    }}
-                  >
-                    {s.name}
-                  </span>
-                  <span className="badge badge-active">Aktif</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-              Belum ada mata kuliah geregistreerd.
-            </p>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          icon={ShieldCheck}
-          title="Sistem"
-          desc="Peransman konfigurasi platform."
-        >
-          <Switch
-            checked={system.registrationOpen}
-            onChange={(next) =>
-              persistSystem({ ...system, registrationOpen: next })
-            }
-            label="Registrasi buka"
-            desc="Laat nieuwe akun zich registreren."
-          />
-          <Switch
-            checked={system.requireValidation}
-            onChange={(next) =>
-              persistSystem({ ...system, requireValidation: next })
-            }
-            label="Validasi verplicht"
-            desc="Verplicht validasi dosen voordat score definitief."
-          />
-          <Switch
-            checked={system.autoPublish}
-            onChange={(next) => persistSystem({ ...system, autoPublish: next })}
-            label="Auto-publikasi"
-            desc="Publikasi soal langsung wanneer bobot exact."
-          />
-        </SectionCard>
+              <span>{aiSettings?.models.find((model) => model.identifier === selectedModel)?.display_name ?? "Pilih model"}</span>
+              <ChevronDown size={18} aria-hidden="true" style={{ color: "var(--text-muted)", transform: modelMenuOpen ? "rotate(180deg)" : undefined, transition: "transform 0.15s ease" }} />
+            </button>
+            {modelMenuOpen && <div id="ai-model-options" role="listbox" aria-labelledby="ai-model" style={{ position: "absolute", zIndex: 10, top: "calc(100% + 6px)", left: 0, right: 0, overflow: "hidden", border: "1px solid var(--input-border)", borderRadius: "var(--radius-sm)", background: "var(--bg-card)", boxShadow: "0 12px 28px rgba(0, 0, 0, 0.28)" }}>
+              {aiSettings?.models.map((model) => {
+                const selected = model.identifier === selectedModel;
+                return <button key={model.identifier} type="button" role="option" aria-selected={selected} onClick={() => { setSelectedModel(model.identifier); setModelMenuOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "0.75rem 1rem", border: "none", borderBottom: "1px solid var(--border-color)", background: selected ? "rgba(99, 102, 241, 0.16)" : "transparent", color: "var(--text-main)", cursor: "pointer", fontSize: "0.9rem", fontWeight: selected ? 600 : 400, textAlign: "left" }}>
+                  <span>{model.display_name} <span style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>({model.provider})</span></span>
+                  {selected && <Check size={17} style={{ color: "var(--primary)", flexShrink: 0 }} />}
+                </button>;
+              })}
+            </div>}
+          </div>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0.65rem 0" }}>Perubahan hanya berlaku untuk analisis baru. Kunci dan koneksi AI tetap dikelola melalui deployment.</p>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button type="button" className="btn-secondary" onClick={testModel} disabled={aiLoading || !selectedModel}>Uji Koneksi</button>
+            <button type="button" className="btn-primary" onClick={activateModel} disabled={aiLoading || !selectedModel || selectedModel === aiSettings?.active_model_identifier}>{aiLoading ? "Memproses..." : "Jadikan Aktif"}</button>
+          </div>
+        </SectionCard>}
       </div>
-      <FeedbackModal
-        open={!!error}
-        message={error}
-        onClose={() => setError("")}
-      />
+      <FeedbackModal open={!!error} message={error} onClose={() => setError("")} />
     </PageContainer>
   );
 }

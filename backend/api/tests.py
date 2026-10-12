@@ -2,6 +2,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
+from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 from django.test import SimpleTestCase, TransactionTestCase
@@ -27,6 +28,19 @@ from .models import (
 # Domain schema is unmanaged (managed=False): Django migrations do NOT own it,
 # so bootstrap the test DB from the canonical V2 script before any test runs.
 V2_SQL = Path(__file__).resolve().parent.parent.parent / 'V2_Full_Script.sql'
+
+
+class SecurityConfigurationTests(SimpleTestCase):
+    def test_debug_is_disabled_by_default(self):
+        self.assertFalse(settings.DEBUG)
+
+    def test_admin_subjects_requires_authentication(self):
+        response = APIClient().get(reverse('admin-subject-list'))
+        self.assertEqual(response.status_code, 401)
+
+    def test_help_requires_authentication(self):
+        response = APIClient().get(reverse('help-list'))
+        self.assertEqual(response.status_code, 401)
 
 
 class StudentSubmissionAPITests(TransactionTestCase):
@@ -776,6 +790,23 @@ class ExamPackageDuplicateTests(TransactionTestCase):
         self.assertFalse(ExamPackageAttempt.objects.filter(exam_package=duplicate).exists())
         self.assertFalse(Submission.objects.filter(exam_package=duplicate).exists())
         self.assertNotIn('password_hash', body)
+
+    def test_closed_package_cannot_be_edited_or_toggled(self):
+        self.package.closes_at = timezone.now() - timedelta(seconds=1)
+        self.package.save(update_fields=['closes_at'])
+
+        update = self.client.patch(
+            reverse('exam-package-detail', kwargs={'pk': self.package.id}),
+            {'title': 'Tidak boleh berubah'},
+            format='json',
+        )
+        toggle = self.client.patch(reverse('exam-package-toggle-active', kwargs={'pk': self.package.id}))
+
+        self.assertEqual(update.status_code, 409)
+        self.assertEqual(toggle.status_code, 409)
+        self.package.refresh_from_db()
+        self.assertEqual(self.package.title, 'Paket Asli')
+        self.assertTrue(self.package.is_active)
 
 
 class ExamPackageReviewScopingTests(TransactionTestCase):

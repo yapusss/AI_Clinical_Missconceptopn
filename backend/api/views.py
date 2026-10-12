@@ -26,11 +26,14 @@ from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissio
 from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
+    AiModelChange,
+    AiRuntimeSettings,
     ExamPackage,
     ExamPackageAttempt,
     ExamPackageQuestion,
     HelpArticle,
     LlmAnalysis,
+    LlmModel,
     Misconception,
     Question,
     QuestionSet,
@@ -49,6 +52,7 @@ from .models import (
 )
 from .serializers import (
     AdminManagedUserSerializer,
+    AiModelActivationSerializer,
     LoginSerializer,
     ExamPackageCreateSerializer,
     QuestionSetCreateSerializer,
@@ -605,6 +609,91 @@ def require_admin(request):
     return request.user.is_superuser
 
 
+def serialize_llm_model(model):
+    return {
+        'identifier': model.identifier,
+        'display_name': model.display_name or model.identifier,
+        'provider': model.provider,
+    }
+
+
+class AdminAiSettingsView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        models = list(LlmModel.objects.filter(is_enabled=True, deprecated_at__isnull=True).order_by('display_name', 'identifier'))
+        active_identifier = settings.LLM_MODEL
+        try:
+            configured = AiRuntimeSettings.objects.select_related('active_model').get(pk=True)
+            if configured.active_model.is_enabled and configured.active_model.deprecated_at is None:
+                active_identifier = configured.active_model.identifier
+        except AiRuntimeSettings.DoesNotExist:
+            pass
+        return Response({'active_model_identifier': active_identifier, 'models': [serialize_llm_model(model) for model in models]})
+
+    def patch(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AiModelActivationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            model = LlmModel.objects.get(
+                identifier=serializer.validated_data['identifier'], is_enabled=True, deprecated_at__isnull=True
+            )
+        except LlmModel.DoesNotExist:
+            return Response({'detail': 'Model tidak tersedia untuk analisis.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            configured, created = AiRuntimeSettings.objects.select_for_update().get_or_create(
+                pk=True,
+                defaults={'active_model': model, 'updated_by': request.user},
+            )
+            previous_identifier = '' if created else configured.active_model.identifier
+            if created or configured.active_model_id != model.id:
+                configured.active_model = model
+                configured.updated_by = request.user
+                configured.save(update_fields=['active_model', 'updated_by', 'updated_at'])
+                AiModelChange.objects.create(
+                    previous_model_identifier=previous_identifier,
+                    active_model=model,
+                    changed_by=request.user,
+                )
+        return Response({'active_model_identifier': model.identifier})
+
+
+class AdminAiModelTestView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AiModelActivationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            model = LlmModel.objects.get(
+                identifier=serializer.validated_data['identifier'], is_enabled=True, deprecated_at__isnull=True
+            )
+        except LlmModel.DoesNotExist:
+            return Response({'detail': 'Model tidak tersedia untuk pengujian.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from .llm import get_llm_client
+
+            response = get_llm_client().chat.completions.create(
+                model=model.identifier,
+                messages=[{'role': 'user', 'content': 'Balas dengan OK.'}],
+                temperature=0,
+                max_tokens=8,
+            )
+            if not response.choices or not response.choices[0].message.content:
+                raise RuntimeError('Respons model kosong.')
+        except Exception as exc:
+            return Response({'detail': f'Koneksi model gagal: {str(exc)[:300]}'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'detail': 'Koneksi model berhasil.'})
+
+
 def plain_text_preview(value, length):
     """Collapse rich-text HTML into a single-line plain-text preview."""
     text = ' '.join(strip_tags(str(value or '')).split())
@@ -620,6 +709,7 @@ def serialize_help_article(article):
 
 class HelpArticleListView(APIView):
     authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         role = request.query_params.get('role', 'GENERAL')
@@ -847,11 +937,14 @@ class AdminManagedUserDetailView(APIView):
 
 class AdminSubjectListView(APIView):
     authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if require_admin(request):
             subjects = Subject.objects.order_by('name')
         else:
+            if not UserRole.objects.filter(user=request.user, role=UserRole.Role.LECTURER).exists():
+                return Response({'detail': 'Akses administrator atau dosen diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
             subject_ids = UserSubjectRole.objects.filter(user=request.user, role=UserSubjectRole.Role.LECTURER).values_list('subject_id', flat=True)
             subjects = Subject.objects.filter(id__in=subject_ids).order_by('name')
         return Response([serialize_admin_subject(subject) for subject in subjects])
@@ -2377,6 +2470,7 @@ def exam_package_payload(package, question_count=0, question_ids=None):
         'subject_id': str(package.subject_id), 'subject_name': package.subject.name,
         'is_active': package.is_active, 'question_count': question_count,
         'opens_at': package.opens_at, 'closes_at': package.closes_at,
+        'is_closed': package_is_closed(package),
         'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
         'score_policy': package.score_policy,
         'expiry_behavior': package.expiry_behavior,
@@ -2414,6 +2508,10 @@ def validate_exam_package_questions(subject_id, question_ids):
 def package_is_open(package):
     now = timezone.now()
     return package.is_active and (not package.opens_at or now >= package.opens_at) and (not package.closes_at or now <= package.closes_at)
+
+
+def package_is_closed(package):
+    return bool(package.closes_at and timezone.now() >= package.closes_at)
 
 
 def package_access_error(package):
@@ -2550,6 +2648,8 @@ class ExamPackageDetailView(APIView):
         package, error = self.get_package(request, pk)
         if error:
             return error
+        if package_is_closed(package):
+            return Response({'detail': 'Paket ujian yang sudah ditutup tidak dapat diubah.'}, status=status.HTTP_409_CONFLICT)
         merged = {
             'subject_id': package.subject_id, 'code': package.code, 'title': package.title,
             'question_ids': list(ExamPackageQuestion.objects.filter(exam_package=package).order_by('order_index').values_list('question_id', flat=True)),
@@ -2593,6 +2693,8 @@ class ExamPackageDetailView(APIView):
         package, error = self.get_package(request, pk)
         if error:
             return error
+        if package_is_closed(package):
+            return Response({'detail': 'Paket ujian yang sudah ditutup tidak dapat dihapus.'}, status=status.HTTP_409_CONFLICT)
         if Submission.objects.filter(exam_package=package).exists():
             return Response({'detail': 'Paket dengan pengumpulan mahasiswa tidak dapat dihapus.'}, status=status.HTTP_409_CONFLICT)
         package.delete()
@@ -2610,6 +2712,8 @@ class ExamPackageToggleActiveView(APIView):
             return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
         if not is_lecturer_for_subject(request.user, package.subject_id):
             return Response({'detail': 'Anda tidak berwenang mengubah paket ujian ini.'}, status=status.HTTP_403_FORBIDDEN)
+        if package_is_closed(package):
+            return Response({'detail': 'Paket ujian yang sudah ditutup tidak dapat diubah.'}, status=status.HTTP_409_CONFLICT)
         if not package.is_active and not ExamPackageQuestion.objects.filter(exam_package=package).exists():
             return Response({'detail': 'Paket aktif harus memiliki minimal satu soal.'}, status=status.HTTP_400_BAD_REQUEST)
         package.is_active = not package.is_active
