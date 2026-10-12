@@ -44,16 +44,47 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   (3 `ACCEPTED` + 1 `EDITED`) were created during the phase so the metrics block is non-empty — they are audit
   fixtures, not lecturer data. Reusable harness: `D:/ClinicalAI_Misconception/scripts/r4_audit.py` (read-only,
   recomputes every grounding metric from the DB and diffs it against the live API; rerun it after R5).
-- **Next: R5 (backend)** — task file ready at `docs/R5_TASK.md`. Scope: new `backend/api/materials_views.py`
-  (upload/list/delete, lecturer-scoped), `api/urls.py` routes, `ingest_materials --pending` drain (upload writes a
-  `PENDING` row, a poller ingests it — no Celery, mirrors `analyze_submissions --loop`), and the grounding-metrics
-  fix from open item §9b #10 as the **first commit**. Two commits, no frontend file.
-- **R6 = lecturer UI** (`/materials` + `/metrics` pages, `validation/[id]` citations + learning list,
+- **R5 — done, audited by independent audit (2026-10-12, commits `d5dec9e` + `2594938`).** `materials_views.py`
+  (upload/list/delete, lecturer-scoped), `api/urls.py` routes, `ingest_materials --pending`/`--loop` drain,
+  grounding computed over **all analyses in scope** (supersedes R4's source). Personally reproduced: 31/31 tests
+  green; upload → `PENDING` → one `--pending` pass → corrupt `.pdf` `FAILED` with `ingest_error` **and** good `.md`
+  `READY` with chunks in the same run; delete `204` + chunks cascaded + file gone; `?subject_id=<Chemistry>`
+  (0 validations) returns all 8 grounding keys; denominator triangulation now matches *all analyses in scope*
+  (4 analyses-of-validations no longer reconcile, 6 analyses-in-scope do). Findings: **F1 (fix in R5F)** `?model=`
+  no longer restricts the grounding block — `?model=openai/does-not-exist` returned pooled `0.6517 / coverage 0.5`
+  and a `by_model` row for a model that is not the filter, contradicting its own docstring; F2 `POST /api/materials`
+  accepts a cross-subject `topic_id` (Physics doc accepted a Biology topic → corpus row unreachable to
+  topic-narrowed retrieval); F3 `by_model` row-set asymmetry between the two branches (unobservable while one
+  model identifier exists); F5 `.markdown` in the allow-list; F6 orphan chunks if a run dies mid-insert.
+- **Next: R5F (patch phase)** — task file ready at `docs/R5F_TASK.md`: make `_scope_analyses` model-aware so
+  `?model=` restricts the grounding block in both branches, plus a DB-free test. Evidence must come from
+  **PDF-anchored analyses only** (`8a0f0dc2…` 0.5252, `1c1d7bf2…` 0.5679 → mean/median 0.5465). No other finding
+  is in scope.
+- **Then R6 = lecturer UI** (`/materials` + `/metrics` pages, `validation/[id]` citations + learning list,
   `app/lib/studentSubmissions.ts`, sidebar) with the prod-build browser pass; **R7 = gated student surface**.
   The 2026-10-08 build order called the UI "R5" — the phases were renumbered 2026-10-12 when the materials API
   was split out of it (plan §10).
 
-## R5 dispatch (ready)
+## R5F dispatch (ready)
+
+```bash
+cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
+  env -u PWD -u OLDPWD \
+  "C:/Users/Pongo/AppData/Local/Programs/@opencodedesktop/resources/opencode-cli.exe" \
+  run --standalone --auto --model alibaba-token-plan/qwen3.8-max \
+  "Read docs/R5F_TASK.md in this repository and execute it exactly."
+```
+
+Run it with `background=true, notify=true, persist_on_release=true`. Scope for the child:
+`backend/api/validation_views.py` (make `_scope_analyses` model-aware, pass `model_filter` from both call sites)
++ `backend/api/tests_reference_materials.py` (DB-free filter test). Verify after it reports:
+(a) `?model=openai/does-not-exist` returns the zero-analyses shape (all grounding values `null`, buckets `{}`,
+`by_model []`) instead of pooled `0.6517 / coverage 0.5`; (b) `?model=openai/gpt-oss-20b` is identical to the
+unfiltered payload; (c) the unfiltered payload still reads `total_validations 4`, mean `0.6517`, coverage `0.5`,
+`no_grounding_count 3`; (d) the PDF-anchored block over `8a0f0dc2…` + `1c1d7bf2…` still reads mean = median
+`0.5465`, coverage `1.0`, validity `1.0`; (e) no new data row, no frontend file, 31 existing tests still green.
+
+## R5 dispatch (done — commits `d5dec9e` + `2594938`, audited 2026-10-12, fix in R5F)
 
 ```bash
 cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
@@ -192,3 +223,12 @@ pointer, so the CLI arg cannot be mangled. Verify the child's claims yourself: i
   `knowledge_documents` row; `manage.py ingest_materials --pending` (a poller, like `analyze_submissions --loop`)
   does extract → chunk → embed → READY. Nothing embeds inside a web request, and a corrupt document is marked
   `FAILED` with `ingest_error` without killing the run.
+- **The dev DB contains audit fixtures that are NOT real course data — and `grounding_similarity` alone cannot tell
+  them apart.** Created during R4/R5 verification (2026-10-12): the Chemistry subject
+  `0b000000-0000-0000-0000-000000000030` (+ its set/question/submission/role grants), the ad-hoc `.md` upload
+  `r5_sample2` (`knowledge_documents.id = 8e0d21ac-b698-44fa-9241-6a77c3d21f30`, 1 chunk), and
+  the analysis `eda8f335-d4af-406a-9b54-fba77f84bbcf` whose **0.8620** similarity comes from citing `r5_sample2`,
+  not the textbook. 4 of the 4 `validations` rows are also audit fixtures (see R4 above). Consequence: "mean
+  grounding 0.6517 over 6 analyses" is *not* a course-quality number. When asserting on grounding, filter to
+  **PDF-anchored** analyses (references resolving into the `Sears%` document): today only `8a0f0dc2…` 0.5252 and
+  `1c1d7bf2…` 0.5679 → mean = median 0.5465. A `grounding_similarity` value alone proves nothing about the source.
