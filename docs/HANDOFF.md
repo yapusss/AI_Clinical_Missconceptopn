@@ -33,13 +33,23 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   green; real Physics submission re-analysed → grounding 0.5679/0.5769, 2 valid citations (entropy passages
   pp. 133/142), populated `what_should_be_learned`; no-materials subject with DEAD `EMBEDDINGS_BASE_URL` still
   reached `PENDING_VALIDATION` with NULL grounding + `[]` materials (outage + zero-chunk regression in one).
-- **Next: R4** — task file ready at `docs/R4_TASK.md` (grounding metrics in `_compute_metrics` +
-  `by_model` rows + `ValidationDetailView` exposure incl. the `concept_breakdown_json` UI bug fix,
-  per brief §9–10.1). Anchors verified live: `_compute_metrics` at validation_views.py:402–494,
-  `by_model` rows 549–558, note at 563, detail view `llm` dict 225–242, frontend bug reference
-  (page.tsx reads `det.llm.concept_breakdown_json`, backend never sent it).
+- **R4 — done, verified by independent audit (2026-10-12, commit `c5b8910`).** `_grounding_metrics()` +
+  merge into `_compute_metrics` (`validation_views.py:418`, `:569`), grounding keys on every `by_model` row,
+  `_grounding_detail` exposure incl. the `concept_breakdown_json` UI-bug fix. Personally re-ran: `manage.py check`
+  clean; **21/21** tests green; `GET /api/metrics/model` returns all 8 top-level keys — mean **0.5465**,
+  coverage **0.5**, validity **1.0**, `no_grounding_count` **2** — reconciling with raw SQL (`docker exec psql`;
+  4 current analyses, 2 grounded); `GET /api/validations/{id}` exposes all 6 keys on all 4 analyses with
+  `len(references) == grounding_citation_count` and payloads matching the DB row-for-row; the 21-slot
+  `sp_record_llm_analysis` call and `prompt_version = four-tier-v2.9-rag` unchanged. 4 validations
+  (3 `ACCEPTED` + 1 `EDITED`) were created during the phase so the metrics block is non-empty — they are audit
+  fixtures, not lecturer data. Reusable harness: `D:/ClinicalAI_Misconception/scripts/r4_audit.py` (read-only,
+  recomputes every grounding metric from the DB and diffs it against the live API; rerun it after R5).
+- **Next: R5** — lecturer UI: `/materials` upload page + citation/learning-list rendering on `validation/[id]`,
+  plus the adopted default "build a minimal `/metrics` page". Task file not yet written. **Carry in the R4 open
+  item** (`Context/Reference_Materials_Plan.md` §9b #10): lift the grounding block above the `total == 0`
+  early return so grounding is visible before any validation exists.
 
-## R4 dispatch (ready)
+## R4 dispatch (done — commit `c5b8910`, audited 2026-10-12)
 
 ```bash
 cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
@@ -130,3 +140,21 @@ pointer, so the CLI arg cannot be mangled. Verify the child's claims yourself: i
 - **Two `sp_record_llm_analysis` overloads exist** (11-arg legacy, 20-arg v3). Always `DROP` by exact argument types.
 - The `:5435` PG18 harness has **pgvector stripped** — unusable for this feature. Use `:5433`.
 - The OpenRouter key used in this build was pasted into a chat transcript: **rotate it**.
+- **Auth header is `Bearer`, never `Token`.** `docs/R4_TASK.md` item 4 says `Authorization: Token <token>`; this
+  app's `TokenAuthentication` rejects it with a **403 "Authentication credentials were not provided"** — which
+  reads like a broken endpoint rather than a bad header. Use `Authorization: Bearer <token>`.
+- **`docs/R4_TASK.md` items 4 and 6 are unreachable on this DB as written.** No `four-tier-v2.8` analysis exists
+  anywhere (only `four-tier-v2.9-rag`), so an "old analysis regression curl" cannot be run at all — old-shape
+  safety can only be proven by unit test (`GroundingDetailShapeTests.test_old_analysis_shape_is_stable`). Item 4
+  needs validations to exist before the grounding keys can appear (see the `total == 0` short-circuit below).
+  Any report claiming those two curls was not run.
+- **`/api/metrics/model` short-circuits on `total_validations == 0`** (`validation_views.py:644`), returning only
+  `{total_validations, by_model: [], message}` — so grounding is invisible on any subject with zero validations
+  even when grounded analyses exist. R4 left this as-is (brief-faithful); it is open item §9b #10, to be lifted in
+  R5 alongside the `/metrics` page.
+- **The raw-count convention in `grounding_by_category`/`_by_prompt_version` is "grounded only"**: a bucket
+  appears only if it has an analysis with a non-null similarity (so `count` is the N behind `similarity_mean`).
+  Categories whose analyses are all ungrounded are absent rather than present-with-null — carry that into the
+  `/metrics` page, and to `no_grounding_count` for the complement.
+- **Two frontend dev servers on this 16 GB box will exhaust RAM.** The R5 browser pass wants a **prod** build on
+  `:3002` (HMR/headless-Edge pitfall) — stop the `:3001` dev server first.
