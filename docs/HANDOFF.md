@@ -16,17 +16,20 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
 
 - **R0 — done, verified.** pgvector `0.8.6`; dev DB migrated to `0023`; `pymupdf 1.28.2` in `backend/venv`; OpenRouter
   embeddings proven live (1536 dims, unit-norm, batched).
-- **R1 — done, verified, committed `38fdf2c`.** `0024_grounding_and_knowledge_ingest.py` + `KnowledgeDocument`/
+- **R1 — done, verified, committed `97dbac1`.** (HANDOFF previously cited `38fdf2c`: that is a pre-rebase duplicate,
+  not an ancestor of `HEAD` — the branch was rebased on 2026-10-12, so any hash older than `97dbac1` is orphaned.) `0024_grounding_and_knowledge_ingest.py` + `KnowledgeDocument`/
   `KnowledgeChunk` read-models + `LlmAnalysis` grounding fields + `EMBEDDINGS_*`/`RETRIEVAL_*` settings + `pymupdf`.
   Proven by a forward → reverse → forward cycle (cols 0→7→0→7, proc arities 11/16→11/20), `vector(1536)` and the HNSW
   index untouched.
-- **R2 — done, verified by independent audit (2026-10-11, commit `7c50c2e`).** `api/embeddings.py` +
+- **R2 — done, verified by independent audit (2026-10-11, commit `9d3a869`; the previously cited `7c50c2e` is a
+  pre-rebase orphan).** `api/embeddings.py` +
   `manage.py ingest_materials` match the brief. Personally re-ran: dry-run = 462 pp → **329 chunks**,
   256,004 tokens, $0.0051, zero network calls; real ingest → `READY`, 329/329 rows with non-null embeddings;
   `fn_search_knowledge_chunks("second law of thermodynamics")` returns on-topic entropy/Clausius passages
   (pp. 133–157); `cosine()` handles identical/orthogonal/zero vectors; chunk-count stayed 329 after a
   second `--replace` pass (no doubling).
-- **R3 — done, verified by independent audit (2026-10-11, commit `d6f99e2`).** `llm.py` diff matches brief §8.1–8.6
+- **R3 — done, verified by independent audit (2026-10-11, commit `1ed318c`; the previously cited `d6f99e2` is a
+  pre-rebase orphan).** `llm.py` diff matches brief §8.1–8.6
   (context fields, non-fatal retrieval via `fn_search_knowledge_chunks` + second query for embeddings/titles,
   Modul B/C citation rules + zero-chunk prompts byte-identical, `validate_citations`, 1 advisory embedding call,
   21-placeholder CALL with typed casts, PROMPT version `four-tier-v2.9-rag`). Personally verified: 15/15 tests
