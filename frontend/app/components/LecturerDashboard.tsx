@@ -386,7 +386,7 @@ export default function LecturerDashboard({
               <table className="w-full table-fixed text-left text-sm">
                 <thead className="bg-surface-container-low text-xs uppercase text-on-surface-variant">
                   <tr>
-                    <th className="w-[31%] px-3 py-3">Paket</th>
+                    <th className="w-[31%] px-3 py-3">Judul Paket Soal</th>
                     <th className="w-[19%] px-3 py-3">Mata kuliah</th>
                     <th className="w-[25%] px-3 py-3">Jadwal berakhir</th>
                     <th className="w-[12.5%] px-3 py-3 text-center">Soal</th>
