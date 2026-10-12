@@ -24,7 +24,13 @@ from api.llm import (
     run_module_c,
     validate_citations,
 )
-from api.validation_views import _compute_metrics, _grounding_detail, _grounding_metrics
+from api.validation_views import (
+    _by_model_row,
+    _compute_metrics,
+    _grounding_detail,
+    _grounding_metrics,
+    _zero_validation_payload,
+)
 
 
 def make_ctx(**overrides) -> FourTierContext:
@@ -314,7 +320,9 @@ class GroundingMetricsTests(SimpleTestCase):
         self.assertEqual(metrics['citation_coverage'], 0.0)
         self.assertEqual(metrics['no_grounding_count'], 1)
 
-    def test_compute_metrics_merges_grounding_keys(self):
+    def test_compute_metrics_has_no_grounding_keys(self):
+        # Grounding no longer comes from the validations passed to
+        # _compute_metrics — it is sourced from all analyses in scope.
         analysis = make_analysis(similarity=0.8, citation_count=1, category='SC',
                                  references=[{'valid': True}])
         validation = make_validation(analysis)
@@ -325,8 +333,41 @@ class GroundingMetricsTests(SimpleTestCase):
             'hallucinated_citation_rate', 'grounding_by_category',
             'grounding_by_prompt_version', 'no_grounding_count',
         ):
-            self.assertIn(key, metrics)
-        self.assertAlmostEqual(metrics['grounding_similarity_mean'], 0.8, places=4)
+            self.assertNotIn(key, metrics)
+
+
+class ZeroValidationMetricsTests(SimpleTestCase):
+    def test_zero_validation_payload_reports_grounding(self):
+        grounded = make_analysis(similarity=0.6, citation_count=2, category='SC',
+                                 references=[{'valid': True}, {'valid': True}])
+        ungrounded = make_analysis(category='LK')
+        payload = _zero_validation_payload([grounded, ungrounded])
+
+        self.assertEqual(payload['total_validations'], 0)
+        self.assertIn('note', payload)
+        for key in (
+            'grounding_similarity_mean', 'grounding_similarity_median',
+            'citation_coverage', 'citation_validity_rate',
+            'hallucinated_citation_rate', 'grounding_by_category',
+            'grounding_by_prompt_version', 'no_grounding_count',
+        ):
+            self.assertIn(key, payload)
+        self.assertAlmostEqual(payload['grounding_similarity_mean'], 0.6, places=4)
+        self.assertEqual(payload['citation_coverage'], 0.5)
+        self.assertEqual(payload['no_grounding_count'], 1)
+        self.assertEqual(len(payload['by_model']), 1)
+        row = payload['by_model'][0]
+        self.assertIsNone(row['tier_agreement_accuracy'])       # no validations
+        self.assertAlmostEqual(row['grounding_similarity_mean'], 0.6, places=4)
+
+    def test_by_model_row_grounding_from_analyses_not_validations(self):
+        analysis = make_analysis(similarity=0.7, citation_count=1,
+                                 references=[{'valid': True}])
+        row = _by_model_row('m1', [], [analysis])
+        self.assertEqual(row['total_validations'], 0)
+        self.assertIsNone(row['tier_agreement_accuracy'])
+        self.assertAlmostEqual(row['grounding_similarity_mean'], 0.7, places=4)
+        self.assertEqual(row['citation_coverage'], 1.0)
 
 
 class GroundingDetailShapeTests(SimpleTestCase):
