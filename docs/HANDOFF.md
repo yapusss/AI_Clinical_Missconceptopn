@@ -56,16 +56,26 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   accepts a cross-subject `topic_id` (Physics doc accepted a Biology topic → corpus row unreachable to
   topic-narrowed retrieval); F3 `by_model` row-set asymmetry between the two branches (unobservable while one
   model identifier exists); F5 `.markdown` in the allow-list; F6 orphan chunks if a run dies mid-insert.
-- **Next: R5F (patch phase)** — task file ready at `docs/R5F_TASK.md`: make `_scope_analyses` model-aware so
-  `?model=` restricts the grounding block in both branches, plus a DB-free test. Evidence must come from
-  **PDF-anchored analyses only** (`8a0f0dc2…` 0.5252, `1c1d7bf2…` 0.5679 → mean/median 0.5465). No other finding
-  is in scope.
-- **Then R6 = lecturer UI** (`/materials` + `/metrics` pages, `validation/[id]` citations + learning list,
-  `app/lib/studentSubmissions.ts`, sidebar) with the prod-build browser pass; **R7 = gated student surface**.
-  The 2026-10-08 build order called the UI "R5" — the phases were renumbered 2026-10-12 when the materials API
-  was split out of it (plan §10).
+- **R5F — done, verified by independent audit (2026-10-12, commit `f6db059`).** `_scope_analyses(user, subject_id,
+  model_filter)` now narrows the query, and the pure `_filter_analyses_by_model()` post-condition enforces the same
+  invariant on the materialised list used by **both** branches (`:739`, `:744`); `_by_model_row` grounding still comes
+  from that filtered list (`:758`). Personally verified: 34/34 tests green (3 new `ModelFilterTests`, including the
+  zero-analyses shape); `?model=openai/does-not-exist` → `mean/median/coverage/validity/hallucinated` all `null`,
+  buckets `{}`, `no_grounding_count 0`, `by_model []` (was `0.6517 / coverage 0.5 / no_grounding 3` + a
+  foreign `by_model` row); the same for `?subject_id=<Chemistry>&model=<bogus>` (was `coverage 0.0`,
+  `no_grounding 1`, foreign row); `?model=openai/gpt-oss-20b` differs from the unfiltered payload **only** by the
+  echoed `model_filter`; unfiltered unchanged (`total_validations 4`, mean `0.6517`, coverage `0.5`,
+  `no_grounding_count 3`); Physics scope unchanged (`3 / 0.6517 / 0.75 / 1`); PDF-anchored block unchanged
+  (mean = median `0.5465`, coverage `1.0`, validity `1.0`); no new data row, no frontend file.
+- **Next: R6 = lecturer UI** (`/materials` + `/metrics` pages, `validation/[id]` citations + learning list,
+  `app/lib/studentSubmissions.ts`, sidebar) with the prod-build browser pass. Known, deliberately unfixed leftovers
+  from the R5 audit: F2 cross-subject `topic_id` accepted on upload, F3 `by_model` row set comes from the
+  validations in the non-empty branch (a model with analyses but no validations is invisible there), F5 `.markdown`
+  allow-listed, F6 no retry for a `FAILED` document that already inserted chunks. **Then R7 = gated student
+  surface.** The 2026-10-08 build order called the UI "R5" — phases were renumbered 2026-10-12 when the materials
+  API was split out (plan §10).
 
-## R5F dispatch (ready)
+## R5F dispatch (done — commit `f6db059`, audited 2026-10-12)
 
 ```bash
 cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
