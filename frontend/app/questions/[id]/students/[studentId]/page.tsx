@@ -7,12 +7,14 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  BookMarked,
   BrainCircuit,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
   ClipboardCheck,
+  GraduationCap,
   Info,
   Lock,
   RotateCcw,
@@ -28,6 +30,11 @@ import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
 import RichTextContent from "../../../../components/RichTextContent";
 import { apiFetch } from "../../../../lib/api";
+import type {
+  GroundingPayload,
+  GroundingReference,
+  LearnedTopic,
+} from "../../../../lib/studentSubmissions";
 import FeedbackModal from "../../../../components/FeedbackModal";
 
 type AttemptItem = {
@@ -55,6 +62,11 @@ type AttemptItem = {
     module_c_code?: string;
     four_tier_category?: string;
     risk_level?: string;
+    references?: GroundingReference[];
+    what_should_be_learned?: LearnedTopic[];
+    suggested_materials?: LearnedTopic[];
+    grounding_similarity?: number | null;
+    grounding_payload?: GroundingPayload | null;
     validation: {
       status: string;
       final_percentage: string | null;
@@ -238,6 +250,132 @@ const persistDrafts = (
     /* abaikan error quota/privacy mode */
   }
 };
+
+function GroundedSources({ analysis }: { analysis: AttemptItem["analysis"] }) {
+  const references = analysis?.references ?? [];
+  const learned =
+    analysis?.what_should_be_learned ?? analysis?.suggested_materials ?? [];
+  const similarity =
+    analysis?.grounding_similarity ??
+    analysis?.grounding_payload?.grounding?.similarity_mean ??
+    null;
+  const shortId = (value?: string | null) => (value ? value.slice(0, 8) : "—");
+
+  return (
+    <div className="sm:col-span-2 space-y-3">
+      <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-on-surface">
+            <BookMarked size={14} className="text-primary" />
+            Sumber Referensi
+          </div>
+          <span className="font-mono-ui text-[11px] text-on-surface-variant">
+            {references.length} kutipan
+          </span>
+        </div>
+
+        <div className="mt-2.5 space-y-2">
+          {references.length === 0 ? (
+            <p className="text-xs italic text-on-surface-variant">
+              Tidak ada sumber referensi terverifikasi untuk analisis ini.
+            </p>
+          ) : (
+            references.map((ref, index) => (
+              <article
+                key={`${ref.chunk_id}-${index}`}
+                className={`rounded-lg border p-3 ${
+                  ref.valid
+                    ? "border-outline-variant/30 bg-surface-container"
+                    : "border-error/40 bg-error-container/20"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="font-mono-ui text-[10px] font-bold text-on-surface-variant">
+                      [S{index + 1}]
+                    </span>
+                    <span className="truncate text-xs font-semibold text-on-surface">
+                      {ref.document_title || "Sumber tidak dikenal"}
+                    </span>
+                  </div>
+                  <span
+                    className={`badge ${ref.valid ? "badge-active" : "badge-revoked"} shrink-0`}
+                  >
+                    {ref.valid ? "Terverifikasi" : "Tidak Terverifikasi"}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono-ui text-[10px] text-on-surface-variant">
+                  {typeof ref.page === "number" && <span>hal. {ref.page}</span>}
+                  {typeof ref.similarity === "number" && (
+                    <span>keselarasan {ref.similarity.toFixed(3)}</span>
+                  )}
+                  <span>chunk {shortId(ref.chunk_id)}</span>
+                </div>
+                <blockquote className="mt-2 border-l-2 border-outline-variant/40 pl-2.5 text-xs italic leading-relaxed text-on-surface-variant">
+                  {ref.quote}
+                </blockquote>
+                {!ref.valid && (
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-error">
+                    {ref.reason_if_invalid === "not_in_retrieved_set"
+                      ? "Kutipan ini tidak termasuk dalam himpunan sumber yang diambil."
+                      : ref.reason_if_invalid === "malformed"
+                        ? "Kutipan tidak berformat benar."
+                        : "Kutipan tidak valid."}
+                  </p>
+                )}
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-on-surface">
+            <GraduationCap size={14} className="text-primary" />
+            Yang Perlu Dipelajari
+          </div>
+          <div className="text-right">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+              Keselarasan dengan Sumber
+            </span>
+            <span className="font-mono-ui text-xs font-extrabold text-primary">
+              {similarity !== null ? similarity.toFixed(4) : "—"}
+            </span>
+          </div>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-on-surface-variant">
+          Bukan akurasi; mengukur keselarasan keluaran AI dengan sumber yang dikutip.
+        </p>
+        <div className="mt-2.5">
+          {learned.length === 0 ? (
+            <p className="text-xs italic text-on-surface-variant">
+              Tidak ada sumber referensi terverifikasi untuk analisis ini.
+            </p>
+          ) : (
+            <ol className="space-y-1.5">
+              {learned.map((topic, index) => (
+                <li key={index} className="flex items-start gap-2 text-xs">
+                  <span className="mt-0.5 font-mono-ui text-[10px] font-bold text-primary">
+                    {index + 1}.
+                  </span>
+                  <span className="text-on-surface">
+                    {topic.topik}
+                    {topic.sumber_chunk_ids?.length > 0 && (
+                      <span className="ml-1.5 font-mono-ui text-[10px] text-on-surface-variant">
+                        ({topic.sumber_chunk_ids.map(shortId).join(", ")})
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function StudentPackageReviewPage({
   examPackage = false,
@@ -1340,20 +1478,7 @@ export default function StudentPackageReviewPage({
                           </div>
                         </div>
 
-                        <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
-                          <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                            <Info size={14} className="text-primary" />
-                            Referensi &amp; Materi Pembelajaran
-                            <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
-                              In Development
-                            </span>
-                          </div>
-                          <p className="text-xs text-on-surface-variant leading-relaxed">
-                            Area ini nantinya berisi daftar buku, referensi, dan
-                            sumber materi pilihan AI untuk membantu mahasiswa.
-                            Fitur sedang dalam pengembangan.
-                          </p>
-                        </div>
+                        <GroundedSources analysis={currentAttempt.analysis} />
 
                         <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
                           <span className="text-xs text-on-surface-variant">
@@ -1498,23 +1623,8 @@ export default function StudentPackageReviewPage({
                             </span>
                           </div>
 
-                          {/* Referensi & Materi — In Development */}
-                          <div className="sm:col-span-2">
-                            <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-3.5 space-y-1">
-                              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                                <Info size={14} className="text-primary" />
-                                Referensi &amp; Materi Pembelajaran
-                                <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
-                                  In Development
-                                </span>
-                              </div>
-                              <p className="text-xs text-on-surface-variant leading-relaxed">
-                                Area ini nantinya berisi daftar buku, referensi,
-                                dan sumber materi pilihan AI untuk membantu
-                                mahasiswa. Fitur sedang dalam pengembangan.
-                              </p>
-                            </div>
-                          </div>
+                          {/* Sumber Referensi + Yang Perlu Dipelajari (R6F) */}
+                          <GroundedSources analysis={currentAttempt.analysis} />
                         </div>
 
                         {showRejectBox && (

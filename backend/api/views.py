@@ -2209,6 +2209,7 @@ class QuestionSetStudentReviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, student_id):
+        from .validation_views import _grounding_detail
         try:
             q_set = QuestionSet.objects.select_related('subject').get(pk=pk)
         except QuestionSet.DoesNotExist:
@@ -2302,7 +2303,7 @@ class QuestionSetStudentReviewView(APIView):
                         'module_c_code': getattr(analysis, 'module_c_code', None),
                         'four_tier_category': getattr(analysis, 'four_tier_category', None),
                         'risk_level': getattr(analysis, 'risk_level', None),
-                        'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        **_grounding_detail(analysis, analysis.concept_breakdown_json or {}),
                         'validation': {
                             'status': validation.status,
                             'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
@@ -2837,6 +2838,7 @@ class ExamPackageStudentReviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, student_id):
+        from .validation_views import _grounding_detail
         try:
             package = ExamPackage.objects.select_related('subject').get(pk=pk)
         except ExamPackage.DoesNotExist:
@@ -2883,7 +2885,8 @@ class ExamPackageStudentReviewView(APIView):
                         'confidence': str(analysis.confidence), 'explanation': analysis.explanation, 'execution_time_ms': analysis.execution_time_ms,
                         'module_a_score': analysis.module_a_score, 'module_b_score': analysis.module_b_score,
                         'module_c_code': analysis.module_c_code, 'four_tier_category': analysis.four_tier_category,
-                        'risk_level': analysis.risk_level, 'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        'risk_level': analysis.risk_level,
+                        **_grounding_detail(analysis, analysis.concept_breakdown_json or {}),
                         'validation': {'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
                             'final_tier_level': validation.final_tier_level_snapshot, 'final_feedback': validation.final_feedback,
                             'lecturer_name': validation.lecturer.full_name, 'validated_at': validation.validated_at} if validation else None,
