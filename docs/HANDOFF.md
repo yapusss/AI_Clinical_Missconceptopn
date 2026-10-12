@@ -33,9 +33,28 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   green; real Physics submission re-analysed → grounding 0.5679/0.5769, 2 valid citations (entropy passages
   pp. 133/142), populated `what_should_be_learned`; no-materials subject with DEAD `EMBEDDINGS_BASE_URL` still
   reached `PENDING_VALIDATION` with NULL grounding + `[]` materials (outage + zero-chunk regression in one).
-- **Next: R4** — metrics + API exposure per brief §9–10.1 (`._compute_metrics` grounding keys,
-  `grounding_by_category`, `grounding_by_prompt_version`, `ValidationDetailView` new keys incl. the
-  `concept_breakdown_json` UI bug fix). Write `docs/R4_TASK.md` from brief §9–10 first.
+- **Next: R4** — task file ready at `docs/R4_TASK.md` (grounding metrics in `_compute_metrics` +
+  `by_model` rows + `ValidationDetailView` exposure incl. the `concept_breakdown_json` UI bug fix,
+  per brief §9–10.1). Anchors verified live: `_compute_metrics` at validation_views.py:402–494,
+  `by_model` rows 549–558, note at 563, detail view `llm` dict 225–242, frontend bug reference
+  (page.tsx reads `det.llm.concept_breakdown_json`, backend never sent it).
+
+## R4 dispatch (ready)
+
+```bash
+cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
+  env -u PWD -u OLDPWD \
+  "C:/Users/Pongo/AppData/Local/Programs/@opencodedesktop/resources/opencode-cli.exe" \
+  run --standalone --auto --model alibaba-token-plan/qwen3.8-max \
+  "Read docs/R4_TASK.md in this repository and execute it exactly."
+```
+
+R4 scope for the child: `backend/api/validation_views.py` + extending
+`backend/api/tests_reference_materials.py` ONLY. Verify after it reports: (a) `_compute_metrics` grounding
+keys exist and are None-safe for old v2.8 analyses; (b) `ValidationDetailView` returns `concept_breakdown_json`,
+`references`, `what_should_be_learned`, `suggested_materials`, `grounding` (same shape for old analyses);
+(c) `/api/metrics/model` shows grounding keys top-level AND per `by_model`; (d) the `note` still says metrics
+need lecturer ground truth and grounding needs none, never calling grounding "accuracy".
 
 ## R3 dispatch (ready)
 
