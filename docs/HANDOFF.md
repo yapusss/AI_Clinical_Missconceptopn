@@ -67,13 +67,36 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   echoed `model_filter`; unfiltered unchanged (`total_validations 4`, mean `0.6517`, coverage `0.5`,
   `no_grounding_count 3`); Physics scope unchanged (`3 / 0.6517 / 0.75 / 1`); PDF-anchored block unchanged
   (mean = median `0.5465`, coverage `1.0`, validity `1.0`); no new data row, no frontend file.
-- **Next: R6 = lecturer UI** (`/materials` + `/metrics` pages, `validation/[id]` citations + learning list,
-  `app/lib/studentSubmissions.ts`, sidebar) with the prod-build browser pass. Known, deliberately unfixed leftovers
-  from the R5 audit: F2 cross-subject `topic_id` accepted on upload, F3 `by_model` row set comes from the
-  validations in the non-empty branch (a model with analyses but no validations is invisible there), F5 `.markdown`
-  allow-listed, F6 no retry for a `FAILED` document that already inserted chunks. **Then R7 = gated student
-  surface.** The 2026-10-08 build order called the UI "R5" — phases were renumbered 2026-10-12 when the materials
-  API was split out (plan §10).
+- **Next: R6 (task file ready at `docs/R6_TASK.md`)** — lecturer surfaces: `frontend/app/materials/page.tsx` (upload/list/
+  delete), `frontend/app/metrics/page.tsx`, citations + learning list on `validation/[id]`, shared types in
+  `app/lib/studentSubmissions.ts`, sidebar entries — plus **one backend addition decided 2026-10-12**: `_grounding_detail`
+  must put `document_title` on every citation reference (brief §10.2 asks for the title; the payload only carried
+  `document_id`, and the page must not join against `/api/materials` to get it). Verified by a prod build on `:3002`
+  + headless-Edge CDP pass (stop the `:3001` dev server first). Known, deliberately unfixed leftovers from the R5
+  audit: F2 cross-subject `topic_id` accepted on upload (the UI picker simply must not offer foreign topics),
+  F3 `by_model` row set comes from the validations in the non-empty branch, F5 `.markdown` allow-listed, F6 no retry
+  for a `FAILED` document that already inserted chunks. **Then R7 = gated student surface.** The 2026-10-08 build
+  order called the UI "R5" — phases were renumbered 2026-10-12 when the materials API was split out (plan §10).
+
+## R6 dispatch (ready)
+
+```bash
+cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
+  env -u PWD -u OLDPWD \
+  "C:/Users/Pongo/AppData/Local/Programs/@opencodedesktop/resources/opencode-cli.exe" \
+  run --standalone --auto --model alibaba-token-plan/qwen3.8-max \
+  "Read docs/R6_TASK.md in this repository and execute it exactly."
+```
+
+Run it with `background=true, notify=true, persist_on_release=true`. Verify after it reports:
+(a) `document_title` on every citation of the PDF-anchored detail payload, `null` for a malformed entry;
+(b) `npm run build` clean and `/materials` + `/metrics` present in the route list, served from `:3002`;
+(c) the CDP pass — /materials upload → PENDING → drain → READY → delete (document count back to 3), /metrics with the
+zero-validations state for Chemistry and no "akurasi" next to the grounding score, citations + learning list render on
+the PDF-anchored analysis and the empty state on an ungrounded one, confirm/deny list still populates;
+(d) 34 backend tests plus the new ones green; (e) only the seven allowed files changed.
+The owner's audit harness is `D:/ClinicalAI_Misconception/scripts/r4_audit.py` (API/DB side) plus
+`r6_ui_audit.py` (CDP side) — run both.
 
 ## R5F dispatch (done — commit `f6db059`, audited 2026-10-12)
 
@@ -223,6 +246,13 @@ pointer, so the CLI arg cannot be mangled. Verify the child's claims yourself: i
   `/metrics` page, and to `no_grounding_count` for the complement.
 - **Two frontend dev servers on this 16 GB box will exhaust RAM.** The R6 browser pass wants a **prod** build on
   `:3002` (HMR/headless-Edge pitfall) — stop the `:3001` dev server first.
+- **Port `3001` is not free: the Hermes messaging bridge owns `127.0.0.1:3001`** and answers unknown paths with an
+  Express-style `Cannot GET /validation/…`. A `next dev -p 3001` started alongside it loses the address race, so
+  requests silently hit the bridge and every UI assertion fails for the wrong reason (observed 2026-10-12: `/login`
+  returned 17 chars and no `<form>`). Always drive the **prod build on `:3002`** (`BACKEND_URL=http://localhost:8000`),
+  and before trusting any UI run, assert the target is really the app: `document.querySelector('form')` must exist on
+  `/login` and the body must not contain `Cannot GET`. `D:/ClinicalAI_Misconception/scripts/r6_ui_audit.py` does that
+  precheck and then polls for text (a cold start compiles a route on first hit, so fixed settles give false failures).
 - **`manage.py test api` cannot pass in this repo — use the per-module path.** The domain tables are unmanaged
   (V2 SQL), so the auto-created test DB has no `users` table and every `TestCase`/`TransactionTestCase` errors with
   `relation "users" does not exist`; `api/tests.py`'s DB-backed classes are in that state. Run
