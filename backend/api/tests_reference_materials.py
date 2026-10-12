@@ -28,6 +28,7 @@ from api.llm import (
 from api.management.commands import ingest_materials as ingest_cmd
 from api.materials_views import MATERIAL_UPLOAD_MAX_BYTES, validate_material_upload
 from api.validation_views import (
+    _attach_document_titles,
     _by_model_row,
     _compute_metrics,
     _filter_analyses_by_model,
@@ -390,7 +391,9 @@ class GroundingDetailShapeTests(SimpleTestCase):
         }
         detail = _grounding_detail(analysis, breakdown)
         self.assertEqual(detail['concept_breakdown_json'], breakdown)
-        self.assertEqual(detail['references'], breakdown['references'])
+        self.assertEqual(len(detail['references']), 1)
+        self.assertEqual(detail['references'][0]['chunk_id'], 'c1')
+        self.assertIsNone(detail['references'][0]['document_title'])
         self.assertEqual(detail['what_should_be_learned'], breakdown['what_should_be_learned'])
         self.assertEqual(detail['suggested_materials'], analysis.suggested_materials_json)
         self.assertAlmostEqual(detail['grounding']['similarity_mean'], 0.5679, places=4)
@@ -525,3 +528,30 @@ class ModelFilterTests(SimpleTestCase):
         self.assertEqual(payload['grounding_by_prompt_version'], {})
         self.assertEqual(payload['no_grounding_count'], 0)
         self.assertEqual(payload['by_model'], [])
+
+
+class DocumentTitleMappingTests(SimpleTestCase):
+    def test_document_title_present_and_null_safe(self):
+        refs = [
+            {'chunk_id': 'c1', 'document_id': 'doc-known'},
+            {'chunk_id': 'c2', 'document_id': 'doc-unknown'},
+            {'chunk_id': 'c3', 'document_id': None},
+            {'chunk_id': 'c4'},
+            'not-a-dict',
+        ]
+        with patch('api.validation_views._document_titles',
+                   return_value={'doc-known': 'Sears & Salinger — Thermodynamics'}):
+            out = _attach_document_titles(refs)
+
+        self.assertEqual(out[0]['document_title'], 'Sears & Salinger — Thermodynamics')
+        self.assertEqual(out[0]['chunk_id'], 'c1')          # existing keys kept
+        self.assertIsNone(out[1]['document_title'])         # unknown id
+        self.assertIsNone(out[2]['document_title'])         # malformed (None id)
+        self.assertIsNone(out[3]['document_title'])         # missing id
+        self.assertIsNone(out[4]['document_title'])         # non-dict entry
+        self.assertTrue(all('document_title' in e for e in out))
+
+    def test_empty_references_do_not_query(self):
+        with patch('api.validation_views.connection') as conn:
+            self.assertEqual(_attach_document_titles([]), [])
+        conn.cursor.assert_not_called()
