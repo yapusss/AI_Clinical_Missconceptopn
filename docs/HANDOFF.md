@@ -44,10 +44,34 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   (3 `ACCEPTED` + 1 `EDITED`) were created during the phase so the metrics block is non-empty — they are audit
   fixtures, not lecturer data. Reusable harness: `D:/ClinicalAI_Misconception/scripts/r4_audit.py` (read-only,
   recomputes every grounding metric from the DB and diffs it against the live API; rerun it after R5).
-- **Next: R5** — lecturer UI: `/materials` upload page + citation/learning-list rendering on `validation/[id]`,
-  plus the adopted default "build a minimal `/metrics` page". Task file not yet written. **Carry in the R4 open
-  item** (`Context/Reference_Materials_Plan.md` §9b #10): lift the grounding block above the `total == 0`
-  early return so grounding is visible before any validation exists.
+- **Next: R5 (backend)** — task file ready at `docs/R5_TASK.md`. Scope: new `backend/api/materials_views.py`
+  (upload/list/delete, lecturer-scoped), `api/urls.py` routes, `ingest_materials --pending` drain (upload writes a
+  `PENDING` row, a poller ingests it — no Celery, mirrors `analyze_submissions --loop`), and the grounding-metrics
+  fix from open item §9b #10 as the **first commit**. Two commits, no frontend file.
+- **R6 = lecturer UI** (`/materials` + `/metrics` pages, `validation/[id]` citations + learning list,
+  `app/lib/studentSubmissions.ts`, sidebar) with the prod-build browser pass; **R7 = gated student surface**.
+  The 2026-10-08 build order called the UI "R5" — the phases were renumbered 2026-10-12 when the materials API
+  was split out of it (plan §10).
+
+## R5 dispatch (ready)
+
+```bash
+cd "D:/ClinicalAI_Misconception/Code/AI_Clinical_Missconceptopn" && \
+  env -u PWD -u OLDPWD \
+  "C:/Users/Pongo/AppData/Local/Programs/@opencodedesktop/resources/opencode-cli.exe" \
+  run --standalone --auto --model alibaba-token-plan/qwen3.8-max \
+  "Read docs/R5_TASK.md in this repository and execute it exactly."
+```
+
+Run it with `background=true, notify=true, persist_on_release=true`. R5 scope for the child:
+`backend/api/materials_views.py` (new), `backend/api/urls.py`, one behaviour fix in
+`backend/api/validation_views.py` (grounding over all analyses in scope — first commit), `--pending` in
+`backend/api/management/commands/ingest_materials.py`, tests in `backend/api/tests_reference_materials.py`.
+Verify after it reports: (a) `git diff --name-only` shows no `frontend/` file; (b) upload → `PENDING` row →
+`--pending` → `READY` with chunks, and a corrupt PDF marks `FAILED` without killing the run; (c) delete removes
+the chunks (FK cascade) and the stored file; (d) `/api/metrics/model` returns all 8 grounding keys on a subject
+with **zero** validations, and the grounding denominator includes an analysis that has no validation;
+(e) the six R4 detail keys and the validation-derived metric names are unchanged.
 
 ## R4 dispatch (done — commit `c5b8910`, audited 2026-10-12)
 
@@ -156,5 +180,15 @@ pointer, so the CLI arg cannot be mangled. Verify the child's claims yourself: i
   appears only if it has an analysis with a non-null similarity (so `count` is the N behind `similarity_mean`).
   Categories whose analyses are all ungrounded are absent rather than present-with-null — carry that into the
   `/metrics` page, and to `no_grounding_count` for the complement.
-- **Two frontend dev servers on this 16 GB box will exhaust RAM.** The R5 browser pass wants a **prod** build on
+- **Two frontend dev servers on this 16 GB box will exhaust RAM.** The R6 browser pass wants a **prod** build on
   `:3002` (HMR/headless-Edge pitfall) — stop the `:3001` dev server first.
+- **`manage.py test api` cannot pass in this repo — use the per-module path.** The domain tables are unmanaged
+  (V2 SQL), so the auto-created test DB has no `users` table and every `TestCase`/`TransactionTestCase` errors with
+  `relation "users" does not exist`; `api/tests.py`'s DB-backed classes are in that state. Run
+  `manage.py test api.tests_reference_materials` (DB-free `SimpleTestCase`) and prove endpoint behaviour by real
+  HTTP against the live DB — which is this repo's hard rule anyway. Do not add a `TestCase` and do not "fix"
+  `tests.py` as part of a feature phase.
+- **Materials upload is staged, not inline.** `POST /api/materials` only saves the file and inserts a `PENDING`
+  `knowledge_documents` row; `manage.py ingest_materials --pending` (a poller, like `analyze_submissions --loop`)
+  does extract → chunk → embed → READY. Nothing embeds inside a web request, and a corrupt document is marked
+  `FAILED` with `ingest_error` without killing the run.
