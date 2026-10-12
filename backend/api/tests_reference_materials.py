@@ -1,4 +1,4 @@
-"""R3 tests — reference retrieval, citation validation, grounding math, zero-chunk path.
+"""Tests for the reference-materials feature (R3 retrieval/grounding + R4 metrics).
 
 These tests are deliberately DB-free. Pure helpers are exercised directly, and
 the pipeline test monkeypatches `load_context`, retrieval, the three modules and
@@ -8,6 +8,8 @@ the pipeline test monkeypatches `load_context`, retrieval, the three modules and
 """
 
 import json
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -22,6 +24,7 @@ from api.llm import (
     run_module_c,
     validate_citations,
 )
+from api.validation_views import _compute_metrics, _grounding_detail, _grounding_metrics
 
 
 def make_ctx(**overrides) -> FourTierContext:
@@ -243,3 +246,126 @@ class ZeroChunkPipelineTests(SimpleTestCase):
         self.assertEqual(payload['references'], [])
         self.assertIsNone(payload['grounding']['citation_count'])
         self.assertIsNone(payload['grounding']['similarity_mean'])
+
+
+def make_analysis(similarity=None, citation_count=None, category=None,
+                  prompt_version='four-tier-v2.9-rag', references=None,
+                  confidence='0.900'):
+    return SimpleNamespace(
+        grounding_similarity=similarity,
+        grounding_citation_count=citation_count,
+        grounding_payload_json={'references': references or [], 'grounding': {}},
+        four_tier_category=category,
+        prompt_version=prompt_version,
+        confidence=confidence,
+        model_identifier='openai/gpt-oss-20b',
+    )
+
+
+def make_validation(analysis, status='ACCEPTED', orig_tier=2, final_tier=2,
+                    orig_pct='50.00', final_pct='50.00'):
+    return SimpleNamespace(
+        status=status,
+        original_tier_level_snapshot=orig_tier,
+        final_tier_level_snapshot=final_tier,
+        original_percentage=orig_pct,
+        final_percentage=final_pct,
+        analysis=analysis,
+    )
+
+
+class GroundingMetricsTests(SimpleTestCase):
+    def test_aggregates_grounded_analyses(self):
+        a1 = make_analysis(similarity=0.50, citation_count=2, category='SC',
+                           references=[{'valid': True}, {'valid': True}])
+        a2 = make_analysis(similarity=0.70, citation_count=1, category='SC',
+                           references=[{'valid': True}, {'valid': False}])
+        a3 = make_analysis(similarity=None, citation_count=None, category='LK')
+        metrics = _grounding_metrics([a1, a2, a3])
+
+        self.assertAlmostEqual(metrics['grounding_similarity_mean'], 0.6, places=4)
+        self.assertAlmostEqual(metrics['grounding_similarity_median'], 0.6, places=4)
+        self.assertEqual(metrics['citation_coverage'], round(2 / 3, 4))
+        self.assertEqual(metrics['citation_validity_rate'], 0.75)       # 3 valid / 4 total
+        self.assertEqual(metrics['hallucinated_citation_rate'], 0.25)
+        self.assertEqual(metrics['no_grounding_count'], 1)
+        self.assertEqual(metrics['grounding_by_category']['SC']['count'], 2)
+        self.assertAlmostEqual(
+            metrics['grounding_by_category']['SC']['similarity_mean'], 0.6, places=4)
+        self.assertEqual(
+            metrics['grounding_by_prompt_version']['four-tier-v2.9-rag']['count'], 2)
+
+    def test_median_odd_count(self):
+        analyses = [
+            make_analysis(similarity=0.5, citation_count=1, references=[{'valid': True}]),
+            make_analysis(similarity=0.9, citation_count=1, references=[{'valid': True}]),
+            make_analysis(similarity=0.7, citation_count=1, references=[{'valid': True}]),
+        ]
+        metrics = _grounding_metrics(analyses)
+        self.assertAlmostEqual(metrics['grounding_similarity_median'], 0.7, places=4)
+        self.assertAlmostEqual(metrics['grounding_similarity_mean'], 0.7, places=4)
+
+    def test_zero_citations_is_all_none(self):
+        metrics = _grounding_metrics([make_analysis(category='LK')])
+        self.assertIsNone(metrics['grounding_similarity_mean'])
+        self.assertIsNone(metrics['grounding_similarity_median'])
+        self.assertIsNone(metrics['citation_validity_rate'])
+        self.assertIsNone(metrics['hallucinated_citation_rate'])
+        self.assertEqual(metrics['citation_coverage'], 0.0)
+        self.assertEqual(metrics['no_grounding_count'], 1)
+
+    def test_compute_metrics_merges_grounding_keys(self):
+        analysis = make_analysis(similarity=0.8, citation_count=1, category='SC',
+                                 references=[{'valid': True}])
+        validation = make_validation(analysis)
+        metrics = _compute_metrics([validation], [validation])
+        for key in (
+            'grounding_similarity_mean', 'grounding_similarity_median',
+            'citation_coverage', 'citation_validity_rate',
+            'hallucinated_citation_rate', 'grounding_by_category',
+            'grounding_by_prompt_version', 'no_grounding_count',
+        ):
+            self.assertIn(key, metrics)
+        self.assertAlmostEqual(metrics['grounding_similarity_mean'], 0.8, places=4)
+
+
+class GroundingDetailShapeTests(SimpleTestCase):
+    def test_grounded_analysis_shape(self):
+        analysis = SimpleNamespace(
+            grounding_similarity=Decimal('0.5679'),
+            grounding_similarity_max=Decimal('0.6123'),
+            grounding_citation_count=2,
+            grounding_payload_json={'references': [{'valid': True}], 'grounding': {}},
+            suggested_materials_json=[{'topik': 'Entropy'}],
+        )
+        breakdown = {
+            'references': [{'chunk_id': 'c1', 'valid': True}],
+            'what_should_be_learned': [{'topik': 'Entropy'}],
+        }
+        detail = _grounding_detail(analysis, breakdown)
+        self.assertEqual(detail['concept_breakdown_json'], breakdown)
+        self.assertEqual(detail['references'], breakdown['references'])
+        self.assertEqual(detail['what_should_be_learned'], breakdown['what_should_be_learned'])
+        self.assertEqual(detail['suggested_materials'], analysis.suggested_materials_json)
+        self.assertAlmostEqual(detail['grounding']['similarity_mean'], 0.5679, places=4)
+        self.assertAlmostEqual(detail['grounding']['similarity_max'], 0.6123, places=4)
+        self.assertEqual(detail['grounding']['citation_count'], 2)
+        self.assertEqual(detail['grounding']['payload'], analysis.grounding_payload_json)
+
+    def test_old_analysis_shape_is_stable(self):
+        analysis = SimpleNamespace(
+            grounding_similarity=None,
+            grounding_similarity_max=None,
+            grounding_citation_count=None,
+            grounding_payload_json={},
+            suggested_materials_json=[],
+        )
+        detail = _grounding_detail(analysis, {})
+        self.assertEqual(detail['concept_breakdown_json'], {})
+        self.assertEqual(detail['references'], [])
+        self.assertEqual(detail['what_should_be_learned'], [])
+        self.assertEqual(detail['suggested_materials'], [])
+        self.assertIsNone(detail['grounding']['similarity_mean'])
+        self.assertIsNone(detail['grounding']['similarity_max'])
+        self.assertIsNone(detail['grounding']['citation_count'])
+        self.assertEqual(detail['grounding']['payload'], {})
