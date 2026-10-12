@@ -8,6 +8,8 @@ import {
   ArrowRight,
   BookOpenCheck,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Lightbulb,
   LineChart,
@@ -73,16 +75,6 @@ export type StudentDashboardData = {
   };
 };
 
-const TIER_ORDER = ["SC", "LK", "FP", "FN", "MSC"] as const;
-
-const TIER_META: Record<string, { label: string; color: string }> = {
-  SC: { label: "SC · Paham Utuh", color: "#10b981" },
-  LK: { label: "LK · Kurang Paham", color: "#f59e0b" },
-  FP: { label: "FP · Benar, Alasan Keliru", color: "#f97316" },
-  FN: { label: "FN · Alasan Benar, Kesimpulan Keliru", color: "#6366f1" },
-  MSC: { label: "MSC · Miskonsepsi", color: "#ef4444" },
-};
-
 const CATEGORY_LABEL: Record<string, string> = {
   SC: "Paham Utuh",
   LK: "Kurang Paham",
@@ -121,12 +113,13 @@ const fmtDate = (value: string | null) => {
   }
 };
 
-const CHART_HEIGHT = 240;
-const CHART_PAD_TOP = 22;
-const CHART_PAD_BOTTOM = 34;
-const CHART_PAD_LEFT = 46;
-const CHART_PAD_RIGHT = 18;
+const CHART_HEIGHT = 200;
+const CHART_PAD_TOP = 20;
+const CHART_PAD_BOTTOM = 30;
+const CHART_PAD_LEFT = 42;
+const CHART_PAD_RIGHT = 16;
 const Y_TICKS = [0, 25, 50, 75, 100] as const;
+const X_HORIZONTAL_GAP = 32;
 
 function useContainerWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -176,8 +169,12 @@ function SubjectExamTrendChart({ exams }: { exams: StudentExamTrendPoint[] }) {
   const gradientId = useId().replace(/:/g, "");
 
   const geometry = useMemo(() => {
-    const usableWidth = Math.max(width, CHART_PAD_LEFT + CHART_PAD_RIGHT + 1);
+    const usableWidth = Math.max(
+      width,
+      CHART_PAD_LEFT + CHART_PAD_RIGHT + X_HORIZONTAL_GAP * 2 + 1,
+    );
     const innerWidth = usableWidth - CHART_PAD_LEFT - CHART_PAD_RIGHT;
+    const plotWidth = Math.max(innerWidth - X_HORIZONTAL_GAP * 2, 0);
     const innerHeight = CHART_HEIGHT - CHART_PAD_TOP - CHART_PAD_BOTTOM;
     const points: ChartPoint[] = exams.map((exam, index) => {
       const value = typeof exam.score === "number" ? Math.max(0, Math.min(100, exam.score)) : 0;
@@ -185,7 +182,7 @@ function SubjectExamTrendChart({ exams }: { exams: StudentExamTrendPoint[] }) {
       return {
         ...exam,
         value,
-        x: CHART_PAD_LEFT + ratio * innerWidth,
+        x: CHART_PAD_LEFT + X_HORIZONTAL_GAP + ratio * plotWidth,
         y: CHART_PAD_TOP + (1 - value / 100) * innerHeight,
       };
     });
@@ -362,15 +359,15 @@ function SubjectExamTrendCard({ trends }: { trends: StudentSubjectExamTrend[] })
   const exams = active?.exams ?? [];
 
   return (
-    <section className="glass-card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="glass-card flex h-full flex-col p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex items-start gap-2">
-          <TrendingUp size={19} className="mt-0.5 shrink-0 text-primary" />
+          <TrendingUp size={18} className="mt-0.5 shrink-0 text-primary" />
           <div>
             <h2 className="font-display text-base font-bold text-on-surface">
               Tren Perkembangan Nilai per Ujian
             </h2>
-            <p className="mt-1 text-xs text-on-surface-variant">
+            <p className="mt-0.5 text-xs text-on-surface-variant">
               Riwayat nilai evaluasi tervalidasi untuk setiap paket ujian.
             </p>
           </div>
@@ -381,12 +378,12 @@ function SubjectExamTrendCard({ trends }: { trends: StudentSubjectExamTrend[] })
             onValueChange={setSelectedSubject}
             options={options}
             ariaLabel="Pilih mata kuliah"
-            className="w-full sm:w-64"
+            className="w-full sm:w-52"
           />
         )}
       </div>
 
-      <div className="mt-5">
+      <div className="mt-4">
         {!options.length ? (
           <EmptyTrendState message="Belum ada riwayat ujian yang tervalidasi." />
         ) : exams.length ? (
@@ -404,18 +401,18 @@ function ActiveExamBanner({ exam }: { exam: StudentActiveExam }) {
     ? new Date(new Date(exam.started_at).getTime() + exam.duration_minutes * 60000)
     : null;
   return (
-    <section className="glass-card border border-primary/40 bg-primary/5 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <section className="glass-card border border-primary/40 bg-primary/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
-            <Clock3 size={22} />
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
+            <Clock3 size={20} />
           </span>
           <div className="min-w-0">
             <span className="badge badge-active">Sedang Berjalan</span>
-            <h2 className="mt-2 font-display text-base font-bold text-on-surface">
+            <h2 className="mt-1.5 font-display text-base font-bold text-on-surface">
               {exam.package_title}
             </h2>
-            <p className="mt-1 text-xs text-on-surface-variant">
+            <p className="mt-0.5 text-xs text-on-surface-variant">
               {exam.subject_name} · Mulai {fmtDateTime(exam.started_at)}
               {deadline ? ` · Berakhir ${fmtDateTime(deadline.toISOString())}` : ""}
             </p>
@@ -433,63 +430,162 @@ function ActiveExamBanner({ exam }: { exam: StudentActiveExam }) {
   );
 }
 
-function Doughnut({ data }: { data: Record<string, number> }) {
-  const entries = TIER_ORDER.map((key) => [key, data[key] ?? 0] as const);
-  const total = entries.reduce((sum, [, value]) => sum + value, 0);
-  let angle = 0;
-  const segments = entries.map(([key, value]) => {
-    const next = total ? angle + (value / total) * 360 : angle;
-    const segment = `${TIER_META[key].color} ${angle}deg ${next}deg`;
-    angle = next;
-    return segment;
+const MASTERY_PAGE_SIZE = 2;
+
+type SubjectMastery = {
+  subject_id: string;
+  subject_name: string;
+  validatedCount: number;
+  average: number | null;
+};
+
+function buildSubjectMastery(trends: StudentSubjectExamTrend[]): SubjectMastery[] {
+  return trends.map((item) => {
+    const scores = item.exams
+      .map((exam) => exam.score)
+      .filter((score): score is number => typeof score === "number");
+    const average = scores.length
+      ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+      : null;
+    return {
+      subject_id: item.subject_id,
+      subject_name: item.subject_name,
+      validatedCount: scores.length,
+      average,
+    };
   });
+}
+
+function masteryStatus(average: number | null): { label: string; badge: string; bar: string } {
+  if (average === null) {
+    return {
+      label: "Belum Ada Nilai",
+      badge: "border-outline-variant/50 bg-surface-container text-on-surface-variant",
+      bar: "bg-outline-variant",
+    };
+  }
+  if (average >= 80) {
+    return {
+      label: "Pemahaman Baik",
+      badge: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
+      bar: "bg-emerald-500",
+    };
+  }
+  if (average >= 60) {
+    return {
+      label: "Perlu Penguatan",
+      badge: "border-amber-500/40 bg-amber-500/15 text-amber-400",
+      bar: "bg-amber-500",
+    };
+  }
+  return {
+    label: "Perlu Bimbingan",
+    badge: "border-rose-500/40 bg-rose-500/15 text-rose-400",
+    bar: "bg-rose-500",
+  };
+}
+
+function SubjectMasteryCard({ trends }: { trends: StudentSubjectExamTrend[] }) {
+  const subjects = useMemo(() => buildSubjectMastery(trends), [trends]);
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(subjects.length / MASTERY_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const visibleSubjects = subjects.slice(
+    safePage * MASTERY_PAGE_SIZE,
+    safePage * MASTERY_PAGE_SIZE + MASTERY_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage(0);
+  }, [trends]);
 
   return (
-    <section className="glass-card p-5">
-      <div className="flex items-start justify-between gap-3">
+    <section className="glass-card flex h-full flex-col p-4">
+      <div className="flex items-start gap-2">
+        <BookOpenCheck size={18} className="mt-0.5 shrink-0 text-primary" />
         <div>
           <h2 className="font-display text-base font-bold text-on-surface">
-            Profil Pemahaman Konsep
+            Pemahaman Konsep per Mata Kuliah
           </h2>
-          <p className="mt-1 text-xs text-on-surface-variant">
-            Distribusi diagnosis four-tier dari evaluasi Anda.
+          <p className="mt-0.5 text-xs text-on-surface-variant">
+            Rata-rata skor dari ujian yang telah tervalidasi dosen.
           </p>
         </div>
-        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
-          {total} evaluasi
-        </span>
       </div>
-      <div className="mt-5 flex flex-col items-center gap-7 sm:flex-row">
-        <div
-          className="relative grid h-36 w-36 shrink-0 place-items-center rounded-full"
-          style={{
-            background: total
-              ? `conic-gradient(${segments.join(", ")})`
-              : "var(--bg-card-hover)",
-          }}
-        >
-          <div className="grid h-24 w-24 place-items-center rounded-full bg-surface-container-lowest text-center">
-            <div>
-              <strong className="block text-2xl text-on-surface">{total}</strong>
-              <span className="text-[10px] text-on-surface-variant">evaluasi</span>
-            </div>
-          </div>
-        </div>
-        <ul className="w-full space-y-2">
-          {entries.map(([key, value]) => (
-            <li key={key} className="flex items-center justify-between gap-4 text-sm">
-              <span className="flex items-center gap-2 text-on-surface-variant">
-                <i
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ background: TIER_META[key].color }}
-                />
-                {TIER_META[key].label}
+
+      {subjects.length ? (
+        <>
+          <ul className="mt-4 flex-1 space-y-3">
+            {visibleSubjects.map((subject) => {
+              const status = masteryStatus(subject.average);
+              const percent =
+                subject.average === null ? 0 : Math.max(0, Math.min(100, subject.average));
+              return (
+                <li
+                  key={subject.subject_id}
+                  className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest/60 p-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-on-surface">
+                        {subject.subject_name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-on-surface-variant">
+                        {subject.validatedCount
+                          ? `${subject.validatedCount} ujian tervalidasi`
+                          : "Belum ada ujian tervalidasi"}
+                      </p>
+                    </div>
+                    <span className={`badge shrink-0 border ${status.badge}`}>{status.label}</span>
+                  </div>
+                  <div className="mt-2.5 flex items-center gap-3">
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-container">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${status.bar}`}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                    <span className="w-12 shrink-0 text-right text-sm font-bold text-on-surface">
+                      {subject.average === null ? "-" : fmtPercent(subject.average)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          {totalPages > 1 && (
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-outline-variant/40 pt-3">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+                disabled={safePage <= 0}
+                className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ChevronLeft size={14} /> Sebelumnya
+              </button>
+              <span className="text-xs font-semibold text-on-surface-variant">
+                {safePage + 1} / {totalPages}
               </span>
-              <strong className="text-on-surface">{value}</strong>
-            </li>
-          ))}
-        </ul>
-      </div>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
+                disabled={safePage >= totalPages - 1}
+                className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Berikutnya <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant/60 px-4 py-12 text-center">
+          <LineChart size={22} className="text-on-surface-variant" />
+          <p className="max-w-sm text-sm text-on-surface-variant">
+            Belum Ada Nilai. Selesaikan ujian Anda untuk melihat pemahaman konsep per mata kuliah.
+          </p>
+        </div>
+      )}
     </section>
   );
 }
@@ -548,9 +644,11 @@ export default function StudentDashboard({ dashboard }: { dashboard: StudentDash
         })}
       </section>
 
-      <SubjectExamTrendCard trends={subjectTrends} />
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
+        <SubjectExamTrendCard trends={subjectTrends} />
 
-      <Doughnut data={distribution} />
+        <SubjectMasteryCard trends={subjectTrends} />
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="glass-card overflow-hidden">
