@@ -52,6 +52,41 @@ def _scope_filter(user):
     return Q(subject_id__in=ids) if ids else Q(pk__in=[])
 
 
+def _grounding_detail(analysis, breakdown: dict) -> dict:
+    """Assemble the grounding/references block exposed to the lecturer UI.
+
+    Stable shape across prompt versions: pre-R3 analyses (NULL grounding, no
+    `references` key) still return every key with empty/None values, so the
+    frontend never has to guess. `grounding.similarity_mean` measures alignment
+    with the cited sources — it is NOT accuracy.
+    """
+    return {
+        'concept_breakdown_json': breakdown,
+        'references': breakdown.get('references') or [],
+        'what_should_be_learned': breakdown.get('what_should_be_learned') or [],
+        'suggested_materials': analysis.suggested_materials_json or [],
+        # Flat keys kept for the authoritative brief §10.1 contract.
+        'grounding_similarity': (
+            float(analysis.grounding_similarity)
+            if analysis.grounding_similarity is not None else None
+        ),
+        'grounding_payload': analysis.grounding_payload_json or {},
+        # Nested block (R4 task §3).
+        'grounding': {
+            'similarity_mean': (
+                float(analysis.grounding_similarity)
+                if analysis.grounding_similarity is not None else None
+            ),
+            'similarity_max': (
+                float(analysis.grounding_similarity_max)
+                if analysis.grounding_similarity_max is not None else None
+            ),
+            'citation_count': analysis.grounding_citation_count,
+            'payload': analysis.grounding_payload_json or {},
+        },
+    }
+
+
 def _misconception_confirmations(breakdown: dict, confirmations: list) -> dict:
     """Merge lecturer confirmations into the analysis breakdown (in place).
 
@@ -239,6 +274,7 @@ class ValidationDetailView(APIView):
                 'proposed_new_misconception': breakdown.get('proposed_new_misconception'),
                 'execution_time_ms': a.execution_time_ms,
                 'created_at': a.created_at,
+                **_grounding_detail(a, breakdown),
             },
             'validatable': sub.status == 'PENDING_VALIDATION',
             'existing_validation': existing_payload,
@@ -399,11 +435,83 @@ class ValidationSubmitView(APIView):
 # MODEL PERFORMANCE METRICS (agreement with expert validations)
 # ============================================================================
 
+def _median(values):
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def _grounding_metrics(analyses):
+    """Grounding (citation-fidelity) metrics — properties of the ANALYSIS.
+
+    These are derived from the LLM's own output (`grounding_similarity` +
+    `grounding_payload_json.references`) and therefore require **no lecturer
+    validation** and no ground truth. Grounding similarity measures alignment
+    between the AI's advice and the passages it cited; it is NOT accuracy.
+    """
+    total = len(analyses)
+    grounded = [a for a in analyses if (a.grounding_citation_count or 0) >= 1]
+    sims = [
+        float(a.grounding_similarity)
+        for a in grounded
+        if a.grounding_similarity is not None
+    ]
+
+    valid_citations = 0
+    all_citations = 0
+    by_category = {}
+    by_prompt = {}
+    # Citation validity is counted over ALL analyses in scope (denominator =
+    # every citation in grounding_payload_json.references), independent of the
+    # similarity grouping below.
+    for a in analyses:
+        payload = a.grounding_payload_json or {}
+        for ref in (payload.get('references') or []):
+            all_citations += 1
+            if ref.get('valid'):
+                valid_citations += 1
+    for a in grounded:
+        sim = float(a.grounding_similarity) if a.grounding_similarity is not None else None
+        if sim is not None:
+            cat = getattr(a, 'four_tier_category', None) or 'UNKNOWN'
+            pv = getattr(a, 'prompt_version', None) or 'UNKNOWN'
+            by_category.setdefault(cat, {'count': 0, 'sum': 0.0})
+            by_category[cat]['count'] += 1
+            by_category[cat]['sum'] += sim
+            by_prompt.setdefault(pv, {'count': 0, 'sum': 0.0})
+            by_prompt[pv]['count'] += 1
+            by_prompt[pv]['sum'] += sim
+
+    validity_rate = round(valid_citations / all_citations, 4) if all_citations else None
+
+    return {
+        'grounding_similarity_mean': round(sum(sims) / len(sims), 4) if sims else None,
+        'grounding_similarity_median': round(_median(sims), 4) if sims else None,
+        'citation_coverage': round(len(grounded) / total, 4) if total else None,
+        'citation_validity_rate': validity_rate,
+        'hallucinated_citation_rate': round(1 - validity_rate, 4) if validity_rate is not None else None,
+        'grounding_by_category': {
+            k: {'count': v['count'], 'similarity_mean': round(v['sum'] / v['count'], 4)}
+            for k, v in by_category.items()
+        },
+        'grounding_by_prompt_version': {
+            k: {'count': v['count'], 'similarity_mean': round(v['sum'] / v['count'], 4)}
+            for k, v in by_prompt.items()
+        },
+        'no_grounding_count': total - len(grounded),
+    }
+
+
 def _compute_metrics(scored, all_validations):
     """Agreement metrics over scored (ACCEPTED/EDITED) validations.
 
     Returns the full payload dict; `all_validations` only feeds the
-    rejection-rate denominator.
+    rejection-rate denominator. Also merges the grounding (citation-fidelity)
+    keys, which are properties of the analysis rows and need no validation.
     """
     total = len(all_validations)
     rejected = sum(1 for v in all_validations if v.status == 'REJECTED')
@@ -479,7 +587,7 @@ def _compute_metrics(scored, all_validations):
             'avg_confidence': round(avg_conf, 4),
         })
 
-    return {
+    payload = {
         'total_validations': total,
         'rejection_rate': round(rejected / total, 4) if total else None,
         'scored_validations': len(scored),
@@ -492,6 +600,8 @@ def _compute_metrics(scored, all_validations):
         'calibration': calibration,
         'expected_calibration_error': round(ece, 4) if scored_n else None,
     }
+    payload.update(_grounding_metrics([v.analysis for v in all_validations]))
+    return payload
 
 
 class ModelMetricsView(APIView):
@@ -502,6 +612,10 @@ class ModelMetricsView(APIView):
     - MAE/RMSE on percentage
     - calibration: agreement rate per confidence bin (+ ECE)
     - rejection rate over ALL validations
+    - grounding (citation fidelity): mean/median similarity, citation coverage,
+      citation validity / hallucinated rate, per-category and per-prompt-version
+      breakdowns. Grounding is a property of the ANALYSIS and needs no lecturer
+      validation; it is source-alignment, NOT accuracy.
 
     Query params:
     - ?subject_id=   restrict to one subject
@@ -555,10 +669,18 @@ class ModelMetricsView(APIView):
                 'macro_f1': m['macro_f1'],
                 'percentage_mae': m['percentage_mae'],
                 'expected_calibration_error': m['expected_calibration_error'],
+                'grounding_similarity_mean': m['grounding_similarity_mean'],
+                'citation_coverage': m['citation_coverage'],
+                'citation_validity_rate': m['citation_validity_rate'],
+                'hallucinated_citation_rate': m['hallucinated_citation_rate'],
             })
 
         payload['by_model'] = by_model
         if model_filter:
             payload['model_filter'] = model_filter
-        payload['note'] = 'Metrik = kesesuaian dengan validasi dosen (satu-satunya ground truth di sistem).'
+        payload['note'] = (
+            'Metrik kesesuaian = perbandingan dengan validasi dosen (satu-satunya ground truth di sistem). '
+            'Metrik grounding = keselarasan keluaran AI dengan kutipan sumber yang dipilihnya sendiri; '
+            'tidak memerlukan validasi dosen dan BUKAN akurasi.'
+        )
         return Response(payload)
