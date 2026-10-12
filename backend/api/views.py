@@ -1227,6 +1227,21 @@ def _read_xlsx_rows(upload, subject_name=None):
 
     normalized_headers = [COLUMN_MAP.get(h.upper(), h.lower()) for h in headers]
 
+    images_by_row = {}
+    for img in getattr(target_sheet, '_images', []):
+        anchor = getattr(img, 'anchor', None)
+        from_anchor = getattr(anchor, '_from', None)
+        if from_anchor is None:
+            continue
+        row_number = from_anchor.row + 1
+        try:
+            content = img._data()
+        except Exception:
+            continue
+        saved_name = default_storage.save(f'uploads/{uuid.uuid4().hex}.png', ContentFile(content))
+        media_url = f"{settings.MEDIA_URL.rstrip('/')}/{saved_name.lstrip('/')}"
+        images_by_row[row_number] = media_url
+
     rows = []
     for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
         if r_idx <= header_row_idx:
@@ -1244,6 +1259,7 @@ def _read_xlsx_rows(upload, subject_name=None):
             'title': raw_dict.get('title', ''),
             'topic': raw_dict.get('topic', ''),
             'description': raw_dict.get('description', ''),
+            'image_url': images_by_row.get(r_idx, ''),
         }))
 
     if not rows:
@@ -1495,8 +1511,15 @@ class QuestionImportCreateView(APIView):
         for r in parsed_rows:
             raw = r['raw_data']
             if raw.get('prompt') and raw.get('short_answer'):
+                prompt_text = raw.get('prompt', '')
+                image_url = raw.get('image_url', '')
+                if image_url:
+                    prompt_text = (
+                        f'<p>{prompt_text}</p>'
+                        f'<p><img src="{image_url}" style="max-width:100%;height:auto;" /></p>'
+                    )
                 questions_payload.append({
-                    'prompt': raw.get('prompt', ''),
+                    'prompt': prompt_text,
                     'short_answer': raw.get('short_answer', ''),
                     'alasan': raw.get('alasan', ''),
                 })
@@ -1564,23 +1587,25 @@ class QuestionImportTemplateView(APIView):
             "JUDUL_UJIAN",
             "DESKRIPSI_INSTRUKSI",
             "PERTANYAAN",
+            "GAMBAR",
             "JAWABAN_SINGKAT",
             "ALASAN_JAWABAN",
         ]
 
-        ws.merge_cells("A1:F4")
+        ws.merge_cells("A1:G4")
         banner_cell = ws["A1"]
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
             f"Pastikan seluruh soal pada file ini diperuntukkan bagi mata kuliah {target_subject.name}.\n"
-            f"Isi judul ujian, instruksi, pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
+            f"Isi judul ujian, instruksi, pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6.\n"
+            f"Sisipkan gambar langsung ke dalam sel kolom GAMBAR jika ada."
         )
         banner_cell.fill = banner_fill
         banner_cell.font = banner_font
         banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for r in range(1, 5):
-            for c in range(1, 7):
+            for c in range(1, 8):
                 ws.cell(row=r, column=c).border = banner_border
             ws.row_dimensions[r].height = 18
 
@@ -1597,6 +1622,7 @@ class QuestionImportTemplateView(APIView):
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
+                "",
                 "Berat semu menjadi lebih kecil.",
                 "Karena gaya normal N = m(g - a): percepatan lift ke bawah mengurangi gaya normal sehingga gaya kontak kaki pada timbangan berkurang.",
             ],
@@ -1605,6 +1631,7 @@ class QuestionImportTemplateView(APIView):
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
+                "",
                 "Karena keduanya bekerja pada benda yang sama.",
                 "Pasangan aksi-reaksi bekerja pada dua benda berbeda, sedangkan gaya berat dan gaya normal sama-sama bekerja pada balok.",
             ],
