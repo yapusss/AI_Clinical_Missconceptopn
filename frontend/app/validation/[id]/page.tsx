@@ -6,9 +6,11 @@ import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
+  BookMarked,
   BrainCircuit,
   CheckCircle2,
   ClipboardCheck,
+  GraduationCap,
   Lightbulb,
   RotateCcw,
   ShieldCheck,
@@ -22,6 +24,11 @@ import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
 import { apiFetch } from "../../lib/api";
 import FeedbackModal from "../../components/FeedbackModal";
+import type {
+  GroundingPayload,
+  GroundingReference,
+  LearnedTopic,
+} from "../../lib/studentSubmissions";
 
 type MisconceptionMatch = {
   misconception_id: string;
@@ -82,6 +89,11 @@ type Detail = {
     };
     execution_time_ms: number | null;
     created_at: string;
+    references?: GroundingReference[];
+    what_should_be_learned?: LearnedTopic[];
+    suggested_materials?: LearnedTopic[];
+    grounding_similarity?: number | null;
+    grounding_payload?: GroundingPayload | null;
   };
   validatable: boolean;
   existing_validation: {
@@ -124,6 +136,8 @@ const CATEGORY_META: Record<
     cardCls: "diag-card-sc",
   },
 };
+
+const shortId = (value?: string | null) => (value ? value.slice(0, 8) : "—");
 
 export default function ValidationDetailPage() {
   const { user, loading } = useAuth();
@@ -300,6 +314,14 @@ export default function ValidationDetailPage() {
     data?.answer.heuristic_flags ??
     data?.llm.concept_breakdown_json?.heuristic_flags ??
     [];
+
+  const references = data?.llm.references ?? [];
+  const learnedTopics =
+    data?.llm.what_should_be_learned ?? data?.llm.suggested_materials ?? [];
+  const groundingSimilarity =
+    data?.llm.grounding_similarity ??
+    data?.llm.grounding_payload?.grounding?.similarity_mean ??
+    null;
 
   if (loading || !user) return null;
 
@@ -515,7 +537,7 @@ export default function ValidationDetailPage() {
                   <div className="border-t border-outline-variant/20 pt-3">
                     <div className="flex items-center gap-1.5 mb-2">
                       <Lightbulb size={14} className="text-primary" />
-                      <h4 className="font-bold uppercase tracking-wider text-on-surface-variant">
+                      <h4 className="font-bold tracking-wider text-on-surface-variant">
                         Miskonsepsi Terdeteksi (Katalog &amp; Indikasi)
                       </h4>
                     </div>
@@ -572,6 +594,146 @@ export default function ValidationDetailPage() {
                       </div>
                     )}
                   </div>
+                </div>
+              </section>
+
+              {/* Sumber Referensi — the AI's cited passages (RAG) */}
+              <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+                <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <BookMarked size={17} className="text-primary" />
+                    <span className="text-xs font-bold tracking-wider text-on-surface">
+                      Sumber Referensi
+                    </span>
+                  </div>
+                  <span className="font-mono-ui text-[11px] text-on-surface-variant">
+                    {references.length} kutipan
+                  </span>
+                </header>
+
+                <div className="space-y-3 p-5">
+                  {references.length === 0 ? (
+                    <p className="text-xs italic text-on-surface-variant">
+                      Tidak ada sumber referensi terverifikasi untuk analisis ini.
+                    </p>
+                  ) : (
+                    references.map((ref, index) => (
+                      <article
+                        key={`${ref.chunk_id}-${index}`}
+                        className={`rounded-lg border p-3 ${
+                          ref.valid
+                            ? "border-outline-variant/30 bg-surface-container-lowest"
+                            : "border-error/40 bg-error-container/20"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="font-mono-ui text-[10px] font-bold text-on-surface-variant">
+                              [S{index + 1}]
+                            </span>
+                            <span className="truncate text-xs font-semibold text-on-surface">
+                              {ref.document_title || "Sumber tidak dikenal"}
+                            </span>
+                          </div>
+                          {ref.valid ? (
+                            <span className="badge badge-active shrink-0">Terverifikasi</span>
+                          ) : (
+                            <span className="badge badge-revoked shrink-0">Tidak Terverifikasi</span>
+                          )}
+                        </div>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono-ui text-[10px] text-on-surface-variant">
+                          {typeof ref.page === "number" && <span>hal. {ref.page}</span>}
+                          {typeof ref.similarity === "number" && (
+                            <span>keselarasan {ref.similarity.toFixed(3)}</span>
+                          )}
+                          <span>chunk {shortId(ref.chunk_id)}</span>
+                        </div>
+
+                        <blockquote className="mt-2 border-l-2 border-outline-variant/40 pl-2.5 text-xs italic leading-relaxed text-on-surface-variant">
+                          {ref.quote}
+                        </blockquote>
+
+                        {!ref.valid && (
+                          <p className="mt-1.5 text-[11px] leading-relaxed text-error">
+                            {ref.reason_if_invalid === "not_in_retrieved_set"
+                              ? "Kutipan ini tidak termasuk dalam himpunan sumber yang diambil."
+                              : ref.reason_if_invalid === "malformed"
+                                ? "Kutipan tidak berformat benar."
+                                : "Kutipan tidak valid."}
+                          </p>
+                        )}
+                      </article>
+                    ))
+                  )}
+
+                  {references.length > 0 && (
+                    <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                      Kutipan yang tidak terverifikasi tetap dicatat untuk audit, tetapi tidak
+                      dihitung dalam skor keselarasan.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              {/* Yang Perlu Dipelajari + grounding score */}
+              <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+                <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <GraduationCap size={17} className="text-primary" />
+                    <span className="text-xs font-bold tracking-wider text-on-surface">
+                      Yang Perlu Dipelajari
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                      Keselarasan dengan Sumber
+                    </span>
+                    <span className="font-mono-ui text-sm font-extrabold text-primary">
+                      {groundingSimilarity !== null ? groundingSimilarity.toFixed(4) : "—"}
+                    </span>
+                  </div>
+                </header>
+
+                <div className="space-y-3 p-5">
+                  <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                    Bukan akurasi; mengukur keselarasan keluaran AI dengan sumber yang dikutip.
+                  </p>
+
+                  {learnedTopics.length === 0 ? (
+                    <p className="text-xs italic text-on-surface-variant">
+                      Tidak ada sumber referensi terverifikasi untuk analisis ini.
+                    </p>
+                  ) : (
+                    <ol className="space-y-2">
+                      {learnedTopics.map((topic, index) => (
+                        <li
+                          key={index}
+                          className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3"
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="mt-0.5 font-mono-ui text-[10px] font-bold text-primary">
+                              {index + 1}.
+                            </span>
+                            <span className="text-xs font-medium text-on-surface">{topic.topik}</span>
+                          </div>
+                          {topic.sumber_chunk_ids?.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1 pl-5">
+                              {topic.sumber_chunk_ids.map((chunkId) => (
+                                <span
+                                  key={chunkId}
+                                  title={chunkId}
+                                  className="rounded border border-outline-variant/30 bg-surface-container px-1.5 py-0.5 font-mono-ui text-[10px] text-on-surface-variant"
+                                >
+                                  {shortId(chunkId)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
                 </div>
               </section>
             </div>

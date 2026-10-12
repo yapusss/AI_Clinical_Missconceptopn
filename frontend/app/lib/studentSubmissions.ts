@@ -123,6 +123,35 @@ export const SHORT_LABEL: Record<string, string> = {
 export const statusMeta = (status: string): StatusMeta =>
   STATUS_META[status] ?? { label: status, cls: "badge-role", hint: "" };
 
+// --- Grounding / citation shapes (R6; the student surface in R7 inherits these) ---
+
+export type GroundingReference = {
+  chunk_id: string;
+  document_id: string | null;
+  document_title: string | null;
+  page: number | null;
+  quote: string;
+  similarity: number | null;
+  valid: boolean;
+  reason_if_invalid: string | null;
+};
+
+export type LearnedTopic = {
+  topik: string;
+  sumber_chunk_ids: string[];
+};
+
+export type GroundingSummary = {
+  similarity_mean: number | null;
+  similarity_max: number | null;
+  citation_count: number | null;
+};
+
+export type GroundingPayload = {
+  references?: GroundingReference[];
+  grounding?: GroundingSummary;
+};
+
 export type SemanticStatus = {
   badgeLabel: string;
   badgeClass: string;
