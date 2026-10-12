@@ -30,6 +30,7 @@ from api.materials_views import MATERIAL_UPLOAD_MAX_BYTES, validate_material_upl
 from api.validation_views import (
     _by_model_row,
     _compute_metrics,
+    _filter_analyses_by_model,
     _grounding_detail,
     _grounding_metrics,
     _zero_validation_payload,
@@ -260,7 +261,7 @@ class ZeroChunkPipelineTests(SimpleTestCase):
 
 def make_analysis(similarity=None, citation_count=None, category=None,
                   prompt_version='four-tier-v2.9-rag', references=None,
-                  confidence='0.900'):
+                  confidence='0.900', model_identifier='openai/gpt-oss-20b'):
     return SimpleNamespace(
         grounding_similarity=similarity,
         grounding_citation_count=citation_count,
@@ -268,7 +269,7 @@ def make_analysis(similarity=None, citation_count=None, category=None,
         four_tier_category=category,
         prompt_version=prompt_version,
         confidence=confidence,
-        model_identifier='openai/gpt-oss-20b',
+        model_identifier=model_identifier,
     )
 
 
@@ -486,3 +487,41 @@ class PendingDrainTests(SimpleTestCase):
         mark_failed.assert_called_once()
         self.assertEqual(mark_failed.call_args[0][0], 'doc-1')
         self.assertIn('corrupt pdf', mark_failed.call_args[0][1])
+
+
+class ModelFilterTests(SimpleTestCase):
+    """`?model=` must restrict the grounding block, not just echo the filter."""
+
+    def _analyses(self):
+        return [
+            make_analysis(similarity=0.5, citation_count=1, references=[{'valid': True}],
+                          model_identifier='model-a'),
+            make_analysis(similarity=0.7, citation_count=1, references=[{'valid': True}],
+                          model_identifier='model-b'),
+        ]
+
+    def test_no_filter_keeps_every_analysis(self):
+        analyses = self._analyses()
+        self.assertEqual(len(_filter_analyses_by_model(analyses, None)), 2)
+        self.assertEqual(len(_filter_analyses_by_model(analyses, '')), 2)
+
+    def test_matching_filter_keeps_only_that_model(self):
+        kept = _filter_analyses_by_model(self._analyses(), 'model-a')
+        self.assertEqual([a.model_identifier for a in kept], ['model-a'])
+
+    def test_non_matching_filter_is_zero_analyses_shape(self):
+        kept = _filter_analyses_by_model(self._analyses(), 'does-not-exist')
+        self.assertEqual(kept, [])
+
+        payload = _zero_validation_payload(kept, 'does-not-exist')
+        self.assertEqual(payload['total_validations'], 0)
+        self.assertEqual(payload['model_filter'], 'does-not-exist')
+        self.assertIsNone(payload['grounding_similarity_mean'])
+        self.assertIsNone(payload['grounding_similarity_median'])
+        self.assertIsNone(payload['citation_coverage'])
+        self.assertIsNone(payload['citation_validity_rate'])
+        self.assertIsNone(payload['hallucinated_citation_rate'])
+        self.assertEqual(payload['grounding_by_category'], {})
+        self.assertEqual(payload['grounding_by_prompt_version'], {})
+        self.assertEqual(payload['no_grounding_count'], 0)
+        self.assertEqual(payload['by_model'], [])

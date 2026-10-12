@@ -611,18 +611,36 @@ METRICS_NOTE = (
 )
 
 
-def _scope_analyses(user, subject_id=None):
+def _scope_analyses(user, subject_id=None, model_filter=None):
     """All CURRENT analyses in the caller's subject scope (grounding source).
 
     Grounding is a property of the analysis and needs no lecturer validation, so
     it is computed over every current analysis in scope — not only the ones that
     happen to have a validation. A grounding number that only appears (or
     changes) after a validation would be useless as a pre-validation signal.
+
+    Scope = lecturer subject scope (superuser: all) + optional `?subject_id=` +
+    optional `?model=`. The model filter must narrow the grounding block too, or
+    `?model=` would leak pooled numbers from other providers.
     """
     qs = LlmAnalysis.objects.filter(_scope_filter(user), is_current=True)
     if subject_id:
         qs = qs.filter(subject_id=subject_id)
+    if model_filter:
+        qs = qs.filter(model_identifier=model_filter)
     return qs
+
+
+def _filter_analyses_by_model(analyses, model_filter):
+    """Pure post-condition for the `?model=` scope (DB-free testable).
+
+    `_scope_analyses` narrows the query in the ORM; this enforces the same
+    invariant on the materialised list so no unfiltered row can slip into the
+    grounding block.
+    """
+    if not model_filter:
+        return list(analyses)
+    return [a for a in analyses if a.model_identifier == model_filter]
 
 
 def _by_model_row(identifier, validation_rows, analysis_rows):
@@ -715,8 +733,11 @@ class ModelMetricsView(APIView):
 
         all_validations = list(qs)
 
-        # Grounding source: all current analyses in scope (no validation needed).
-        analyses = list(_scope_analyses(request.user, subject_id))
+        # Grounding source: all current analyses in scope (no validation needed),
+        # narrowed by ?subject_id= and ?model= so the filter restricts the block.
+        analyses = _filter_analyses_by_model(
+            list(_scope_analyses(request.user, subject_id, model_filter)), model_filter
+        )
 
         total = len(all_validations)
         if total == 0:
