@@ -52,6 +52,47 @@ def _scope_filter(user):
     return Q(subject_id__in=ids) if ids else Q(pk__in=[])
 
 
+def _reference_document_ids(references) -> list[str]:
+    ids = set()
+    for ref in references or []:
+        if isinstance(ref, dict) and ref.get('document_id'):
+            ids.add(str(ref['document_id']))
+    return sorted(ids)
+
+
+def _document_titles(document_ids) -> dict:
+    """Resolve document ids → titles in one query (never per citation)."""
+    if not document_ids:
+        return {}
+    with connection.cursor() as cur:
+        cur.execute(
+            'SELECT id::text, title FROM knowledge_documents WHERE id::text = ANY(%s)',
+            [list(document_ids)],
+        )
+        return {str(row[0]): row[1] for row in cur.fetchall()}
+
+
+def _attach_document_titles(references) -> list:
+    """Add `document_title` to every reference entry (brief §10.2).
+
+    One query for the whole list (none when it is empty). A malformed/missing or
+    unknown `document_id` yields `document_title: None`; the key is present on
+    every entry so the UI never has to join `/api/materials` or guess.
+    """
+    refs = list(references or [])
+    titles = _document_titles(_reference_document_ids(refs))
+    out = []
+    for ref in refs:
+        if isinstance(ref, dict):
+            entry = dict(ref)
+            doc_id = entry.get('document_id')
+            entry['document_title'] = titles.get(str(doc_id)) if doc_id else None
+        else:
+            entry = {'document_title': None}
+        out.append(entry)
+    return out
+
+
 def _grounding_detail(analysis, breakdown: dict) -> dict:
     """Assemble the grounding/references block exposed to the lecturer UI.
 
@@ -62,7 +103,7 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
     """
     return {
         'concept_breakdown_json': breakdown,
-        'references': breakdown.get('references') or [],
+        'references': _attach_document_titles(breakdown.get('references') or []),
         'what_should_be_learned': breakdown.get('what_should_be_learned') or [],
         'suggested_materials': analysis.suggested_materials_json or [],
         # Flat keys kept for the authoritative brief §10.1 contract.
