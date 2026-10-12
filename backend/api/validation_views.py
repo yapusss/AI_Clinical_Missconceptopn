@@ -509,9 +509,10 @@ def _grounding_metrics(analyses):
 def _compute_metrics(scored, all_validations):
     """Agreement metrics over scored (ACCEPTED/EDITED) validations.
 
-    Returns the full payload dict; `all_validations` only feeds the
-    rejection-rate denominator. Also merges the grounding (citation-fidelity)
-    keys, which are properties of the analysis rows and need no validation.
+    Returns the validation-derived payload only; `all_validations` feeds the
+    rejection-rate denominator. Grounding keys are NOT merged here — they are
+    computed from all current analyses in scope (see `_grounding_metrics` /
+    `_scope_analyses`) so they never depend on a validation existing.
     """
     total = len(all_validations)
     rejected = sum(1 for v in all_validations if v.status == 'REJECTED')
@@ -600,7 +601,77 @@ def _compute_metrics(scored, all_validations):
         'calibration': calibration,
         'expected_calibration_error': round(ece, 4) if scored_n else None,
     }
-    payload.update(_grounding_metrics([v.analysis for v in all_validations]))
+    return payload
+
+
+METRICS_NOTE = (
+    'Metrik kesesuaian = perbandingan dengan validasi dosen (satu-satunya ground truth di sistem). '
+    'Metrik grounding = keselarasan keluaran AI dengan kutipan sumber yang dipilihnya sendiri; '
+    'tidak memerlukan validasi dosen dan BUKAN akurasi.'
+)
+
+
+def _scope_analyses(user, subject_id=None):
+    """All CURRENT analyses in the caller's subject scope (grounding source).
+
+    Grounding is a property of the analysis and needs no lecturer validation, so
+    it is computed over every current analysis in scope — not only the ones that
+    happen to have a validation. A grounding number that only appears (or
+    changes) after a validation would be useless as a pre-validation signal.
+    """
+    qs = LlmAnalysis.objects.filter(_scope_filter(user), is_current=True)
+    if subject_id:
+        qs = qs.filter(subject_id=subject_id)
+    return qs
+
+
+def _by_model_row(identifier, validation_rows, analysis_rows):
+    """One compact per-model comparison row.
+
+    Validation-derived fields come from `validation_rows`; the grounding keys
+    come from `analysis_rows` (that model's current analyses in scope), so a
+    model with analyses but no validations still reports grounding.
+    """
+    scored = [v for v in validation_rows if v.status in ('ACCEPTED', 'EDITED')]
+    m = _compute_metrics(scored, validation_rows)
+    g = _grounding_metrics(analysis_rows)
+    return {
+        'model_identifier': identifier,
+        'total_validations': m['total_validations'],
+        'scored_validations': m['scored_validations'],
+        'rejection_rate': m['rejection_rate'],
+        'tier_agreement_accuracy': m['tier_agreement_accuracy'],
+        'macro_f1': m['macro_f1'],
+        'percentage_mae': m['percentage_mae'],
+        'expected_calibration_error': m['expected_calibration_error'],
+        'grounding_similarity_mean': g['grounding_similarity_mean'],
+        'citation_coverage': g['citation_coverage'],
+        'citation_validity_rate': g['citation_validity_rate'],
+        'hallucinated_citation_rate': g['hallucinated_citation_rate'],
+    }
+
+
+def _zero_validation_payload(analyses, model_filter=None):
+    """Payload when no validations exist yet: grounding is still reported.
+
+    Validation-derived metrics stay absent (no invented zeros); the 8 grounding
+    keys and one `by_model` row per model present in scope are always returned.
+    """
+    identifiers = sorted({a.model_identifier for a in analyses})
+    by_model = [
+        _by_model_row(identifier, [], [a for a in analyses if a.model_identifier == identifier])
+        for identifier in identifiers
+    ]
+    payload = {
+        'total_validations': 0,
+        'message': 'Belum ada data validasi — metrik grounding tetap dihitung dari analisis; '
+                   'metrik kesesuaian tersedia setelah dosen memvalidasi analisis.',
+        **_grounding_metrics(analyses),
+        'by_model': by_model,
+        'note': METRICS_NOTE,
+    }
+    if model_filter:
+        payload['model_filter'] = model_filter
     return payload
 
 
@@ -615,7 +686,10 @@ class ModelMetricsView(APIView):
     - grounding (citation fidelity): mean/median similarity, citation coverage,
       citation validity / hallucinated rate, per-category and per-prompt-version
       breakdowns. Grounding is a property of the ANALYSIS and needs no lecturer
-      validation; it is source-alignment, NOT accuracy.
+      validation; it is source-alignment, NOT accuracy. It is computed over all
+      current analyses in scope — not only the ones that have a validation — so
+      the number is available as a pre-validation signal and never changes just
+      because a validation appears.
 
     Query params:
     - ?subject_id=   restrict to one subject
@@ -640,47 +714,30 @@ class ModelMetricsView(APIView):
         qs = qs.select_related('analysis')
 
         all_validations = list(qs)
+
+        # Grounding source: all current analyses in scope (no validation needed).
+        analyses = list(_scope_analyses(request.user, subject_id))
+
         total = len(all_validations)
         if total == 0:
-            return Response({
-                'total_validations': 0,
-                'by_model': [],
-                'message': 'Belum ada data validasi — metrik tersedia setelah dosen memvalidasi analisis.',
-            })
+            return Response(_zero_validation_payload(analyses, model_filter))
 
         payload = _compute_metrics(
             [v for v in all_validations if v.status in ('ACCEPTED', 'EDITED')],
             all_validations,
         )
+        payload.update(_grounding_metrics(analyses))
 
-        # Compact per-model comparison rows (computed from unfiltered-by-model set)
+        # by_model: the validation-derived model set is unchanged; the grounding
+        # keys of each row come from that model's analyses in scope.
         by_model = []
         for identifier in sorted({v.analysis.model_identifier for v in all_validations}):
             rows = [v for v in all_validations if v.analysis.model_identifier == identifier]
-            m = _compute_metrics(
-                [v for v in rows if v.status in ('ACCEPTED', 'EDITED')], rows
-            )
-            by_model.append({
-                'model_identifier': identifier,
-                'total_validations': m['total_validations'],
-                'scored_validations': m['scored_validations'],
-                'rejection_rate': m['rejection_rate'],
-                'tier_agreement_accuracy': m['tier_agreement_accuracy'],
-                'macro_f1': m['macro_f1'],
-                'percentage_mae': m['percentage_mae'],
-                'expected_calibration_error': m['expected_calibration_error'],
-                'grounding_similarity_mean': m['grounding_similarity_mean'],
-                'citation_coverage': m['citation_coverage'],
-                'citation_validity_rate': m['citation_validity_rate'],
-                'hallucinated_citation_rate': m['hallucinated_citation_rate'],
-            })
+            model_analyses = [a for a in analyses if a.model_identifier == identifier]
+            by_model.append(_by_model_row(identifier, rows, model_analyses))
 
         payload['by_model'] = by_model
         if model_filter:
             payload['model_filter'] = model_filter
-        payload['note'] = (
-            'Metrik kesesuaian = perbandingan dengan validasi dosen (satu-satunya ground truth di sistem). '
-            'Metrik grounding = keselarasan keluaran AI dengan kutipan sumber yang dipilihnya sendiri; '
-            'tidak memerlukan validasi dosen dan BUKAN akurasi.'
-        )
+        payload['note'] = METRICS_NOTE
         return Response(payload)
