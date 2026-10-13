@@ -2,6 +2,29 @@
 
 Read this first. It is the cheap entry point: everything else is on disk, so no transcript is needed.
 
+## Current work — read this before anything else (2026-10-14)
+
+**R0–R6 are complete and committed. The R-phase plan is finished, not mid-flight.**
+The active change is the **C-phase**: answer-cosine similarity + LLM-generated reading material.
+
+| | |
+|---|---|
+| Decision record | `D:/ClinicalAI_Misconception/Context/Answer_Cosine_Plan.md` (locked decisions D1–D10) |
+| Authoritative spec | `docs/COSINE_READING_MATERIAL_BRIEF.md` (phases C0–C7) |
+| Next phase | C1 — `docs/C1_TASK.md` (task file ready) |
+| Working branch | `feat/cosine-reading-material` |
+| Rollback point | `backup/pre-cosine-2026-10-14` @ `a6ed436` (== `main`, == this state) |
+| Rollback bundle | `D:/ClinicalAI_Misconception/backups/acm-pre-cosine-2026-10-14.bundle` (complete history, verified) |
+
+Two things this change unsettles: it **reverses locked decision R1** for the similarity metric only
+(similarity is now student-answer-vs-lecturer-reference-answer, not citation fidelity; the `grounding_*`
+columns are retained untouched so R1–R6 rows stay interpretable), and it **moves the LLM's output from
+lecturer-facing reasoning to student-facing reading material**.
+
+Also on the record: commit `a6ed436` renders grounding citations on the **student** review
+(`questions/[id]/students/[studentId]`), which contradicts hard rule 6 below. Decision 4 of the C-phase
+keeps student surfaces last in the phase order, but that rule is already broken in the tree.
+
 ## Where things are
 
 | Path | What |
@@ -70,7 +93,8 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   echoed `model_filter`; unfiltered unchanged (`total_validations 4`, mean `0.6517`, coverage `0.5`,
   `no_grounding_count 3`); Physics scope unchanged (`3 / 0.6517 / 0.75 / 1`); PDF-anchored block unchanged
   (mean = median `0.5465`, coverage `1.0`, validity `1.0`); no new data row, no frontend file.
-- **Next: R6 (task file ready at `docs/R6_TASK.md`)** — lecturer surfaces: `frontend/app/materials/page.tsx` (upload/list/
+- **R6 — done, committed `17c332f`** (task file `docs/R6_TASK.md`; the "ready" wording below is the R6-era record).
+  Plus `a6ed436`: grounding citations on the question-set student review. Lecturer surfaces: `frontend/app/materials/page.tsx` (upload/list/
   delete), `frontend/app/metrics/page.tsx`, citations + learning list on `validation/[id]`, shared types in
   `app/lib/studentSubmissions.ts`, sidebar entries — plus **one backend addition decided 2026-10-12**: `_grounding_detail`
   must put `document_title` on every citation reference (brief §10.2 asks for the title; the payload only carried
@@ -78,7 +102,8 @@ Read this first. It is the cheap entry point: everything else is on disk, so no 
   + headless-Edge CDP pass (stop the `:3001` dev server first). Known, deliberately unfixed leftovers from the R5
   audit: F2 cross-subject `topic_id` accepted on upload (the UI picker simply must not offer foreign topics),
   F3 `by_model` row set comes from the validations in the non-empty branch, F5 `.markdown` allow-listed, F6 no retry
-  for a `FAILED` document that already inserted chunks. **Then R7 = gated student surface.** The 2026-10-08 build
+  for a `FAILED` document that already inserted chunks. **Then R7 = gated student surface — superseded 2026-10-14 by the C-phase** (student surfaces are C7 there; `a6ed436` already
+  renders citations on that surface). **Next: C1 — `docs/C1_TASK.md`.** The 2026-10-08 build
   order called the UI "R5" — phases were renumbered 2026-10-12 when the materials API was split out (plan §10).
 
 ## R6 dispatch (ready)
