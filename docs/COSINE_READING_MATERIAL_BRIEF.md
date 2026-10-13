@@ -40,6 +40,39 @@ Phase order is strict. Each phase ends with a commit and a report; do not start 
 - `tests_reference_materials.py` currently holds **36** `def test_` methods (the HANDOFF says 34 —
   re-baseline from a live run, do not trust the doc).
 
+## 1b. C0 baseline — measured 2026-10-14 on the live dev DB
+
+Full record: `D:/ClinicalAI_Misconception/scripts/_c0_baseline.json`.
+PostgreSQL **16.15**, pgvector **0.8.6** (so `UNIQUE NULLS NOT DISTINCT` in §5 is available),
+highest migration `0024`, proc arities `11/20`, `manage.py check` clean,
+**`api.tests_reference_materials`: 36 tests, OK, exit 0**.
+
+| count | value |
+|---|---|
+| `llm_analyses` | **8** (4 with `grounding_similarity`) |
+| `prompt_versions` | `four-tier-v2.9-rag` only |
+| `validations` | **4** |
+| `submissions` | 6 (2 `PENDING_VALIDATION`, 4 `VALIDATED`) |
+| `questions` / `question_versions` | 3 / 3 (all 3 have non-empty `short_answer` **and** `model_answer`) |
+| `knowledge_documents` / `chunks` | 3 / **330**, all 330 embedded |
+| `reference_answers` | **2 rows, 1 of 3 question versions** — the mirror is incomplete |
+| `misconceptions` / `question_version_misconceptions` | **0 / 0** |
+
+Three consequences that must be respected by C1–C4:
+
+1. **θ cannot be fitted from this DB.** 4 validations over 8 analyses. This is no longer a
+   theoretical worry — it is the measured state. `verdict_agreement_rate` (D3) is the **only**
+   calibration path, and the thresholds stay provisional until it produces a usable sample.
+2. **The misconception catalog is empty, so D5 is inert here.** `question_version_misconceptions = 0`
+   means Modul C has no candidates and can only return `MK-LAIN`, so `misconception_id` is **always
+   NULL** in this DB and every generation key degenerates to `(question_version, category, NULL)`.
+   C4's verification can therefore only exercise the category-level branch. Populating the catalog is
+   a **precondition** for D5's specificity to do anything — it is a lecturer-authored data task, not
+   a code task. Nothing in C1–C7 should assume it has been done.
+3. **C2 must reconcile the mirror before embedding.** The effective reference text lives on
+   `question_versions` (3/3 populated); `reference_answers` is a partial mirror (2 rows). Embedding
+   only what is in `reference_answers` would leave 2 of 3 question versions without a cached vector.
+
 ## 2. C1 — Migration `0025`
 
 Highest existing migration is `0024`. Do **not** create a duplicate leaf (the repo has a
@@ -80,6 +113,14 @@ Backfill `reference_answers.embedding`. Reuses `api/embeddings.py:embed_texts`. 
 with a non-null vector unless `--replace`. Prefer the effective reference text (i.e. the same
 resolution `load_context` applies: `question_versions.short_answer` over the mirror), so the cached
 vector matches what C3 will compare against. Cost ≈ one vector per question version.
+
+**C0 forces an extra step:** the `reference_answers` mirror is incomplete (2 rows for 1 of 3 question
+versions), while `question_versions.short_answer` / `.model_answer` are populated 3/3. The command
+must therefore **reconcile the mirror first** — port `/ reuse `views.py:66 _sync_reference_answers`
+for every question version that is missing `JAWABAN_SINGKAT` / `ALASAN` — and only then embed. Report
+the reconcile counts (`created`, `already present`) separately from the embed counts. Do not embed
+from `question_versions` directly while leaving `reference_answers` empty: C3 reads the cache from
+`reference_answers` and would then miss 2 of 3 questions.
 
 ## 4. C3 — Similarity + rule verdict
 
@@ -166,6 +207,11 @@ Trigger: get-or-create at the end of `analyze_submission`, after the category is
 `category != 'SC'`**. Plus `manage.py generate_reading_material --pending/--loop/--replace/--question-version <id>`
 mirroring the `ingest_materials` drain. `--replace` is the only regeneration path (D7: no UI edit).
 Never generate inside a web request.
+
+**C0 caveat:** `misconceptions` and `question_version_misconceptions` are both **empty** in the dev DB,
+so Modul C can only return `MK-LAIN` and `misconception_id` will be NULL for every row. C4's
+verification must state that explicitly and exercise the category-level branch; it must **not** claim
+D5's per-misconception specificity was proven.
 
 ## 6. C5 — Metrics redefinition
 
