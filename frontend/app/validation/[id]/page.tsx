@@ -28,6 +28,8 @@ import type {
   GroundingPayload,
   GroundingReference,
   LearnedTopic,
+  ReadingMaterial,
+  VerdictShadow,
 } from "../../lib/studentSubmissions";
 
 type MisconceptionMatch = {
@@ -94,6 +96,12 @@ type Detail = {
     suggested_materials?: LearnedTopic[];
     grounding_similarity?: number | null;
     grounding_payload?: GroundingPayload | null;
+    answer_similarity_t1?: number | null;
+    answer_similarity_t3?: number | null;
+    llm_t1_score?: string | null;
+    llm_t3_score?: string | null;
+    verdict_shadow?: VerdictShadow;
+    reading_material?: ReadingMaterial | null;
   };
   validatable: boolean;
   existing_validation: {
@@ -139,6 +147,13 @@ const CATEGORY_META: Record<
 
 const shortId = (value?: string | null) => (value ? value.slice(0, 8) : "—");
 
+const MATERIAL_STATUS_META: Record<string, { label: string; cls: string }> = {
+  READY: { label: "Siap", cls: "badge-active" },
+  PENDING: { label: "Menunggu", cls: "badge-draft" },
+  STALE: { label: "Kedaluwarsa", cls: "badge-review" },
+  FAILED: { label: "Gagal", cls: "badge-revoked" },
+};
+
 export default function ValidationDetailPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -159,6 +174,11 @@ export default function ValidationDetailPage() {
   const [confirms, setConfirms] = useState<Record<string, boolean>>({});
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Reading-material flag (review, not edit) state.
+  const [flagOpen, setFlagOpen] = useState(false);
+  const [flagNote, setFlagNote] = useState("");
+  const [flagSubmitting, setFlagSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     if (!analysisId) return;
@@ -299,6 +319,51 @@ export default function ValidationDetailPage() {
     }
   };
 
+  const handleFlagMaterial = async () => {
+    const material = data?.llm.reading_material;
+    if (!material) return;
+    setError("");
+    setNotice("");
+    setFlagSubmitting(true);
+    try {
+      const res = await apiFetch<{
+        status: string;
+        review_status: string;
+        flag_note: string | null;
+      }>(`/materials/reading/${material.id}/flag`, {
+        method: "POST",
+        body: JSON.stringify({ note: flagNote.trim() || undefined }),
+      });
+      setNotice(
+        "Materi ditandai perlu diperbaiki dan masuk antrean regenerate.",
+      );
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              llm: {
+                ...prev.llm,
+                reading_material: {
+                  ...material,
+                  status: res.status,
+                  review_status: res.review_status,
+                  flag_note: res.flag_note,
+                },
+              },
+            }
+          : prev,
+      );
+      setFlagOpen(false);
+      setFlagNote("");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal menandai materi bacaan.",
+      );
+    } finally {
+      setFlagSubmitting(false);
+    }
+  };
+
   const resetToAiValues = () => {
     if (!data) return;
     setFinalPct(data.llm.percentage_correct);
@@ -315,13 +380,20 @@ export default function ValidationDetailPage() {
     data?.llm.concept_breakdown_json?.heuristic_flags ??
     [];
 
-  const references = data?.llm.references ?? [];
   const learnedTopics =
     data?.llm.what_should_be_learned ?? data?.llm.suggested_materials ?? [];
   const groundingSimilarity =
     data?.llm.grounding_similarity ??
     data?.llm.grounding_payload?.grounding?.similarity_mean ??
     null;
+  const readingMaterial = data?.llm.reading_material ?? null;
+  const shadowVerdict = data?.llm.verdict_shadow ?? {};
+  const materialStatusMeta = readingMaterial
+    ? MATERIAL_STATUS_META[readingMaterial.status] ?? {
+        label: readingMaterial.status,
+        cls: "badge-role",
+      }
+    : null;
 
   if (loading || !user) return null;
 
@@ -597,81 +669,231 @@ export default function ValidationDetailPage() {
                 </div>
               </section>
 
-              {/* Sumber Referensi — the AI's cited passages (RAG) */}
+              {/* Materi Bacaan — generated reading material (C6). Review only:
+                  there is deliberately no edit control, textarea or save button
+                  (D7) — a lecturer flags bad material and the drain regenerates. */}
               <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
                 <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
                   <div className="flex items-center gap-2">
                     <BookMarked size={17} className="text-primary" />
                     <span className="text-xs font-bold tracking-wider text-on-surface">
-                      Sumber Referensi
+                      Materi Bacaan
                     </span>
                   </div>
-                  <span className="font-mono-ui text-[11px] text-on-surface-variant">
-                    {references.length} kutipan
-                  </span>
+                  {readingMaterial && materialStatusMeta && (
+                    <div className="flex items-center gap-2">
+                      <span className={`badge ${materialStatusMeta.cls} shrink-0`}>
+                        {materialStatusMeta.label}
+                      </span>
+                      {readingMaterial.stale && (
+                        <span className="badge badge-revoked shrink-0">
+                          Perlu regenerate
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </header>
 
                 <div className="space-y-3 p-5">
-                  {references.length === 0 ? (
+                  {!readingMaterial ? (
                     <p className="text-xs italic text-on-surface-variant">
-                      Tidak ada sumber referensi terverifikasi untuk analisis ini.
+                      Belum ada materi bacaan untuk kategori ini. Materi dibuat untuk
+                      setiap kategori selain Sound Understanding dan baru muncul setelah
+                      antrean drain berjalan.
                     </p>
                   ) : (
-                    references.map((ref, index) => (
-                      <article
-                        key={`${ref.chunk_id}-${index}`}
-                        className={`rounded-lg border p-3 ${
-                          ref.valid
-                            ? "border-outline-variant/30 bg-surface-container-lowest"
-                            : "border-error/40 bg-error-container/20"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <span className="font-mono-ui text-[10px] font-bold text-on-surface-variant">
-                              [S{index + 1}]
-                            </span>
-                            <span className="truncate text-xs font-semibold text-on-surface">
-                              {ref.document_title || "Sumber tidak dikenal"}
-                            </span>
+                    <>
+                      {/* Staleness badge (D18) — recomputed server-side at read time */}
+                      {readingMaterial.stale && (
+                        <div className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <AlertTriangle size={14} /> referensi berubah sejak materi ini dibuat
                           </div>
-                          {ref.valid ? (
-                            <span className="badge badge-active shrink-0">Terverifikasi</span>
-                          ) : (
-                            <span className="badge badge-revoked shrink-0">Tidak Terverifikasi</span>
+                          {readingMaterial.stale_reason && (
+                            <p className="leading-relaxed">{readingMaterial.stale_reason}</p>
                           )}
                         </div>
+                      )}
 
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono-ui text-[10px] text-on-surface-variant">
-                          {typeof ref.page === "number" && <span>hal. {ref.page}</span>}
-                          {typeof ref.similarity === "number" && (
-                            <span>keselarasan {ref.similarity.toFixed(3)}</span>
+                      {/* Flagged review state */}
+                      {readingMaterial.review_status === "FLAGGED" && (
+                        <div className="space-y-1 rounded-lg border border-error/40 bg-error-container/20 p-3 text-xs text-error">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <XCircle size={14} /> Ditandai perlu diperbaiki
+                          </div>
+                          {readingMaterial.flag_note && (
+                            <p className="leading-relaxed">{readingMaterial.flag_note}</p>
                           )}
-                          <span>chunk {shortId(ref.chunk_id)}</span>
                         </div>
+                      )}
 
-                        <blockquote className="mt-2 border-l-2 border-outline-variant/40 pl-2.5 text-xs italic leading-relaxed text-on-surface-variant">
-                          {ref.quote}
-                        </blockquote>
+                      {/* Ungrounded warning (D8/D10) */}
+                      {readingMaterial.grounded === false && (
+                        <div className="flex items-start gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                          <span className="leading-relaxed">
+                            Materi ini dibuat TANPA materi referensi (grounded = false).
+                          </span>
+                        </div>
+                      )}
+                      {readingMaterial.ungrounded_source_count > 0 && (
+                        <p className="text-[11px] leading-relaxed text-error">
+                          {readingMaterial.ungrounded_source_count} sumber yang dikutip tidak
+                          dapat diselesaikan ke materi referensi.
+                        </p>
+                      )}
 
-                        {!ref.valid && (
-                          <p className="mt-1.5 text-[11px] leading-relaxed text-error">
-                            {ref.reason_if_invalid === "not_in_retrieved_set"
-                              ? "Kutipan ini tidak termasuk dalam himpunan sumber yang diambil."
-                              : ref.reason_if_invalid === "malformed"
-                                ? "Kutipan tidak berformat benar."
-                                : "Kutipan tidak valid."}
+                      {/* The material itself — read-only */}
+                      {readingMaterial.status === "READY" && readingMaterial.content_md ? (
+                        <div className="whitespace-pre-wrap text-sm leading-relaxed text-on-surface">
+                          {readingMaterial.content_md}
+                        </div>
+                      ) : (
+                        <p className="text-xs italic text-on-surface-variant">
+                          {readingMaterial.status === "PENDING"
+                            ? "Materi sedang dalam antrean generate."
+                            : readingMaterial.status === "STALE"
+                              ? "Materi menunggu regenerate karena referensi berubah."
+                              : readingMaterial.status === "FAILED"
+                                ? `Generate materi gagal setelah ${readingMaterial.attempts} percobaan.`
+                                : "Materi belum tersedia."}
+                        </p>
+                      )}
+
+                      {/* Sources (provenance of the material) */}
+                      {readingMaterial.sources.length > 0 && (
+                        <div className="border-t border-outline-variant/20 pt-3">
+                          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                            Sumber Materi ({readingMaterial.sources.length})
                           </p>
-                        )}
-                      </article>
-                    ))
-                  )}
+                          <ul className="space-y-1">
+                            {readingMaterial.sources.map((src, index) => (
+                              <li
+                                key={`${src.chunk_id}-${index}`}
+                                className="flex items-center justify-between gap-2 rounded border border-outline-variant/30 bg-surface-container-lowest px-3 py-1.5 text-xs"
+                              >
+                                <span className="min-w-0 truncate font-semibold text-on-surface">
+                                  {src.document_title || "Sumber tidak dikenal"}
+                                </span>
+                                <span className="shrink-0 font-mono-ui text-[10px] text-on-surface-variant">
+                                  {typeof src.page === "number" ? `hal. ${src.page}` : "—"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
 
-                  {references.length > 0 && (
-                    <p className="text-[11px] leading-relaxed text-on-surface-variant">
-                      Kutipan yang tidak terverifikasi tetap dicatat untuk audit, tetapi tidak
-                      dihitung dalam skor keselarasan.
-                    </p>
+                      {/* Cosine values — labelled as alignment, never accuracy */}
+                      <div className="border-t border-outline-variant/20 pt-3">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                          Keselarasan dengan jawaban referensi dosen
+                        </p>
+                        <div className="mt-1.5 grid grid-cols-2 gap-3">
+                          <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                            <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                              Tier 1
+                            </span>
+                            <p className="mt-0.5 font-mono-ui text-base font-extrabold text-primary">
+                              {typeof data.llm.answer_similarity_t1 === "number"
+                                ? data.llm.answer_similarity_t1.toFixed(4)
+                                : "—"}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
+                            <span className="text-[10px] font-bold uppercase text-on-surface-variant">
+                              Tier 3
+                            </span>
+                            <p className="mt-0.5 font-mono-ui text-base font-extrabold text-primary">
+                              {typeof data.llm.answer_similarity_t3 === "number"
+                                ? data.llm.answer_similarity_t3.toFixed(4)
+                                : "—"}
+                            </p>
+                          </div>
+                        </div>
+                        <p className="mt-1.5 text-[11px] leading-relaxed text-on-surface-variant">
+                          Bukan akurasi; mengukur keselarasan jawaban mahasiswa dengan jawaban
+                          referensi dosen. Tanda — berarti similarity belum tersedia untuk analisis ini.
+                        </p>
+                      </div>
+
+                      {/* Driving verdict + shadow verdict */}
+                      <div className="grid grid-cols-1 gap-3 border-t border-outline-variant/20 pt-3 sm:grid-cols-2">
+                        <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-xs">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                            Verdict penggerak
+                          </p>
+                          <p className="mt-1 font-mono-ui text-on-surface">
+                            T1: {data.llm.module_a_score ?? "—"} · T3: {data.llm.module_b_score ?? "—"}
+                          </p>
+                          <p className="mt-1 text-[11px] text-on-surface-variant">
+                            Sumber: {readingMaterial.prompt_version ?? data.llm.prompt_version ?? "—"}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-low p-3 text-xs">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                            Shadow (aturan θ) — tidak menggerakkan
+                          </p>
+                          <p className="mt-1 font-mono-ui text-on-surface">
+                            T1: {shadowVerdict.rule_t1 ?? data.llm.llm_t1_score ?? "—"} · T3:{" "}
+                            {shadowVerdict.rule_t3 ?? data.llm.llm_t3_score ?? "—"}
+                          </p>
+                          <p className="mt-1 text-[11px] text-on-surface-variant">
+                            Diagnostik kalibrasi; verdict penggerak tetap yang menentukan kategori.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Flag control — review, not editing */}
+                      <div className="border-t border-outline-variant/20 pt-3">
+                        {!flagOpen ? (
+                          <button
+                            type="button"
+                            onClick={() => setFlagOpen(true)}
+                            className="btn-secondary inline-flex items-center gap-1.5 !px-3 !py-1.5 text-xs font-semibold cursor-pointer"
+                            title="Tandai materi ini perlu diperbaiki (bukan mengedit teksnya)"
+                          >
+                            <AlertTriangle size={14} /> Tandai perlu diperbaiki
+                          </button>
+                        ) : (
+                          <div className="space-y-2 rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3">
+                            <div className="flex items-center justify-between text-xs font-bold text-error">
+                              <span className="inline-flex items-center gap-1.5">
+                                <AlertTriangle size={14} /> Tandai perlu diperbaiki
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setFlagOpen(false)}
+                                className="text-[11px] text-on-surface-variant hover:text-on-surface cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                              Catatan opsional akan dibawa ke generate ulang. Materi tidak dapat
+                              diedit manual.
+                            </p>
+                            <textarea
+                              rows={2}
+                              value={flagNote}
+                              onChange={(e) => setFlagNote(e.target.value)}
+                              placeholder="Jelaskan kenapa materi ini perlu diperbaiki..."
+                              className="form-input w-full text-xs"
+                            />
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={handleFlagMaterial}
+                                disabled={flagSubmitting}
+                                className="btn-danger !px-3 !py-1.5 text-xs font-semibold"
+                              >
+                                {flagSubmitting ? "Menandai..." : "Kirim tanda"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
               </section>

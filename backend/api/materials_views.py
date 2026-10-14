@@ -228,3 +228,98 @@ class MaterialDetailView(APIView):
                 logger.warning('Could not delete stored material %s: %s', file_path, e)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _material_subject_id(material_id):
+    """Resolve a reading material to its subject (one query), or None."""
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT qs.subject_id
+            FROM generated_reading_materials m
+            JOIN question_versions qv ON qv.id = m.question_version_id
+            JOIN questions q ON q.id = qv.question_id
+            JOIN question_sets qs ON qs.id = q.question_set_id
+            WHERE m.id = %s
+            """,
+            [str(material_id)],
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _flag_material_row(material_id, note, user_id):
+    """Write the flag/regenerate state and return the updated key fields.
+
+    Lifecycle-ish review write performed with raw SQL because
+    `generated_reading_materials` is `managed = False`. `status = 'STALE'` puts
+    the artifact back in the drain queue; `flagged_by`/`flagged_at`/`flag_note`
+    are the audit trail (no separate table, D14).
+    """
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE generated_reading_materials
+            SET review_status = 'FLAGGED',
+                flag_note = %s,
+                flagged_by = %s,
+                flagged_at = CURRENT_TIMESTAMP,
+                status = 'STALE',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING status, review_status, flag_note, flagged_at, attempts,
+                      question_version_id, category
+            """,
+            [note, str(user_id), str(material_id)],
+        )
+        return cur.fetchone()
+
+
+class ReadingMaterialFlagView(APIView):
+    """Flag a generated reading material for regeneration (C6, D14).
+
+    **Review, not editing.** A lecturer of the material's subject can mark an
+    artifact as needing repair and have the drain regenerate it; there is no
+    endpoint that writes `content_md` (D7). The row's own `flagged_by` /
+    `flagged_at` / `flag_note` are the audit trail — no separate audit table —
+    and `status = 'STALE'` puts it back in the drain queue. `note` is optional
+    and recorded verbatim.
+    """
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        subject_id = _material_subject_id(pk)
+        if subject_id is None:
+            return Response(
+                {'detail': 'Materi bacaan tidak ditemukan.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not is_lecturer_for_subject(request.user, str(subject_id)):
+            return Response(
+                {'detail': 'Anda tidak mengajar mata kuliah ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        note = request.data.get('note')
+        updated = _flag_material_row(pk, note, request.user.id)
+
+        logger.info(
+            'Reading material %s flagged by %s (subject %s): %s',
+            pk, getattr(request.user, 'username', None) or request.user.id,
+            subject_id, note,
+        )
+
+        return Response({
+            'id': str(pk),
+            'status': updated[0],
+            'review_status': updated[1],
+            'flag_note': updated[2],
+            'flagged_at': updated[3],
+            'attempts': updated[4],
+            'question_version_id': str(updated[5]),
+            'category': updated[6],
+        })
+

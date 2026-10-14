@@ -15,6 +15,7 @@
 # agreement-with-expert metrics; there is no other ground truth in this system.
 
 import json
+import logging
 
 from django.db import connection, transaction
 from django.db.models import Count, Q
@@ -33,8 +34,11 @@ from .models import (
     UserSubjectRole,
     Validation,
 )
+from .reading_materials import input_fingerprint, load_question_version_context
 from .serializers import ValidationSubmitSerializer
 from .views import is_lecturer_for_subject, plain_text_preview
+
+logger = logging.getLogger(__name__)
 
 
 def _lecturer_subject_ids(user):
@@ -94,13 +98,85 @@ def _attach_document_titles(references) -> list:
     return out
 
 
+def _reading_material_staleness(row, question_version_id):
+    """`(stale, stale_reason)` recomputed at read time (C6, D18).
+
+    A local sha256 over the current question text and reference answers compared
+    against the value stored when the artifact was generated — **no network call
+    and no embedding**. This is the only detector of an edited reference when no
+    drain daemon is running, so it is not optional. `False` when the row has no
+    stored fingerprint (a `PENDING`/`FAILED` row that never completed a
+    generation) — there is nothing to call stale yet.
+    """
+    stored = getattr(row, 'input_fingerprint', None)
+    if not stored:
+        return False, None
+    try:
+        ctx = load_question_version_context(question_version_id)
+    except Exception:  # noqa: BLE001 — a missing version must not 500 the detail
+        return False, None
+    recomputed = input_fingerprint(
+        getattr(row, 'prompt_version', None),
+        getattr(row, 'model_identifier', None),
+        question_version_id,
+        getattr(row, 'category', None),
+        ctx.question_prompt,
+        ctx.reference_short_answer,
+        ctx.reference_reason,
+    )
+    if recomputed == stored:
+        return False, None
+    return (
+        True,
+        'Referensi jawaban dosen atau teks pertanyaan berubah sejak materi ini dibuat.',
+    )
+
+
+def _reading_material_detail(analysis):
+    """The C6 reading-material block for one analysis, or `None`.
+
+    Looked up by `(question_version_id, category)`. `None` is a legitimate answer:
+    an `SC` analysis has no material by design (D6) and an analysis enqueued
+    before the drain ran has a `PENDING`-era absence. `stale` is computed at read
+    time (see `_reading_material_staleness`).
+    """
+    submission = getattr(analysis, 'submission', None)
+    question_version_id = getattr(submission, 'question_version_id', None)
+    category = getattr(analysis, 'four_tier_category', None)
+    if question_version_id is None or category is None:
+        return None
+    row = GeneratedReadingMaterial.objects.filter(
+        question_version_id=question_version_id, category=category
+    ).first()
+    if row is None:
+        return None
+    stale, stale_reason = _reading_material_staleness(row, question_version_id)
+    return {
+        # `id` is what the flag endpoint addresses; the rest is the review surface.
+        'id': str(row.id),
+        'status': row.status,
+        'content_md': row.content_md,
+        'sources': row.sources_json or [],
+        'grounded': row.grounded,
+        'ungrounded_source_count': row.ungrounded_source_count,
+        'stale': stale,
+        'stale_reason': stale_reason,
+        'review_status': row.review_status,
+        'flag_note': row.flag_note,
+        'prompt_version': row.prompt_version,
+        'model_identifier': row.model_identifier,
+        'attempts': row.attempts,
+    }
+
+
 def _grounding_detail(analysis, breakdown: dict) -> dict:
     """Assemble the grounding/references block exposed to the lecturer UI.
 
     Stable shape across prompt versions: pre-R3 analyses (NULL grounding, no
     `references` key) still return every key with empty/None values, so the
     frontend never has to guess. `grounding.similarity_mean` measures alignment
-    with the cited sources — it is NOT accuracy.
+    with the cited sources — it is NOT accuracy. C6 adds the generated
+    `reading_material` block (or `None`) without removing any existing key.
     """
     return {
         'concept_breakdown_json': breakdown,
@@ -126,6 +202,9 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
         'llm_t1_score': getattr(analysis, 'llm_t1_score', None),
         'llm_t3_score': getattr(analysis, 'llm_t3_score', None),
         'verdict_shadow': getattr(analysis, 'verdict_shadow_json', None) or {},
+        # C6: the generated reading material for this (question_version, category),
+        # or `None` when none exists (SC, or a pre-drain analysis).
+        'reading_material': _reading_material_detail(analysis),
         # Nested block (R4 task §3).
         'grounding': {
             'similarity_mean': (

@@ -10,10 +10,18 @@ import FeedbackModal from "../components/FeedbackModal";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
+import type {
+  AnswerSimilarityBucket,
+  AnswerSimilarityMetrics,
+  ReadingMaterialCounts,
+} from "../lib/studentSubmissions";
 
 type SubjectOption = { id: string; slug: string; name: string; image_url?: string };
 
 type Bucket = { count: number; similarity_mean: number };
+
+// The superseded keys are kept until C8 but must never read as current (D19).
+const DEPRECATED = "deprecated — digantikan Answer similarity";
 
 type ByModelRow = {
   model_identifier: string;
@@ -28,6 +36,11 @@ type ByModelRow = {
   citation_coverage: number | null;
   citation_validity_rate: number | null;
   hallucinated_citation_rate: number | null;
+  answer_similarity_t1_mean?: number | null;
+  answer_similarity_t3_mean?: number | null;
+  answer_similarity_coverage?: number | null;
+  verdict_agreement_rate?: number | null;
+  verdict_comparable_count?: number | null;
 };
 
 type Metrics = {
@@ -50,7 +63,7 @@ type Metrics = {
   no_grounding_count?: number | null;
   by_model?: ByModelRow[];
   note?: string;
-};
+} & AnswerSimilarityMetrics;
 
 const ALL_SUBJECTS = "";
 const ALL_MODELS = "";
@@ -101,6 +114,60 @@ function BucketList({
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function SimilarityBucketList({
+  title,
+  buckets,
+}: {
+  title: string;
+  buckets: Record<string, AnswerSimilarityBucket>;
+}) {
+  const entries = Object.entries(buckets ?? {});
+  return (
+    <div>
+      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+        {title}
+      </p>
+      {entries.length === 0 ? (
+        <p className="text-xs italic text-on-surface-variant">
+          Belum ada analisis dengan nilai similarity.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {entries.map(([key, bucket]) => (
+            <li
+              key={key}
+              className="flex items-center justify-between rounded border border-outline-variant/30 bg-surface-container-lowest px-3 py-1.5 text-xs"
+            >
+              <span className="font-mono-ui text-on-surface">{key}</span>
+              <span className="font-mono-ui text-on-surface-variant">
+                n={bucket.count} • T1 {fmt(bucket.t1_mean)} • T3 {fmt(bucket.t3_mean)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MaterialCountsCard({ counts }: { counts?: ReadingMaterialCounts }) {
+  const c = counts ?? { READY: 0, PENDING: 0, STALE: 0, FAILED: 0, total: 0 };
+  const rows: { key: keyof ReadingMaterialCounts; label: string }[] = [
+    { key: "READY", label: "Siap" },
+    { key: "PENDING", label: "Menunggu" },
+    { key: "STALE", label: "Kedaluwarsa" },
+    { key: "FAILED", label: "Gagal" },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      {rows.map((r) => (
+        <Stat key={r.key} label={r.label} value={String(c[r.key])} />
+      ))}
+      <Stat label="Total" value={String(c.total)} />
     </div>
   );
 }
@@ -259,50 +326,71 @@ export default function MetricsPage() {
               {(metrics.by_model ?? []).length === 0 ? (
                 <p className="text-xs italic text-on-surface-variant">Belum ada model dalam cakupan ini.</p>
               ) : (
-                <table className="w-full min-w-[720px] border-collapse text-xs">
-                  <thead>
-                    <tr className="text-left text-[10px] uppercase tracking-wider text-on-surface-variant">
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">Model</th>
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">Validasi</th>
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">Tier</th>
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">Macro-F1</th>
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">MAE</th>
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">Keselarasan</th>
-                      <th className="border-b border-outline-variant/40 pb-2 pr-3">Cakupan</th>
-                      <th className="border-b border-outline-variant/40 pb-2">Validitas</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(metrics.by_model ?? []).map((row) => (
-                      <tr key={row.model_identifier} className="text-on-surface">
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {row.model_identifier}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {fmt(row.total_validations, 0)} / {fmt(row.scored_validations, 0)}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {fmt(row.tier_agreement_accuracy)}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {fmt(row.macro_f1)}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {fmt(row.percentage_mae, 2)}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {fmt(row.grounding_similarity_mean)}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
-                          {fmt(row.citation_coverage)}
-                        </td>
-                        <td className="border-b border-outline-variant/20 py-2 font-mono-ui">
-                          {fmt(row.citation_validity_rate)}
-                        </td>
+                <>
+                  <p className="mb-3 text-[11px] leading-relaxed text-on-surface-variant">
+                    † kolom Keselarasan / Cakupan / Validitas {DEPRECATED}.
+                  </p>
+                  <table className="w-full min-w-[960px] border-collapse text-xs">
+                    <thead>
+                      <tr className="text-left text-[10px] uppercase tracking-wider text-on-surface-variant">
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Model</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Validasi</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Tier</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Macro-F1</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">MAE</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Keselarasan†</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Cakupan†</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Validitas†</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Sim T1</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Sim T3</th>
+                        <th className="border-b border-outline-variant/40 pb-2 pr-3">Sim Cov</th>
+                        <th className="border-b border-outline-variant/40 pb-2">Agreement (n)</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(metrics.by_model ?? []).map((row) => (
+                        <tr key={row.model_identifier} className="text-on-surface">
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {row.model_identifier}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.total_validations, 0)} / {fmt(row.scored_validations, 0)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.tier_agreement_accuracy)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.macro_f1)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.percentage_mae, 2)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.grounding_similarity_mean)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.citation_coverage)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.citation_validity_rate)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.answer_similarity_t1_mean)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.answer_similarity_t3_mean)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 pr-3 font-mono-ui">
+                            {fmt(row.answer_similarity_coverage)}
+                          </td>
+                          <td className="border-b border-outline-variant/20 py-2 font-mono-ui">
+                            {fmt(row.verdict_agreement_rate)} ({fmt(row.verdict_comparable_count, 0)})
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
               )}
             </div>
           </section>
@@ -320,26 +408,114 @@ export default function MetricsPage() {
                 Grounding mengukur keselarasan keluaran AI dengan kutipan sumber yang dipilihnya
                 sendiri. Tidak memerlukan validasi dosen dan bukan akurasi.
               </p>
+              <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold leading-relaxed text-amber-300">
+                Seluruh metrik pada kartu ini {DEPRECATED} — nilainya tetap ditampilkan agar
+                riwayat tidak hilang, tetapi tidak lagi menjadi ukuran utama.
+              </p>
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                <Stat label="Rata-rata" value={fmt(metrics.grounding_similarity_mean)} />
-                <Stat label="Median" value={fmt(metrics.grounding_similarity_median)} />
-                <Stat label="Cakupan Sitasi" value={fmt(metrics.citation_coverage)} />
-                <Stat label="Rasio Valid" value={fmt(metrics.citation_validity_rate)} />
-                <Stat label="Rasio Halusinasi" value={fmt(metrics.hallucinated_citation_rate)} />
-                <Stat label="Tanpa Grounding" value={fmt(metrics.no_grounding_count, 0)} />
+                <Stat label="Rata-rata (deprecated)" value={fmt(metrics.grounding_similarity_mean)} />
+                <Stat label="Median (deprecated)" value={fmt(metrics.grounding_similarity_median)} />
+                <Stat label="Cakupan Sitasi (deprecated)" value={fmt(metrics.citation_coverage)} />
+                <Stat label="Rasio Valid (deprecated)" value={fmt(metrics.citation_validity_rate)} />
+                <Stat label="Rasio Halusinasi (deprecated)" value={fmt(metrics.hallucinated_citation_rate)} />
+                <Stat label="Tanpa Grounding (deprecated)" value={fmt(metrics.no_grounding_count, 0)} />
               </div>
 
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                 <BucketList
-                  title="Per Kategori Four-Tier"
+                  title={`Per Kategori Four-Tier (${DEPRECATED})`}
                   buckets={metrics.grounding_by_category ?? {}}
                 />
                 <BucketList
-                  title="Per Versi Prompt"
+                  title={`Per Versi Prompt (${DEPRECATED})`}
                   buckets={metrics.grounding_by_prompt_version ?? {}}
                 />
               </div>
+            </div>
+          </section>
+
+          {/* Answer-similarity panel — the new primary alignment measure */}
+          <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+            <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant font-mono-ui">
+                Answer Similarity — Keselarasan dengan Jawaban Referensi Dosen
+              </span>
+              <span className="text-[11px] text-on-surface-variant">bukan akurasi</span>
+            </header>
+            <div className="space-y-5 p-5">
+              <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                Cosine(jawaban mahasiswa, jawaban referensi dosen). Diukur terhadap jawaban
+                referensi dosen, tidak memerlukan validasi dosen, dan bukan akurasi. Setiap
+                rata-rata dan median hanya dihitung atas analisis yang memiliki nilai similarity.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat label="T1 Rata-rata" value={fmt(metrics.answer_similarity_t1_mean)} />
+                <Stat label="T1 Median" value={fmt(metrics.answer_similarity_t1_median)} />
+                <Stat label="T3 Rata-rata" value={fmt(metrics.answer_similarity_t3_mean)} />
+                <Stat label="T3 Median" value={fmt(metrics.answer_similarity_t3_median)} />
+              </div>
+
+              {/* Denominators shown beside the means/medians (D9/D19) */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat label="Cakupan Similarity" value={fmt(metrics.answer_similarity_coverage)} />
+                <Stat label="Tanpa Similarity" value={fmt(metrics.no_similarity_count, 0)} />
+              </div>
+
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <SimilarityBucketList
+                  title="Per Kategori Four-Tier"
+                  buckets={metrics.answer_similarity_by_category ?? {}}
+                />
+                <SimilarityBucketList
+                  title="Per Versi Prompt"
+                  buckets={metrics.answer_similarity_by_prompt_version ?? {}}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Shadow vs driving verdict — diagnostic, never an accuracy figure (D16) */}
+          <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+            <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant font-mono-ui">
+                Shadow vs Verdict Penggerak
+              </span>
+              <span className="text-[11px] text-on-surface-variant">diagnostik — bukan akurasi</span>
+            </header>
+            <div className="space-y-4 p-5">
+              <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                Verdict digerakkan oleh LLM; aturan berbasis θ (theta) dicatat sebagai shadow dan
+                tidak menggerakkan kategori mana pun. Angka ini menunjukkan seberapa sering kedua
+                verdict berbeda — diagnostik kalibrasi, bukan skor kualitas dan bukan akurasi.
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat label="Agreement Rate" value={fmt(metrics.verdict_agreement_rate)} />
+                <Stat label="Komparabel (n)" value={fmt(metrics.verdict_comparable_count, 0)} />
+                <Stat label="Berbeda" value={fmt(metrics.verdict_disagreement_count, 0)} />
+              </div>
+              <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                Agreement rate dihitung hanya atas {fmt(metrics.verdict_comparable_count, 0)} analisis
+                yang memiliki verdict shadow dan LLM; baris tanpa keduanya tidak masuk denominator.
+              </p>
+            </div>
+          </section>
+
+          {/* Reading-material drain backlog — the operator's only queue view (C6) */}
+          <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+            <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant font-mono-ui">
+                Materi Bacaan — Status Antrean
+              </span>
+              <span className="text-[11px] text-on-surface-variant">antrean drain</span>
+            </header>
+            <div className="space-y-4 p-5">
+              <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                Distribusi status materi bacaan dalam cakupan ini. PENDING / STALE / FAILED adalah
+                backlog drain — satu-satunya tampilan antrean yang tidak terpantau otomatis.
+              </p>
+              <MaterialCountsCard counts={metrics.reading_material_counts} />
             </div>
           </section>
 
