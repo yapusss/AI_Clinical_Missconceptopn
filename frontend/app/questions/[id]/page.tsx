@@ -68,10 +68,26 @@ function resolveValidationState(
 ): "PENDING" | "VALIDATED" {
   if (student.validation_state) return student.validation_state;
   const submissions = student.all_submissions;
-  if (!submissions.length) return "PENDING";
-  return submissions.every(
-    (submission) => submission.validation_status === "VALIDATED",
-  )
+  if (
+    !submissions.length ||
+    student.answered_count < student.published_question_count
+  ) {
+    return "PENDING";
+  }
+
+  const latestByQuestion = new Map<string, StudentSubmissionItem>();
+  for (const submission of submissions) {
+    const latest = latestByQuestion.get(submission.question_id);
+    if (!latest || submission.attempt_no > latest.attempt_no) {
+      latestByQuestion.set(submission.question_id, submission);
+    }
+  }
+
+  const validatedStatuses = new Set(["ACCEPTED", "EDITED", "VALIDATED"]);
+  return latestByQuestion.size === student.published_question_count &&
+    [...latestByQuestion.values()].every((submission) =>
+      validatedStatuses.has(submission.validation_status ?? ""),
+    )
     ? "VALIDATED"
     : "PENDING";
 }
