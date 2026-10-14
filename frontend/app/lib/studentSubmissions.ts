@@ -17,6 +17,10 @@ export type StudentEvaluation = {
     category?: string;
   } | null;
   suggested_materials?: string[];
+  // C7: the reading material the LLM wrote for this question, or `null`. The
+  // student sees the text and the reference the LLM used — never the lecturer's
+  // citation/review/staleness diagnostics.
+  reading_material?: StudentReadingMaterial | null;
   validator_name?: string;
   validated_at?: string;
 };
@@ -186,6 +190,15 @@ export type ReadingMaterial = {
   prompt_version: string | null;
   model_identifier: string | null;
   attempts: number;
+};
+
+// The student-facing slice of a reading material (C7): the text and the
+// reference the LLM used. Lecturer-only diagnostics (status, review_status,
+// flag_note, staleness, cosine) are deliberately not part of this shape — the
+// student payload never carries them.
+export type StudentReadingMaterial = {
+  content_md: string | null;
+  sources: ReadingMaterialSource[];
 };
 
 // Flat keys the analysis detail adds alongside the grounding block (C5/C6).
