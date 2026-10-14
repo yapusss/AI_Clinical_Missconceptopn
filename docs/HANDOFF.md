@@ -9,8 +9,8 @@ The active change is the **C-phase**: answer-cosine similarity + LLM-generated r
 
 | | |
 |---|---|
-| Decision record | `D:/ClinicalAI_Misconception/Context/Answer_Cosine_Plan.md` (decisions D1–D15) |
-| Authoritative spec | `docs/COSINE_READING_MATERIAL_BRIEF.md` (**revision 2**, phases C0–C8) |
+| Decision record | `D:/ClinicalAI_Misconception/Context/Answer_Cosine_Plan.md` (decisions D1–D19) |
+| Authoritative spec | `docs/COSINE_READING_MATERIAL_BRIEF.md` (**revision 3**, phases C0–C8) |
 | Next phase | C1 — `docs/C1_TASK.md` (revised for revision 2) |
 | Working branch | `feat/cosine-reading-material` |
 | Rollback point | `backup/pre-cosine-2026-10-14` @ `a6ed436` (== `main`, == this state) |
@@ -29,6 +29,19 @@ touching C1: the **LLM verdict still drives the matrix** and the new θ-based ru
 **asynchronous** behind a `PENDING` row plus a drain, because an inline call risks the 10-minute
 `ANALYZING` zombie window; and metric removal moved to a new **C8** so the additive **C5** cannot break
 **C6**. Also: **C2 is a change-detecting sync, not a backfill.**
+
+Revision 3 (2026-10-14, pre-dispatch review) added four things and settled the deployment question.
+**C3 must NOT strip `student_feedback` / Modul B `reasoning`** — `grounding_similarity`'s input is built
+from `student_feedback['konsep_seharusnya']` (`llm.py:851`), so removing it in C3 would silently change
+the definition of a metric that is still live until C8; the removal moves to C8 (D17). **θ is calibrated
+against the lecturer, never against the LLM verdict**, and the shadow has a sunset — the review point is
+**≥50 lecturer-validated analyses**, below which flipping `TIER_VERDICT_SOURCE` to `'rule'` is forbidden,
+and deleting the shadow is a legitimate outcome (D16). **The `--refresh` sweep rides the drain loop**
+(change detection is a hash compare, so its cadence is free) and staleness is made **visible at read
+time** by a fingerprint badge, which is the only detector for an unstarted daemon (D18). **Superseded
+metric keys are labelled deprecated in the UI** while they still exist (D19). Deployment: backend and
+frontend are **built and deployed together**, so C5 + C6 + C8 are **one release** — C8 is its last
+commit, not a later deployment (D15).
 
 Also on the record: commit `a6ed436` renders grounding citations on the **student** review
 (`questions/[id]/students/[studentId]`), which contradicts hard rule 6 below. Decision 4 of the C-phase
