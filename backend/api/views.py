@@ -2625,35 +2625,39 @@ def package_access_error(package):
     now = timezone.now()
     if package.opens_at and now < package.opens_at:
         return 'Paket ujian belum dibuka.'
-    if package.closes_at and now > package.closes_at:
+    if package.closes_at and now >= package.closes_at:
         return 'Paket ujian sudah ditutup.'
     return None
 
 
 def package_attempt_deadline(package, attempt):
-    deadlines = []
-    if package.duration_minutes:
-        deadlines.append(attempt.started_at + timedelta(minutes=package.duration_minutes))
-    if package.closes_at:
-        deadlines.append(package.closes_at)
-    return min(deadlines) if deadlines else None
+    if not package.duration_minutes:
+        return None
+    return attempt.started_at + timedelta(minutes=package.duration_minutes)
 
 
 def start_or_get_package_attempt(package, student, password=None):
-    """Start one resumable package attempt only after its access checks succeed."""
+    """Resume an existing attempt by its timer; closing time only blocks new attempts."""
+    attempt = ExamPackageAttempt.objects.filter(
+        exam_package=package, student=student, submitted_at__isnull=True,
+    ).order_by('-attempt_number').first()
+    if attempt:
+        if not package.is_active:
+            return None, 'Paket ujian belum aktif.'
+        if package.opens_at and timezone.now() < package.opens_at:
+            return None, 'Paket ujian belum dibuka.'
+        if package.password_hash and not check_password(password or '', package.password_hash):
+            return None, 'Password paket ujian tidak valid.'
+        deadline = package_attempt_deadline(package, attempt)
+        if deadline and timezone.now() >= deadline:
+            return None, 'Batas waktu pengerjaan telah berakhir.'
+        return attempt, None
+
     error = package_access_error(package)
     if error:
         return None, error
     if package.password_hash and not check_password(password or '', package.password_hash):
         return None, 'Password paket ujian tidak valid.'
-    attempt = ExamPackageAttempt.objects.filter(
-        exam_package=package, student=student, submitted_at__isnull=True,
-    ).order_by('-attempt_number').first()
-    if attempt:
-        deadline = package_attempt_deadline(package, attempt)
-        if deadline and timezone.now() >= deadline:
-            return None, 'Batas waktu pengerjaan telah berakhir.'
-        return attempt, None
     completed = ExamPackageAttempt.objects.filter(exam_package=package, student=student, submitted_at__isnull=False).count()
     if package.max_attempts and completed >= package.max_attempts:
         return None, 'Batas maksimal percobaan telah tercapai.'

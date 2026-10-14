@@ -718,6 +718,27 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('password_hash', response.json())
 
+    def test_student_can_resume_existing_attempt_after_package_closes_until_timer_expires(self):
+        self.exam_package.duration_minutes = 60
+        self.exam_package.closes_at = timezone.now() - timedelta(minutes=1)
+        self.exam_package.save(update_fields=['duration_minutes', 'closes_at'])
+        ExamPackageAttempt.objects.create(
+            id=uuid.uuid4(),
+            exam_package=self.exam_package,
+            student=self.student,
+            attempt_number=1,
+            started_at=timezone.now() - timedelta(minutes=5),
+        )
+
+        self._auth(self.student)
+        response = self.client.get(reverse('student-set-lookup'), {'code': self.exam_package.code})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreater(
+            response.json()['attempt_deadline'],
+            timezone.now().isoformat(),
+        )
+
     def test_student_package_submission_enforces_attempt_limit(self):
         self.exam_package.max_attempts = 1
         self.exam_package.save(update_fields=['max_attempts'])
