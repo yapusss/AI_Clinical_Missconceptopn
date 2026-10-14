@@ -35,12 +35,15 @@ from api.reading_materials import (
     input_fingerprint,
 )
 from api.validation_views import (
+    _answer_similarity_metrics,
     _attach_document_titles,
+    _bucket_similarities,
     _by_model_row,
     _compute_metrics,
     _filter_analyses_by_model,
     _grounding_detail,
     _grounding_metrics,
+    _reading_material_counts,
     _zero_validation_payload,
 )
 from api.views import is_lecturer_for_subject
@@ -269,7 +272,9 @@ class ZeroChunkPipelineTests(SimpleTestCase):
 
 def make_analysis(similarity=None, citation_count=None, category=None,
                   prompt_version='four-tier-v2.9-rag', references=None,
-                  confidence='0.900', model_identifier='openai/gpt-oss-20b'):
+                  confidence='0.900', model_identifier='openai/gpt-oss-20b',
+                  sim_t1=None, sim_t3=None, llm_t1=None, llm_t3=None,
+                  shadow=None, submission=None):
     return SimpleNamespace(
         grounding_similarity=similarity,
         grounding_citation_count=citation_count,
@@ -278,6 +283,12 @@ def make_analysis(similarity=None, citation_count=None, category=None,
         prompt_version=prompt_version,
         confidence=confidence,
         model_identifier=model_identifier,
+        answer_similarity_t1=sim_t1,
+        answer_similarity_t3=sim_t3,
+        llm_t1_score=llm_t1,
+        llm_t3_score=llm_t3,
+        verdict_shadow_json=shadow if shadow is not None else {},
+        submission=submission,
     )
 
 
@@ -873,3 +884,210 @@ class ReadingMaterialQueueTests(SimpleTestCase):
         self.assertEqual(result, 'PENDING_VALIDATION')
         enqueue.assert_called_once()
         generate.assert_not_called()
+
+
+class AnswerSimilarityMetricsTests(SimpleTestCase):
+    """C5: answer-similarity aggregates, always with their denominators."""
+
+    def _rows(self):
+        return [
+            make_analysis(category='SC', prompt_version='four-tier-v2.9-rag',
+                          sim_t1=0.5, sim_t3=0.6),
+            make_analysis(category='SC', prompt_version='four-tier-v2.9-rag',
+                          sim_t1=0.7, sim_t3=None),
+            make_analysis(category='LK', prompt_version='four-tier-v3.0-llm',
+                          sim_t1=None, sim_t3=0.8),
+            make_analysis(category='LK', prompt_version='four-tier-v3.0-llm'),
+        ]
+
+    def test_means_medians_and_denominators(self):
+        m = _answer_similarity_metrics(self._rows())
+        self.assertAlmostEqual(m['answer_similarity_t1_mean'], 0.6, places=4)
+        self.assertAlmostEqual(m['answer_similarity_t1_median'], 0.6, places=4)
+        self.assertAlmostEqual(m['answer_similarity_t3_mean'], 0.7, places=4)
+        self.assertAlmostEqual(m['answer_similarity_t3_median'], 0.7, places=4)
+        # coverage is over answer_similarity_t1 (the primary tier).
+        self.assertEqual(m['answer_similarity_coverage'], 0.5)
+        self.assertEqual(m['no_similarity_count'], 2)
+
+    def test_buckets_never_pool_prompt_versions(self):
+        m = _answer_similarity_metrics(self._rows())
+        by_cat = m['answer_similarity_by_category']
+        self.assertEqual(by_cat['SC']['count'], 2)
+        self.assertAlmostEqual(by_cat['SC']['t1_mean'], 0.6, places=4)
+        self.assertAlmostEqual(by_cat['SC']['t3_mean'], 0.6, places=4)
+        self.assertEqual(by_cat['LK']['count'], 1)
+        self.assertIsNone(by_cat['LK']['t1_mean'])
+        self.assertAlmostEqual(by_cat['LK']['t3_mean'], 0.8, places=4)
+
+        by_pv = m['answer_similarity_by_prompt_version']
+        self.assertEqual(set(by_pv), {'four-tier-v2.9-rag', 'four-tier-v3.0-llm'})
+        self.assertEqual(by_pv['four-tier-v2.9-rag']['count'], 2)
+        self.assertEqual(by_pv['four-tier-v3.0-llm']['count'], 1)
+
+    def test_unlabelled_category_buckets_as_unknown(self):
+        buckets = _bucket_similarities(
+            [make_analysis(sim_t1=0.4)], lambda a: a.four_tier_category)
+        self.assertEqual(buckets, {'UNKNOWN': {'count': 1, 't1_mean': 0.4, 't3_mean': None}})
+
+    def test_empty_scope_is_none_and_zero_not_a_number(self):
+        m = _answer_similarity_metrics([])
+        self.assertIsNone(m['answer_similarity_t1_mean'])
+        self.assertIsNone(m['answer_similarity_t1_median'])
+        self.assertIsNone(m['answer_similarity_t3_mean'])
+        self.assertIsNone(m['answer_similarity_t3_median'])
+        self.assertIsNone(m['answer_similarity_coverage'])
+        self.assertEqual(m['no_similarity_count'], 0)
+        self.assertEqual(m['answer_similarity_by_category'], {})
+        self.assertEqual(m['answer_similarity_by_prompt_version'], {})
+
+
+class VerdictAgreementTests(SimpleTestCase):
+    """C5: shadow-vs-LLM agreement is a diagnostic with an explicit denominator."""
+
+    def test_no_shadow_is_null_rate_and_zero_comparable(self):
+        m = _answer_similarity_metrics([make_analysis(), make_analysis()])
+        self.assertEqual(m['verdict_comparable_count'], 0)
+        self.assertEqual(m['verdict_disagreement_count'], 0)
+        self.assertIsNone(m['verdict_agreement_rate'])   # not 0.0 and not 1.0
+
+    def test_agreement_and_disagreement_counts(self):
+        agree = make_analysis(
+            llm_t1='BENAR', llm_t3='SALAH',
+            shadow={'rule_t1': 'BENAR', 'rule_t3': 'SALAH', 'source': 'llm'})
+        disagree = make_analysis(
+            llm_t1='SALAH', llm_t3='SALAH',
+            shadow={'rule_t1': 'BENAR', 'rule_t3': 'SALAH', 'source': 'llm'})
+        m = _answer_similarity_metrics([agree, disagree, make_analysis()])
+        self.assertEqual(m['verdict_comparable_count'], 2)
+        self.assertEqual(m['verdict_disagreement_count'], 1)
+        self.assertAlmostEqual(m['verdict_agreement_rate'], 0.5, places=4)
+
+    def test_partial_verdict_is_not_comparable(self):
+        partial = make_analysis(
+            llm_t1='BENAR', llm_t3='BENAR',
+            shadow={'rule_t1': 'BENAR', 'rule_t3': None})
+        m = _answer_similarity_metrics([partial])
+        self.assertEqual(m['verdict_comparable_count'], 0)
+        self.assertIsNone(m['verdict_agreement_rate'])
+
+
+class ReadingMaterialCountsTests(SimpleTestCase):
+    """C5: reading-material status histogram, scoped to the analyses' versions."""
+
+    def test_no_question_versions_is_all_zero_shape(self):
+        counts = _reading_material_counts(set())
+        self.assertEqual(counts, {'READY': 0, 'PENDING': 0, 'STALE': 0, 'FAILED': 0, 'total': 0})
+
+    def test_status_histogram_scoped_to_versions(self):
+        fake = MagicMock()
+        fake.objects.filter.return_value.values.return_value.annotate.return_value = [
+            {'status': 'READY', 'count': 1},
+            {'status': 'FAILED', 'count': 1},
+        ]
+        with patch('api.validation_views.GeneratedReadingMaterial', fake):
+            counts = _reading_material_counts({'qv-1'})
+        self.assertEqual(counts, {'READY': 1, 'PENDING': 0, 'STALE': 0, 'FAILED': 1, 'total': 2})
+        fake.objects.filter.assert_called_once_with(question_version_id__in={'qv-1'})
+
+
+class GroundingMetricsAdditivityTests(SimpleTestCase):
+    """C5 must ADD keys, never remove the pre-C5 ones."""
+
+    PRE_C5_GROUNDING_KEYS = (
+        'grounding_similarity_mean', 'grounding_similarity_median',
+        'citation_coverage', 'citation_validity_rate',
+        'hallucinated_citation_rate', 'grounding_by_category',
+        'grounding_by_prompt_version', 'no_grounding_count',
+    )
+    C5_KEYS = (
+        'answer_similarity_t1_mean', 'answer_similarity_t1_median',
+        'answer_similarity_t3_mean', 'answer_similarity_t3_median',
+        'answer_similarity_coverage', 'no_similarity_count',
+        'answer_similarity_by_category', 'answer_similarity_by_prompt_version',
+        'verdict_agreement_rate', 'verdict_disagreement_count',
+        'verdict_comparable_count', 'reading_material_counts',
+    )
+
+    def test_old_keys_kept_and_new_keys_added(self):
+        a1 = make_analysis(similarity=0.5, citation_count=1, category='SC',
+                           references=[{'valid': True}], sim_t1=0.6, sim_t3=0.7)
+        m = _grounding_metrics([a1])
+        for key in self.PRE_C5_GROUNDING_KEYS:
+            self.assertIn(key, m)
+        for key in self.C5_KEYS:
+            self.assertIn(key, m)
+        self.assertEqual(m['reading_material_counts']['total'], 0)
+        self.assertEqual(m['verdict_comparable_count'], 0)
+        self.assertIsNone(m['verdict_agreement_rate'])
+
+    def test_zero_validation_payload_carries_every_key(self):
+        payload = _zero_validation_payload([make_analysis(category='LK')])
+        self.assertEqual(payload['total_validations'], 0)
+        for key in self.PRE_C5_GROUNDING_KEYS + self.C5_KEYS:
+            self.assertIn(key, payload)
+        self.assertIsNone(payload['answer_similarity_t1_mean'])
+        self.assertEqual(payload['no_similarity_count'], 1)
+        self.assertEqual(payload['verdict_comparable_count'], 0)
+        self.assertIsNone(payload['verdict_agreement_rate'])
+        self.assertEqual(
+            payload['reading_material_counts'],
+            {'READY': 0, 'PENDING': 0, 'STALE': 0, 'FAILED': 0, 'total': 0},
+        )
+
+    def test_bogus_model_is_null_zero_empty_shape(self):
+        payload = _zero_validation_payload([], 'openai/does-not-exist')
+        self.assertIsNone(payload['answer_similarity_t1_mean'])
+        self.assertIsNone(payload['answer_similarity_t1_median'])
+        self.assertIsNone(payload['answer_similarity_t3_mean'])
+        self.assertIsNone(payload['answer_similarity_t3_median'])
+        self.assertIsNone(payload['answer_similarity_coverage'])
+        self.assertEqual(payload['no_similarity_count'], 0)
+        self.assertEqual(payload['answer_similarity_by_category'], {})
+        self.assertEqual(payload['answer_similarity_by_prompt_version'], {})
+        self.assertEqual(payload['verdict_comparable_count'], 0)
+        self.assertEqual(payload['verdict_disagreement_count'], 0)
+        self.assertIsNone(payload['verdict_agreement_rate'])
+        self.assertEqual(payload['reading_material_counts']['total'], 0)
+
+
+class GroundingDetailAdditivityTests(SimpleTestCase):
+    """C5: the detail block gains the similarity + shadow keys, shape-stable."""
+
+    def test_pre_c5_row_still_exposes_new_keys_as_null(self):
+        analysis = SimpleNamespace(
+            grounding_similarity=None,
+            grounding_similarity_max=None,
+            grounding_citation_count=None,
+            grounding_payload_json={},
+            suggested_materials_json=[],
+        )
+        detail = _grounding_detail(analysis, {})
+        for key in ('answer_similarity_t1', 'answer_similarity_t3',
+                    'llm_t1_score', 'llm_t3_score'):
+            self.assertIn(key, detail)
+            self.assertIsNone(detail[key])
+        self.assertEqual(detail['verdict_shadow'], {})
+
+    def test_c5_row_exposes_similarity_verdict_and_shadow(self):
+        analysis = SimpleNamespace(
+            grounding_similarity=Decimal('0.5000'),
+            grounding_similarity_max=None,
+            grounding_citation_count=1,
+            grounding_payload_json={},
+            suggested_materials_json=[],
+            answer_similarity_t1=Decimal('0.6000'),
+            answer_similarity_t3=Decimal('0.7000'),
+            llm_t1_score='BENAR',
+            llm_t3_score='SALAH',
+            verdict_shadow_json={'rule_t1': 'BENAR', 'rule_t3': 'SALAH'},
+        )
+        detail = _grounding_detail(analysis, {})
+        self.assertAlmostEqual(detail['answer_similarity_t1'], 0.6, places=4)
+        self.assertAlmostEqual(detail['answer_similarity_t3'], 0.7, places=4)
+        self.assertEqual(detail['llm_t1_score'], 'BENAR')
+        self.assertEqual(detail['llm_t3_score'], 'SALAH')
+        self.assertEqual(detail['verdict_shadow'], {'rule_t1': 'BENAR', 'rule_t3': 'SALAH'})
+        # pre-C5 keys still present
+        self.assertIn('grounding', detail)
+        self.assertIn('concept_breakdown_json', detail)
