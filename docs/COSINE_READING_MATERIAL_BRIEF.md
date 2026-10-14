@@ -128,7 +128,7 @@ thresholds, `verdict_agreement_rate` is a moving target and history is uninterpr
   **`OUT p_analysis_id UUID` stays in its v3 slot** — after the 16 IN params, before the first
   defaulted param. PostgreSQL rejects an `OUT` parameter that follows a defaulted one (the constraint
   `0024` recorded), so "OUT last" is not achievable. Verified on the live v4: `p_analysis_id` sits at
-  position 17, `pronargs` = 25 (25 IN + 1 OUT = 26 names). Result: `CALL` placeholders 21 → **26**.
+  position 17, `pronargs` = 25 (25 IN + 1 OUT = 26 names). Result: `CALL` slots 21 → **26** (25 bound `%s` + 1 literal `NULL` for the `OUT`).
 - Body = the v3 body with the 5 new columns added to the `INSERT INTO llm_analyses` column list and
   `VALUES` list, and to the audit `metadata_json`.
 - Cast **every** new placeholder at the call site (`%s::numeric`, `%s::varchar`, `%s::jsonb`).

@@ -77,8 +77,11 @@ def classify_tiers(sim1, sim3, threshold_t1, threshold_t3) -> tuple[str | None, 
 
 Append the 5 new values after the 4 grounding values, in the order C1 declared:
 `p_answer_similarity_t1, p_answer_similarity_t3, p_llm_t1_score, p_llm_t3_score, p_verdict_shadow_json`
-(cast `%s::numeric`, `%s::numeric`, `%s::varchar`, `%s::varchar`, `%s::jsonb`). `pronargs` is **25**;
-the `CALL` takes **26** placeholders (the 17th is the `NULL` for `OUT p_analysis_id`).
+(cast `%s::numeric`, `%s::numeric`, `%s::varchar`, `%s::varchar`, `%s::jsonb`). `pronargs` is **25**.
+
+**Wording that matters:** the `CALL` takes **25 bound `%s` placeholders plus one literal `NULL`** for
+`OUT p_analysis_id` — **26 argument slots**, but only 25 `%s`. Do not write a test that counts `%s`
+occurrences and expects 26.
 
 ### 5. Do NOT touch
 
