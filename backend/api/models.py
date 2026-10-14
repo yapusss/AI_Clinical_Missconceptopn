@@ -321,6 +321,10 @@ class ReferenceAnswer(models.Model):
     answer_text = models.TextField()
     answer_type = models.CharField(max_length=30, default='CANONICAL')
     is_primary = models.BooleanField(default=True)
+    # C1: pgvector vector(1536) in the DB; exposed as text for reads only (C2 cache).
+    embedding = models.TextField(null=True, blank=True)
+    # C1: sha256 of the effective reference text; the C2 change-detection key.
+    answer_hash = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -431,6 +435,11 @@ class LlmAnalysis(models.Model):
     grounding_similarity_max = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
     grounding_citation_count = models.IntegerField(null=True, blank=True)
     grounding_payload_json = models.JSONField(default=dict)
+    answer_similarity_t1 = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    answer_similarity_t3 = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    llm_t1_score = models.CharField(max_length=20, null=True, blank=True)
+    llm_t3_score = models.CharField(max_length=20, null=True, blank=True)
+    verdict_shadow_json = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
