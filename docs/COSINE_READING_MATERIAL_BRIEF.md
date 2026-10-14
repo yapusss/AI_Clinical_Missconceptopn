@@ -154,9 +154,16 @@ one vector per question version, and zero when nothing changed.
 
 **C0 forces an extra step:** the `reference_answers` mirror is incomplete (2 rows for 1 of 3 question
 versions), while `question_versions.short_answer` / `.model_answer` are populated 3/3. The command
-must therefore **reconcile the mirror first** — port `/ reuse `views.py:66 _sync_reference_answers`
-for every question version that is missing `JAWABAN_SINGKAT` / `ALASAN` — and only then embed. Report
-the reconcile counts (`created`, `already present`) separately from the embed counts. Do not embed
+must therefore **reconcile the mirror first** — every question version needs both `JAWABAN_SINGKAT` and
+`ALASAN` — and only then embed. Report `created` / `already_present` / `repaired` separately from the
+embed counts.
+
+**Do NOT reuse `views.py:66 _sync_reference_answers` verbatim.** It deletes and recreates both rows,
+which would destroy the cached `embedding` and `answer_hash` on every run and force a full re-embed,
+defeating change detection entirely. C2's implementation creates missing rows and **repairs
+non-conforming ones in place** (`answer_type` / `is_primary` only), so the cache is never destroyed. The
+rows' *semantics* must still match `views.py:66` exactly; the *write strategy* must not. This deviation
+is deliberate — do not "restore" delete-recreate in a later phase.
 from `question_versions` directly while leaving `reference_answers` empty: C3 reads the cache from
 `reference_answers` and would then miss 2 of 3 questions.
 
@@ -208,6 +215,22 @@ being written into `concept_breakdown_json` exactly as today.** Do **not** strip
 (`llm.py:851`), so removing it makes every new row compute the still-live legacy metric from a different
 input while C5 pools old and new rows in one mean. Nothing renders `student_feedback` today (it is typed
 in `studentSubmissions.ts`, read by no `.tsx`), so keeping it costs nothing.
+
+**`llm_t1_score` / `llm_t3_score` and `module_a_score` / `module_b_score` are not the same thing**, and
+conflating them corrupts the calibration data:
+
+| column | meaning |
+|---|---|
+| `llm_t1_score` / `llm_t3_score` (new) | the **LLM's** verdict, always recorded from Modul A/B, **independent of `TIER_VERDICT_SOURCE`** |
+| `module_a_score` / `module_b_score` (existing params) | the **driving** verdict — what the matrix actually consumed |
+| `verdict_shadow_json` | the rule verdicts + both similarities + both thresholds in force + `source` |
+
+Under the default `'llm'` the two verdict pairs are equal (harmless). Under `'rule'` they diverge, and
+`llm_*` is then the only record of what the LLM said — which is exactly what calibration needs.
+
+**Safeguard C** (`mod_b_score == 'BENAR'` and ≤3 words and no math derivation) applies to the **LLM
+verdict**, before source selection — it exists to catch the LLM's over-generosity. Do not let it corrupt
+a rule verdict.
 
 **Calibration procedure and shadow sunset (D16).** `verdict_agreement_rate` is a **diagnostic**, never a
 tuning objective — the LLM verdict is itself unvalidated, so agreeing with it optimises "imitate an
@@ -458,9 +481,15 @@ Phase-specific:
    reported separately; `--dry-run` performs zero network calls.
 5. **C2 change detection** — edit one `short_answer` through the ORM path, confirm `answer_hash` differs
    and the sweep re-embeds exactly that one row, and confirm the signal marked dependents `STALE`.
-6. **C3 neutrality** — after a real analysis, `llm_t1_score`/`llm_t3_score` populate, the matrix output
-   is **identical** to pre-C3 for the same submission, and `verdict_shadow_json` carries both rule
-   verdicts plus the thresholds in force.
+6. **C3 neutrality — prove it with MOCKED pipeline tests, never a live analysis.** Do **not** run a real
+   analysis against the dev DB: there is no un-analysed submission, and creating one mutates the evidence
+   base. Extend the existing `ZeroChunkPipelineTests` style (which already patches the LLM and captures
+   the `CALL` params) and assert: the `CALL` carries **26** placeholders; `llm_t1_score`/`llm_t3_score`
+   equal the Modul A/B verdicts; `module_a_score`/`module_b_score` equal them too under the default
+   `'llm'`; `verdict_shadow_json` carries both rule verdicts, both similarities, both thresholds and
+   `source`; `answer_similarity_t1/t3` carry the mocked cosine values. Then prove neutrality structurally
+   — `evaluate_decision_matrix` stays byte-identical, so an unchanged driving verdict cannot change the
+   category. Assert `MATRIX_RULES` / `evaluate_decision_matrix` are untouched via `git diff`.
    **D17 check:** `concept_breakdown_json.student_feedback.konsep_seharusnya` is still populated on the
    new row, and the new row's `grounding_similarity` is still computed from it (compare against the
    pre-C3 value for an equivalent submission). If `student_feedback` is empty, C3 has broken the
