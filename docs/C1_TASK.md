@@ -2,7 +2,7 @@
 
 You are implementing **PHASE C1 ONLY** of the answer-cosine / reading-material change.
 Authoritative spec: `docs/COSINE_READING_MATERIAL_BRIEF.md` — **revision 2, 2026-10-14** — read §1, §2,
-§10, §11 first. Decision record: `../Context/Answer_Cosine_Plan.md` (D1–D15, outside the repo).
+§10, §11 first. Decision record: `../Context/Answer_Cosine_Plan.md` (D1–D19, outside the repo).
 Implement C1 and **nothing** from later phases (no sync command, no threshold logic, no generation, no
 UI). In particular: **do not touch `backend/api/llm.py`** — its 21-placeholder `CALL` must keep working
 untouched, and proving that is part of this phase.

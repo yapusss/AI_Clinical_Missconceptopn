@@ -1,9 +1,10 @@
 # Answer-Cosine + LLM-Generated Reading Material — Implementation Brief
 
 Authoritative spec for phases **C0–C8**. Read with `Context/Answer_Cosine_Plan.md` (decisions
-D1–D15, rationale, cost model).
+D1–D19, rationale, cost model).
 
-**Revision 2 — 2026-10-14.** Integrates seven operator inputs: default verdict source flipped to the
+**Revision 3 — 2026-10-14.** Adds the pre-dispatch review (D16–D19, see §4, §5, §6, §9) and settles the
+deployment question (D15). **Revision 2** integrated seven operator inputs: default verdict source flipped to the
 LLM with the rule in shadow, `misconception_id` deferred, generation made asynchronous, cache
 invalidation added, a flag/regenerate path added, the C1 compatibility proof hardened, and C5 split
 into expand-then-contract. **Two revision-1 claims are withdrawn — see §4 (cost) and §5
