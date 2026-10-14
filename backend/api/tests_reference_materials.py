@@ -27,7 +27,11 @@ from api.llm import (
     validate_citations,
 )
 from api.management.commands import ingest_materials as ingest_cmd
-from api.materials_views import MATERIAL_UPLOAD_MAX_BYTES, validate_material_upload
+from api.materials_views import (
+    MATERIAL_UPLOAD_MAX_BYTES,
+    ReadingMaterialFlagView,
+    validate_material_upload,
+)
 from api.reading_materials import (
     _filter_sources,
     enqueue_reading_material,
@@ -44,6 +48,8 @@ from api.validation_views import (
     _grounding_detail,
     _grounding_metrics,
     _reading_material_counts,
+    _reading_material_detail,
+    _reading_material_staleness,
     _zero_validation_payload,
 )
 from api.views import is_lecturer_for_subject
@@ -1154,3 +1160,177 @@ class GroundingDetailAdditivityTests(SimpleTestCase):
         # pre-C5 keys still present
         self.assertIn('grounding', detail)
         self.assertIn('concept_breakdown_json', detail)
+
+
+class ReadingMaterialStalenessTests(SimpleTestCase):
+    """C6/D18: staleness is a read-time sha256 compare, never a network call."""
+
+    def _row(self, fingerprint, **over):
+        base = dict(
+            input_fingerprint=fingerprint,
+            prompt_version='reading-material-v1.0',
+            model_identifier='openai/gpt-oss-20b',
+            category='MSC',
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _ctx(self, short='A', reason='R'):
+        return SimpleNamespace(
+            question_prompt='Q', reference_short_answer=short, reference_reason=reason,
+        )
+
+    def test_matching_fingerprint_is_not_stale(self):
+        fp = input_fingerprint('reading-material-v1.0', 'openai/gpt-oss-20b', 'qv-1',
+                               'MSC', 'Q', 'A', 'R')
+        with patch('api.validation_views.load_question_version_context', return_value=self._ctx()):
+            stale, reason = _reading_material_staleness(self._row(fp), 'qv-1')
+        self.assertFalse(stale)
+        self.assertIsNone(reason)
+
+    def test_changed_reference_flips_stale_with_reason(self):
+        fp = input_fingerprint('reading-material-v1.0', 'openai/gpt-oss-20b', 'qv-1',
+                               'MSC', 'Q', 'A', 'R')
+        with patch('api.validation_views.load_question_version_context',
+                   return_value=self._ctx(short='A2')):
+            stale, reason = _reading_material_staleness(self._row(fp), 'qv-1')
+        self.assertTrue(stale)
+        self.assertIn('berubah', reason.lower())
+
+    def test_changed_question_flips_stale(self):
+        fp = input_fingerprint('reading-material-v1.0', 'openai/gpt-oss-20b', 'qv-1',
+                               'MSC', 'Q', 'A', 'R')
+        changed = SimpleNamespace(
+            question_prompt='Q2', reference_short_answer='A', reference_reason='R',
+        )
+        with patch('api.validation_views.load_question_version_context', return_value=changed):
+            stale, _ = _reading_material_staleness(self._row(fp), 'qv-1')
+        self.assertTrue(stale)
+
+    def test_null_fingerprint_is_not_stale(self):
+        stale, reason = _reading_material_staleness(self._row(None), 'qv-1')
+        self.assertFalse(stale)
+        self.assertIsNone(reason)
+
+    def test_missing_question_version_is_not_stale_and_never_raises(self):
+        with patch('api.validation_views.load_question_version_context',
+                   side_effect=ValueError('missing')):
+            stale, reason = _reading_material_staleness(self._row('a' * 64), 'qv-1')
+        self.assertFalse(stale)
+        self.assertIsNone(reason)
+
+
+class ReadingMaterialDetailTests(SimpleTestCase):
+    """C6: the detail payload exposes the full reading-material key set or None."""
+
+    def _analysis(self, qv='qv-1', category='MSC'):
+        return SimpleNamespace(
+            submission=SimpleNamespace(question_version_id=qv),
+            four_tier_category=category,
+        )
+
+    def _row(self):
+        return SimpleNamespace(
+            id='mat-1', status='READY', content_md='# Materi',
+            sources_json=[{'chunk_id': 'c1', 'document_title': 'Doc', 'page': 3}],
+            grounded=True, ungrounded_source_count=0, input_fingerprint=None,
+            review_status='UNREVIEWED', flag_note=None,
+            prompt_version='reading-material-v1.0',
+            model_identifier='openai/gpt-oss-20b', attempts=1,
+        )
+
+    def test_no_row_returns_none_and_queries_by_bucket(self):
+        fake = MagicMock()
+        fake.objects.filter.return_value.first.return_value = None
+        with patch('api.validation_views.GeneratedReadingMaterial', fake):
+            self.assertIsNone(_reading_material_detail(self._analysis()))
+        fake.objects.filter.assert_called_once_with(question_version_id='qv-1', category='MSC')
+
+    def test_row_exposes_full_key_set(self):
+        fake = MagicMock()
+        fake.objects.filter.return_value.first.return_value = self._row()
+        with patch('api.validation_views.GeneratedReadingMaterial', fake):
+            detail = _reading_material_detail(self._analysis())
+        self.assertEqual(set(detail), {
+            'id', 'status', 'content_md', 'sources', 'grounded',
+            'ungrounded_source_count', 'stale', 'stale_reason', 'review_status',
+            'flag_note', 'prompt_version', 'model_identifier', 'attempts',
+        })
+        self.assertEqual(detail['status'], 'READY')
+        self.assertIsNone(detail['stale_reason'])
+        self.assertFalse(detail['stale'])  # no stored fingerprint yet
+        self.assertEqual(detail['sources'][0]['document_title'], 'Doc')
+
+    def test_missing_category_is_none_without_query(self):
+        fake = MagicMock()
+        with patch('api.validation_views.GeneratedReadingMaterial', fake):
+            self.assertIsNone(_reading_material_detail(self._analysis(category=None)))
+        fake.objects.filter.assert_not_called()
+
+    def test_sc_or_predrain_analysis_has_null_key_in_grounding_detail(self):
+        analysis = SimpleNamespace(
+            grounding_similarity=None, grounding_similarity_max=None,
+            grounding_citation_count=None, grounding_payload_json={},
+            suggested_materials_json=[],
+        )
+        detail = _grounding_detail(analysis, {})
+        self.assertIn('reading_material', detail)
+        self.assertIsNone(detail['reading_material'])
+
+
+class ReadingMaterialFlagTests(SimpleTestCase):
+    """C6/D14: flag is a review write — lecturer-gated, no edit surface."""
+
+    def _request(self, note=None, user=None):
+        return SimpleNamespace(
+            data={} if note is None else {'note': note},
+            user=user or SimpleNamespace(id='user-1', username='lect', is_superuser=False),
+        )
+
+    def test_missing_material_is_404(self):
+        with patch('api.materials_views._material_subject_id', return_value=None):
+            res = ReadingMaterialFlagView().post(self._request(), 'mat-1')
+        self.assertEqual(res.status_code, 404)
+
+    def test_non_lecturer_is_403(self):
+        with patch('api.materials_views._material_subject_id', return_value='subj-1'), \
+             patch('api.materials_views.is_lecturer_for_subject', return_value=False):
+            res = ReadingMaterialFlagView().post(self._request(), 'mat-1')
+        self.assertEqual(res.status_code, 403)
+
+    def test_lecturer_flag_returns_updated_state(self):
+        with patch('api.materials_views._material_subject_id', return_value='subj-1'), \
+             patch('api.materials_views._flag_material_row',
+                   return_value=('STALE', 'FLAGGED', 'bad', '2026-01-01', 2, 'qv-1', 'MSC')) as flag, \
+             patch('api.materials_views.is_lecturer_for_subject', return_value=True):
+            res = ReadingMaterialFlagView().post(self._request(note='bad'), 'mat-1')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['status'], 'STALE')
+        self.assertEqual(res.data['review_status'], 'FLAGGED')
+        self.assertEqual(res.data['flag_note'], 'bad')
+        self.assertEqual(res.data['category'], 'MSC')
+        # Note recorded verbatim (no transformation) under the caller's id.
+        flag.assert_called_once_with('mat-1', 'bad', 'user-1')
+
+    def test_note_is_optional(self):
+        with patch('api.materials_views._material_subject_id', return_value='subj-1'), \
+             patch('api.materials_views._flag_material_row',
+                   return_value=('STALE', 'FLAGGED', None, '2026-01-01', 1, 'qv-1', 'MSC')) as flag, \
+             patch('api.materials_views.is_lecturer_for_subject', return_value=True):
+            res = ReadingMaterialFlagView().post(self._request(), 'mat-1')
+        self.assertEqual(res.status_code, 200)
+        flag.assert_called_once_with('mat-1', None, 'user-1')
+
+    def test_flag_sql_marks_stale_and_never_touches_content_md(self):
+        import inspect
+
+        from api.materials_views import _flag_material_row
+        src = inspect.getsource(_flag_material_row)
+        self.assertIn("status = 'STALE'", src)
+        self.assertIn('flag_note = %s', src)
+        self.assertNotIn('content_md', src)
+
+    def test_flag_route_is_registered_without_content_md(self):
+        from api.urls import urlpatterns
+        patterns = [str(p.pattern) for p in urlpatterns]
+        self.assertIn('materials/reading/<uuid:pk>/flag', patterns)
