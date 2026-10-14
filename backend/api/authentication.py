@@ -7,6 +7,9 @@ from .models import AuthToken
 class TokenAuthentication(BaseAuthentication):
     keyword = 'Bearer'
 
+    def authenticate_header(self, request):
+        return self.keyword
+
     def authenticate(self, request):
         header = request.headers.get('Authorization', '')
         if not header:

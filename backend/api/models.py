@@ -155,6 +155,46 @@ class WebsiteSection(models.Model):
         ordering = ('order_index', 'title')
 
 
+class LlmModel(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    identifier = models.CharField(max_length=100, unique=True)
+    provider = models.CharField(max_length=50)
+    display_name = models.CharField(max_length=150, blank=True)
+    context_window = models.IntegerField(null=True, blank=True)
+    cost_per_1k_input = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    cost_per_1k_output = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    is_enabled = models.BooleanField(default=True)
+    deprecated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'llm_models'
+        managed = False
+
+
+class AiRuntimeSettings(models.Model):
+    id = models.BooleanField(primary_key=True, default=True)
+    active_model = models.ForeignKey(LlmModel, on_delete=models.RESTRICT, db_column='active_model_id')
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, db_column='updated_by', null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ai_runtime_settings'
+        managed = False
+
+
+class AiModelChange(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    previous_model_identifier = models.CharField(max_length=100, blank=True)
+    active_model = models.ForeignKey(LlmModel, on_delete=models.RESTRICT, db_column='active_model_id')
+    changed_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='changed_by')
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ai_model_changes'
+        managed = False
+
+
 class QuestionSet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
