@@ -28,6 +28,12 @@ from api.llm import (
 )
 from api.management.commands import ingest_materials as ingest_cmd
 from api.materials_views import MATERIAL_UPLOAD_MAX_BYTES, validate_material_upload
+from api.reading_materials import (
+    _filter_sources,
+    enqueue_reading_material,
+    generate_reading_material,
+    input_fingerprint,
+)
 from api.validation_views import (
     _attach_document_titles,
     _by_model_row,
@@ -693,3 +699,177 @@ class ShadowPipelineTests(SimpleTestCase):
         self.assertIsNone(shadow['rule_t3'])
         self.assertIsNone(shadow['sim_t1'])
         self.assertIsNone(shadow['sim_t3'])
+
+
+class EnqueueReadingMaterialTests(SimpleTestCase):
+    def test_non_sc_inserts_pending_with_conflict_guard(self):
+        fake = MagicMock()
+        cursor = fake.cursor.return_value.__enter__.return_value
+        cursor.rowcount = 1
+        with patch('api.reading_materials.connection', fake):
+            created = enqueue_reading_material('qv-1', 'FP')
+        self.assertTrue(created)
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn('INSERT INTO generated_reading_materials', sql)
+        self.assertIn("'PENDING'", sql)
+        self.assertIn('ON CONFLICT (question_version_id, category) DO NOTHING', sql)
+
+    def test_existing_row_returns_false(self):
+        fake = MagicMock()
+        cursor = fake.cursor.return_value.__enter__.return_value
+        cursor.rowcount = 0
+        with patch('api.reading_materials.connection', fake):
+            self.assertFalse(enqueue_reading_material('qv-1', 'FP'))
+
+    def test_sc_skips_without_touching_the_database(self):
+        fake = MagicMock()
+        with patch('api.reading_materials.connection', fake):
+            self.assertFalse(enqueue_reading_material('qv-1', 'SC'))
+        fake.cursor.assert_not_called()
+
+
+class InputFingerprintTests(SimpleTestCase):
+    def test_deterministic_64_char_lowercase_hex(self):
+        args = ('reading-material-v1.0', 'model', 'qv-1', 'FP', 'prompt', 'short', 'reason')
+        digest = input_fingerprint(*args)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(digest, digest.lower())
+        self.assertEqual(digest, input_fingerprint(*args))
+        # every component participates
+        self.assertNotEqual(
+            digest,
+            input_fingerprint('reading-material-v1.0', 'model', 'qv-1', 'FN', 'prompt', 'short', 'reason'),
+        )
+
+
+class FilterSourcesTests(SimpleTestCase):
+    def setUp(self):
+        self.retrieved = {
+            'c1': {'chunk_id': 'c1', 'document_id': 'd1', 'document_title': 'T1', 'page_start': 3},
+            'c2': {'chunk_id': 'c2', 'document_id': 'd2', 'document_title': 'T2', 'page_start': 7},
+        }
+
+    def test_keeps_only_retrieved_and_counts_residue(self):
+        sources, ungrounded = _filter_sources(
+            [
+                {'chunk_id': 'c1', 'document_title': 'lying-title'},
+                {'chunk_id': 'ghost'},
+                {'chunk_id': 'c1'},          # duplicate — neither kept nor counted
+                {'chunk_id': 'c2'},
+                'not-a-dict',
+                {},
+            ],
+            self.retrieved,
+        )
+        self.assertEqual([s['chunk_id'] for s in sources], ['c1', 'c2'])
+        # provenance is re-materialised from the retrieved chunk, not the model's claim
+        self.assertEqual(sources[0]['document_title'], 'T1')
+        self.assertEqual(sources[0]['document_id'], 'd1')
+        self.assertEqual(sources[1]['page'], 7)
+        self.assertEqual(ungrounded, 3)  # ghost + not-a-dict + {} 
+
+    def test_non_list_is_empty(self):
+        self.assertEqual(_filter_sources(None, self.retrieved), ([], 0))
+
+
+@override_settings(READING_MATERIAL_TEMPERATURE=0.0)
+class ReadingMaterialGenerationTests(SimpleTestCase):
+    def test_zero_chunk_still_ready_ungrounded_no_sources(self):
+        ctx = make_ctx(question_version_id='qv-1')
+        with patch('api.reading_materials.retrieve_reference_chunks', return_value=[]) as retrieve, \
+                patch('api.reading_materials.get_active_model_identifier', return_value='test-model'), \
+                patch('api.reading_materials._call_llm_json',
+                      return_value={'reading_material_md': 'Materi.', 'sources': []}) as call, \
+                patch('api.reading_materials._mark_ready') as mark_ready, \
+                patch('api.reading_materials._mark_failed') as mark_failed:
+            result = generate_reading_material(ctx, 'FP')
+
+        self.assertEqual(result['status'], 'READY')
+        self.assertFalse(result['grounded'])
+        self.assertEqual(result['sources_count'], 0)
+        retrieve.assert_called_once()
+        mark_failed.assert_not_called()
+        mark_ready.assert_called_once()
+        kwargs = mark_ready.call_args.kwargs
+        self.assertFalse(kwargs['grounded'])              # D8: zero chunks -> not grounded
+        self.assertEqual(kwargs['sources'], [])
+        self.assertEqual(kwargs['ungrounded_source_count'], 0)
+        # generation temperature is 0.0, not the pipeline's 0.1
+        self.assertEqual(call.call_args.kwargs.get('temperature'), 0.0)
+
+    def test_failure_marks_failed_and_never_raises(self):
+        ctx = make_ctx(question_version_id='qv-1')
+        with patch('api.reading_materials.retrieve_reference_chunks', return_value=[]), \
+                patch('api.reading_materials.get_active_model_identifier', return_value='test-model'), \
+                patch('api.reading_materials._call_llm_json', side_effect=RuntimeError('boom')), \
+                patch('api.reading_materials._mark_ready') as mark_ready, \
+                patch('api.reading_materials._mark_failed') as mark_failed:
+            result = generate_reading_material(ctx, 'MSC')   # must not raise
+
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertIn('boom', result['error'])
+        mark_ready.assert_not_called()
+        mark_failed.assert_called_once()
+        args = mark_failed.call_args[0]
+        self.assertEqual(args[0], 'qv-1')
+        self.assertEqual(args[1], 'MSC')
+        self.assertIn('boom', args[2])
+
+
+@override_settings(SHADOW_RULE_VERDICT=True, TIER_VERDICT_SOURCE='llm',
+                   ANSWER_SIM_T1_THRESHOLD=0.75, ANSWER_SIM_T3_THRESHOLD=0.75)
+class ReadingMaterialQueueTests(SimpleTestCase):
+    """The analysis path queues material and makes no generation call (C4)."""
+
+    def _run_pipeline(self, mod_a, mod_b, enqueue_side_effect=None):
+        ctx = make_ctx(reference_chunks=[], question_version_id='qv-1')
+        recorded = {}
+
+        def record(sql, params=None):
+            if 'sp_record_llm_analysis' in sql:
+                recorded['params'] = params
+
+        fake_connection = MagicMock()
+        cursor = fake_connection.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = record
+
+        module_b_return = (
+            mod_b, 'ok',
+            {'poin_tepat': 'p', 'letak_kekeliruan': 'l', 'konsep_seharusnya': 'c'},
+            [], [],
+        )
+        with patch('api.llm.connection', fake_connection), \
+                patch('api.llm.load_context', return_value=ctx), \
+                patch('api.llm.retrieve_reference_chunks', return_value=[]), \
+                patch('api.llm.answer_similarity', MagicMock(return_value=(0.9, 0.4))), \
+                patch('api.llm.run_module_a', return_value=(mod_a, 'ok')), \
+                patch('api.llm.run_module_b', return_value=module_b_return), \
+                patch('api.llm.run_module_c', return_value=('MK-LAIN', 'MK-LAIN', 0.5, '', [])), \
+                patch('api.reading_materials.enqueue_reading_material',
+                      side_effect=enqueue_side_effect) as enqueue, \
+                patch('api.reading_materials.generate_reading_material') as generate:
+            result = llm.analyze_submission('sub-1')
+        return result, enqueue, generate
+
+    def test_non_sc_queues_pending_and_makes_no_generation_call(self):
+        result, enqueue, generate = self._run_pipeline('BENAR', 'SALAH')  # (B,y,S,y) -> FP
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        enqueue.assert_called_once()
+        args = enqueue.call_args[0]
+        self.assertEqual(args[0], 'qv-1')
+        self.assertEqual(args[1], 'FP')
+        generate.assert_not_called()
+
+    def test_sc_queues_nothing(self):
+        result, enqueue, generate = self._run_pipeline('BENAR', 'BENAR')  # (B,y,B,y) -> SC
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        enqueue.assert_not_called()
+        generate.assert_not_called()
+
+    def test_queue_failure_does_not_fail_the_analysis(self):
+        result, enqueue, generate = self._run_pipeline(
+            'BENAR', 'SALAH', enqueue_side_effect=RuntimeError('queue down'),
+        )
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        enqueue.assert_called_once()
+        generate.assert_not_called()

@@ -196,6 +196,7 @@ class FourTierContext:
     rejection_notes: str
     prior_explanation: str
     topic_id: str | None = None
+    question_version_id: str | None = None
     reference_chunks: list = field(default_factory=list)  # retrieved reference passages
     reference_t1_vec: list | None = None  # cached JAWABAN_SINGKAT embedding (C2)
     reference_t3_vec: list | None = None  # cached ALASAN embedding (C2)
@@ -306,6 +307,7 @@ def load_context(submission_id: str) -> FourTierContext:
         rejection_notes=(prior[0] or '')[:2000],
         prior_explanation=(prior[1] or '')[:2000],
         topic_id=str(row[12]) if row[12] else None,
+        question_version_id=str(qv_id),
         reference_t1_vec=ref_vectors.get('JAWABAN_SINGKAT'),
         reference_t3_vec=ref_vectors.get('ALASAN'),
     )
@@ -328,19 +330,22 @@ def _extract_json(raw: str) -> dict:
         raise LlmAnalysisError('LLM output is not valid JSON')
 
 
-def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str) -> dict:
+def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str,
+                   temperature: float | None = None) -> dict:
     client = get_llm_client()
     messages = [
         {'role': 'system', 'content': system_prompt},
         {'role': 'user', 'content': user_prompt},
     ]
+    if temperature is None:
+        temperature = LLM_TEMPERATURE
     last_error = None
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
             kwargs = {
                 'model': model_identifier,
                 'messages': messages,
-                'temperature': LLM_TEMPERATURE,
+                'temperature': temperature,
             }
             try:
                 response = client.chat.completions.create(
@@ -1115,6 +1120,20 @@ def analyze_submission(submission_id: str) -> str:
             'Four-Tier Submission %s dianalisis -> [%s] %s (Skor: %s%%) dalam %dms',
             submission_id, category, meaning, percentage_correct, total_ms
         )
+
+        # C4: enqueue reading material for every non-SC category. This is a cheap
+        # INSERT ... ON CONFLICT DO NOTHING and makes NO LLM call — generation is
+        # asynchronous (the 10-minute zombie window means it must not run here).
+        # A queue failure is non-fatal: it must never fail an analysis.
+        if category != 'SC' and getattr(ctx, 'question_version_id', None):
+            try:
+                from api.reading_materials import enqueue_reading_material
+                enqueue_reading_material(ctx.question_version_id, category)
+            except Exception as e:  # noqa: BLE001 — queueing must never fail an analysis
+                logger.warning(
+                    'Reading-material enqueue failed for %s (non-fatal): %s',
+                    submission_id, e,
+                )
         return 'PENDING_VALIDATION'
 
     except Exception as e:
