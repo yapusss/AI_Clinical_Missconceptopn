@@ -127,3 +127,34 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 def vector_literal(vec: Sequence[float]) -> str:
     """`'[0.1,0.2,...]'` — the text form to pass with a `%s::vector` cast."""
     return '[' + ','.join(repr(float(x)) for x in vec) + ']'
+
+
+def _answer_tier_similarity(text, reference_vec) -> float | None:
+    """One tier's cosine. `None` when either side is unavailable.
+
+    The reference vector is always supplied by the caller from the cache
+    (`reference_answers.embedding`, populated by C2) — it is NEVER embedded
+    here, so a missing cached vector yields `None` rather than a hidden
+    per-analysis provider call (D2).
+    """
+    if not (text or '').strip():
+        return None
+    if not reference_vec:
+        return None
+    student_vec = embed_text(text)
+    return round(cosine(student_vec, reference_vec), 4)
+
+
+def answer_similarity(t1_text, t3_text, ref_t1_vec, ref_t3_vec) -> tuple[float | None, float | None]:
+    """Cosine of each student text against its cached reference vector.
+
+    Embeds only the student's two texts (exactly two provider calls when both
+    are present and both references are cached). Returns `(sim1, sim3)`, each
+    rounded to 4 decimals, or `None` for a side that cannot be measured: empty
+    student text, or a missing cached reference vector. A provider failure
+    propagates as `EmbeddingError`; the caller decides how to degrade.
+    """
+    return (
+        _answer_tier_similarity(t1_text, ref_t1_vec),
+        _answer_tier_similarity(t3_text, ref_t3_vec),
+    )

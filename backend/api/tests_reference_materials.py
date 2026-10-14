@@ -13,13 +13,14 @@ from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from api import llm
-from api.embeddings import cosine
+from api.embeddings import answer_similarity, cosine
 from api.llm import (
     FourTierContext,
     build_reference_block,
+    classify_tiers,
     grounded_similarity,
     run_module_b,
     run_module_c,
@@ -249,7 +250,7 @@ class ZeroChunkPipelineTests(SimpleTestCase):
         self.assertEqual(result, 'PENDING_VALIDATION')
         self.assertEqual(ctx.reference_chunks, [])
         params = recorded['params']
-        self.assertEqual(params[2], 'four-tier-v2.9-rag')   # prompt_version
+        self.assertEqual(params[2], llm.PROMPT_VERSION)      # source-derived prompt_version
         self.assertEqual(params[6], json.dumps([]))         # suggested_materials
         self.assertIsNone(params[16])                       # grounding_similarity
         self.assertIsNone(params[17])                       # grounding_similarity_max
@@ -555,3 +556,140 @@ class DocumentTitleMappingTests(SimpleTestCase):
         with patch('api.validation_views.connection') as conn:
             self.assertEqual(_attach_document_titles([]), [])
         conn.cursor.assert_not_called()
+
+
+class AnswerSimilarityTests(SimpleTestCase):
+    def test_identical_texts_are_one_with_two_calls(self):
+        with patch('api.embeddings.embed_text', return_value=[1.0, 0.0, 0.0]) as mocked:
+            sim1, sim3 = answer_similarity('t1', 't3', [1.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        self.assertEqual(sim1, 1.0)
+        self.assertEqual(sim3, 1.0)
+        self.assertEqual(mocked.call_count, 2)   # only the student's two texts
+
+    def test_orthogonal_texts_are_zero(self):
+        def fake_embed(text):
+            return [1.0, 0.0] if text == 't1' else [0.0, 1.0]
+
+        with patch('api.embeddings.embed_text', side_effect=fake_embed):
+            sim1, sim3 = answer_similarity('t1', 't3', [0.0, 1.0], [1.0, 0.0])
+        self.assertEqual(sim1, 0.0)
+        self.assertEqual(sim3, 0.0)
+
+    def test_blank_text_is_none_and_never_embedded(self):
+        with patch('api.embeddings.embed_text', return_value=[1.0, 0.0]) as mocked:
+            sim1, sim3 = answer_similarity('   ', 'some reason', [1.0, 0.0], [1.0, 0.0])
+        self.assertIsNone(sim1)
+        self.assertEqual(sim3, 1.0)
+        mocked.assert_called_once_with('some reason')
+
+    def test_missing_cached_reference_vector_is_none_without_embedding(self):
+        with patch('api.embeddings.embed_text') as mocked:
+            sim1, sim3 = answer_similarity('t1', 't3', None, None)
+        self.assertIsNone(sim1)
+        self.assertIsNone(sim3)
+        mocked.assert_not_called()               # never embed the reference on the fly
+
+    def test_missing_one_reference_side_only_nulls_that_tier(self):
+        with patch('api.embeddings.embed_text', return_value=[1.0, 0.0]) as mocked:
+            sim1, sim3 = answer_similarity('t1', 't3', None, [1.0, 0.0])
+        self.assertIsNone(sim1)
+        self.assertEqual(sim3, 1.0)
+        mocked.assert_called_once_with('t3')
+
+
+class ClassifyTiersTests(SimpleTestCase):
+    def test_at_threshold_is_benar(self):
+        self.assertEqual(classify_tiers(0.75, 0.75, 0.75, 0.75), ('BENAR', 'BENAR'))
+
+    def test_above_threshold_is_benar(self):
+        self.assertEqual(classify_tiers(0.9, 0.8, 0.75, 0.75), ('BENAR', 'BENAR'))
+
+    def test_below_threshold_is_salah(self):
+        self.assertEqual(classify_tiers(0.74, 0.0, 0.75, 0.75), ('SALAH', 'SALAH'))
+
+    def test_none_similarity_is_none_verdict_not_salah(self):
+        self.assertEqual(classify_tiers(None, 0.9, 0.75, 0.75), (None, 'BENAR'))
+        self.assertEqual(classify_tiers(0.9, None, 0.75, 0.75), ('BENAR', None))
+
+    def test_separate_thresholds_per_tier(self):
+        self.assertEqual(classify_tiers(0.7, 0.7, 0.75, 0.5), ('SALAH', 'BENAR'))
+
+
+@override_settings(SHADOW_RULE_VERDICT=True, TIER_VERDICT_SOURCE='llm',
+                   ANSWER_SIM_T1_THRESHOLD=0.75, ANSWER_SIM_T3_THRESHOLD=0.75)
+class ShadowPipelineTests(SimpleTestCase):
+    def _run_pipeline(self):
+        ctx = make_ctx(reference_chunks=[])
+        recorded = {}
+
+        def record(sql, params=None):
+            if 'sp_record_llm_analysis' in sql:
+                recorded['sql'] = sql
+                recorded['params'] = params
+
+        fake_connection = MagicMock()
+        cursor = fake_connection.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = record
+
+        similarity = MagicMock(return_value=(0.9, 0.4))
+        with patch('api.llm.connection', fake_connection), \
+                patch('api.llm.load_context', return_value=ctx), \
+                patch('api.llm.retrieve_reference_chunks', return_value=[]), \
+                patch('api.llm.answer_similarity', similarity), \
+                patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
+                patch('api.llm.run_module_b', return_value=(
+                    'BENAR', 'ok',
+                    {'poin_tepat': 'p', 'letak_kekeliruan': 'l', 'konsep_seharusnya': 'concept'},
+                    [], [],
+                )):
+            result = llm.analyze_submission('sub-1')
+        return result, recorded, similarity
+
+    def test_shadow_recorded_and_call_has_26_placeholders(self):
+        result, recorded, similarity = self._run_pipeline()
+
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        # 25 bound %s values + 1 literal NULL (OUT p_analysis_id) = 26 slots.
+        self.assertEqual(recorded['sql'].count('%s') + recorded['sql'].count('NULL'), 26)
+        self.assertEqual(len(recorded['params']), 25)
+
+        params = recorded['params']
+        # Driving verdict (module_a/b) equals the LLM verdict under 'llm'.
+        self.assertEqual(params[11], 'BENAR')
+        self.assertEqual(params[12], 'BENAR')
+        # llm_* is the LLM's own verdict, always recorded.
+        self.assertEqual(params[22], 'BENAR')
+        self.assertEqual(params[23], 'BENAR')
+        # similarities.
+        self.assertEqual(params[20], 0.9)
+        self.assertEqual(params[21], 0.4)
+
+        shadow = json.loads(params[24])
+        self.assertEqual(shadow['rule_t1'], 'BENAR')
+        self.assertEqual(shadow['rule_t3'], 'SALAH')
+        self.assertEqual(shadow['sim_t1'], 0.9)
+        self.assertEqual(shadow['sim_t3'], 0.4)
+        self.assertEqual(shadow['threshold_t1'], 0.75)
+        self.assertEqual(shadow['threshold_t3'], 0.75)
+        self.assertEqual(shadow['source'], 'llm')
+
+        # D17: student_feedback is still written into concept_breakdown_json.
+        breakdown = json.loads(params[5])
+        self.assertIn('student_feedback', breakdown)
+        self.assertEqual(breakdown['student_feedback']['konsep_seharusnya'], 'concept')
+
+    @override_settings(SHADOW_RULE_VERDICT=False)
+    def test_shadow_disabled_skips_embedding_and_records_nulls(self):
+        result, recorded, similarity = self._run_pipeline()
+
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        similarity.assert_not_called()            # zero embed calls when off
+
+        params = recorded['params']
+        self.assertIsNone(params[20])
+        self.assertIsNone(params[21])
+        shadow = json.loads(params[24])
+        self.assertIsNone(shadow['rule_t1'])
+        self.assertIsNone(shadow['rule_t3'])
+        self.assertIsNone(shadow['sim_t1'])
+        self.assertIsNone(shadow['sim_t3'])

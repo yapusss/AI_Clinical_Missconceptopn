@@ -32,11 +32,20 @@ from django.conf import settings
 from django.db import connection
 from openai import OpenAI
 
-from api.embeddings import cosine, embed_text, vector_literal
+from api.embeddings import (
+    EmbeddingError,
+    answer_similarity,
+    cosine,
+    embed_text,
+    vector_literal,
+)
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = 'four-tier-v2.9-rag'
+# Source-derived so metrics never pool a judged run with a shadow run: the
+# source selects the bucket, and `llm_analyses.prompt_version` records it per
+# row. The pre-C3 rows stay in their own `four-tier-v2.9-rag` bucket.
+PROMPT_VERSION = f'four-tier-v3.0-{settings.TIER_VERDICT_SOURCE}'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
@@ -188,6 +197,8 @@ class FourTierContext:
     prior_explanation: str
     topic_id: str | None = None
     reference_chunks: list = field(default_factory=list)  # retrieved reference passages
+    reference_t1_vec: list | None = None  # cached JAWABAN_SINGKAT embedding (C2)
+    reference_t3_vec: list | None = None  # cached ALASAN embedding (C2)
 
 
 def load_context(submission_id: str) -> FourTierContext:
@@ -256,14 +267,20 @@ def load_context(submission_id: str) -> FourTierContext:
         
         cur.execute(
             """
-            SELECT answer_key, answer_text
+            SELECT answer_key, answer_text, embedding::text
             FROM reference_answers
             WHERE question_version_id = %s AND answer_key IN ('JAWABAN_SINGKAT', 'ALASAN')
             """,
             [qv_id],
         )
-        ref_answers = {r[0]: r[1] for r in cur.fetchall()}
-        
+        ref_answers = {}
+        ref_vectors = {}
+        for r in cur.fetchall():
+            ref_answers[r[0]] = r[1]
+            vec = _parse_vector(r[2])
+            if vec:
+                ref_vectors[r[0]] = vec
+
         # Use reference_answers as primary source, fall back to question_versions columns
         reference_short_answer = (qv_short_answer or '').strip() or ref_answers.get('JAWABAN_SINGKAT', '').strip() or ''
         reference_reason = (qv_model_answer or '').strip() or ref_answers.get('ALASAN', '').strip() or ''
@@ -289,6 +306,8 @@ def load_context(submission_id: str) -> FourTierContext:
         rejection_notes=(prior[0] or '')[:2000],
         prior_explanation=(prior[1] or '')[:2000],
         topic_id=str(row[12]) if row[12] else None,
+        reference_t1_vec=ref_vectors.get('JAWABAN_SINGKAT'),
+        reference_t3_vec=ref_vectors.get('ALASAN'),
     )
 
 
@@ -766,6 +785,42 @@ def evaluate_decision_matrix(
     return MATRIX_RULES.get(key, ('LK', 'Tidak konsisten', 'SEDANG_RENDAH'))
 
 
+def _classify_one(similarity, threshold) -> str | None:
+    if similarity is None:
+        return None
+    return 'BENAR' if similarity >= threshold else 'SALAH'
+
+
+def classify_tiers(sim1, sim3, threshold_t1, threshold_t3) -> tuple[str | None, str | None]:
+    """The theta-based rule verdict per tier. Pure: no DB, no network.
+
+    `BENAR` iff `sim >= threshold`, else `SALAH`. A `None` similarity yields a
+    `None` verdict — a missing measurement is not a judgement, so it must never
+    be recorded as `SALAH` (the agreement metric counts only rows where both
+    sides exist).
+    """
+    return (
+        _classify_one(sim1, threshold_t1),
+        _classify_one(sim3, threshold_t3),
+    )
+
+
+def _driving_verdicts(llm_t1, llm_t3, rule_t1, rule_t3) -> tuple[str, str]:
+    """The verdict pair the matrix consumes (D11).
+
+    Under the default `'llm'` this is the LLM's verdict — byte-identical to the
+    pre-C3 behaviour. Under `'rule'` the shadow verdict drives, falling back to
+    the LLM verdict on a tier the rule could not measure (a `None` rule verdict
+    must never reach the matrix).
+    """
+    if settings.TIER_VERDICT_SOURCE == 'rule':
+        return (
+            rule_t1 if rule_t1 is not None else llm_t1,
+            rule_t3 if rule_t3 is not None else llm_t3,
+        )
+    return llm_t1, llm_t3
+
+
 # ----------------------------------------------------------------------------
 # 6. Full Analysis Pipeline Execution
 # ----------------------------------------------------------------------------
@@ -792,6 +847,42 @@ def analyze_submission(submission_id: str) -> str:
         ctx.reference_chunks = retrieve_reference_chunks(
             ctx.subject_id, ctx.topic_id, retrieval_query
         )
+
+        # Shadow answer-similarity + theta rule verdict (C3). Non-fatal and
+        # optional: skipped entirely (zero embed calls) when SHADOW_RULE_VERDICT
+        # is off. It is computed once for the submission, so both branches
+        # (t3_kosong and the normal path) share it — similarity is a property of
+        # the submission, not of which modules ran. Under the default
+        # TIER_VERDICT_SOURCE='llm' it never drives the matrix.
+        if settings.SHADOW_RULE_VERDICT:
+            try:
+                sim_t1, sim_t3 = answer_similarity(
+                    ctx.tier1_answer, ctx.tier3_reason,
+                    ctx.reference_t1_vec, ctx.reference_t3_vec,
+                )
+            except EmbeddingError as e:  # noqa: BLE001 — embedding failure is non-fatal
+                logger.warning(
+                    'Answer-similarity embedding failed for %s (non-fatal): %s',
+                    submission_id, e,
+                )
+                sim_t1 = sim_t3 = None
+        else:
+            sim_t1 = sim_t3 = None
+
+        rule_t1, rule_t3 = classify_tiers(
+            sim_t1, sim_t3,
+            settings.ANSWER_SIM_T1_THRESHOLD,
+            settings.ANSWER_SIM_T3_THRESHOLD,
+        )
+        verdict_shadow = {
+            'rule_t1': rule_t1,
+            'rule_t3': rule_t3,
+            'sim_t1': sim_t1,
+            'sim_t3': sim_t3,
+            'threshold_t1': settings.ANSWER_SIM_T1_THRESHOLD,
+            'threshold_t3': settings.ANSWER_SIM_T3_THRESHOLD,
+            'source': settings.TIER_VERDICT_SOURCE,
+        }
 
         # Citation state, filled by Modul B/C below (stays empty on the
         # zero-chunk path and the t3_kosong path).
@@ -825,6 +916,12 @@ def analyze_submission(submission_id: str) -> str:
             meaning = 'Tidak paham konsep / alasan kosong'
             risk = 'SEDANG_RENDAH'
 
+            # C3: the LLM verdict is always recorded, independent of source.
+            llm_t1_score = mod_a_score
+            llm_t3_score = mod_b_score
+            mod_a_score, mod_b_score = _driving_verdicts(
+                llm_t1_score, llm_t3_score, rule_t1, rule_t3)
+
         else:
             if 't1_berisi_alasan' in flags or 't3_redundan' in flags:
                 combined_reason = f"Jawaban: {ctx.tier1_answer}\nAlasan: {ctx.tier3_reason}"
@@ -844,6 +941,11 @@ def analyze_submission(submission_id: str) -> str:
                 mod_b_exp = 'Teks alasan terlalu singkat untuk memuat penurunan konsep ilmiah yang valid.'
                 student_feedback['letak_kekeliruan'] = 'Alasan terlalu singkat dan belum memuat penurunan rumus atau prinsip fisis yang lengkap.'
 
+            # C3: the LLM verdict is always recorded, before source selection
+            # (Safeguard C above already applies to the LLM verdict).
+            llm_t1_score = mod_a_score
+            llm_t3_score = mod_b_score
+
             # Modul C: Ambil code dan label_name
             mod_c_code = None
             mod_c_label = None
@@ -852,6 +954,11 @@ def analyze_submission(submission_id: str) -> str:
             mod_c_referensi = []
             if mod_b_score == 'SALAH' or 't1_berisi_alasan' in flags:
                 mod_c_code, mod_c_label, mod_c_conf, mod_c_exp, mod_c_referensi = run_module_c(ctx, model_identifier)
+
+            # Source selection (D11): 'llm' drives by default; 'rule' would use
+            # the shadow verdict, falling back to the LLM where unmeasured.
+            mod_a_score, mod_b_score = _driving_verdicts(
+                llm_t1_score, llm_t3_score, rule_t1, rule_t3)
 
             # Matriks Keputusan
             category, meaning, risk = evaluate_decision_matrix(
@@ -971,7 +1078,8 @@ def analyze_submission(submission_id: str) -> str:
                     %s::jsonb, %s::jsonb, %s::text, %s::numeric, %s::jsonb, %s::integer,
                     %s::varchar, %s::varchar, %s::varchar, %s::varchar, %s::varchar,
                     NULL,
-                    %s::numeric, %s::numeric, %s::integer, %s::jsonb
+                    %s::numeric, %s::numeric, %s::integer, %s::jsonb,
+                    %s::numeric, %s::numeric, %s::varchar, %s::varchar, %s::jsonb
                 );
                 """,
                 [
@@ -995,6 +1103,11 @@ def analyze_submission(submission_id: str) -> str:
                     grounding_similarity_max,
                     grounding_citation_count,
                     json.dumps(grounding_payload, ensure_ascii=False),
+                    sim_t1,
+                    sim_t3,
+                    llm_t1_score,
+                    llm_t3_score,
+                    json.dumps(verdict_shadow, ensure_ascii=False),
                 ],
             )
 
