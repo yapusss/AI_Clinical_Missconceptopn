@@ -394,6 +394,69 @@ class ZeroValidationMetricsTests(SimpleTestCase):
         self.assertEqual(row['citation_coverage'], 1.0)
 
 
+class ByModelPerModelKeysTests(SimpleTestCase):
+    """C5F: each `by_model` row carries its OWN similarity + shadow agreement.
+
+    The dev DB has a single `model_identifier`, so the per-model defect is
+    invisible there. This test is the discriminating combination: two models
+    with different numbers, and a third with no analyses. A row that pooled
+    the other model's rows, or defaulted an empty agreement to 1.0, fails.
+    """
+
+    PER_MODEL_KEYS = (
+        'answer_similarity_t1_mean', 'answer_similarity_t3_mean',
+        'answer_similarity_coverage', 'verdict_agreement_rate',
+        'verdict_comparable_count',
+    )
+
+    def _model_a(self):
+        return [
+            make_analysis(model_identifier='model-a', sim_t1=0.6, sim_t3=0.7,
+                          llm_t1='BENAR', llm_t3='SALAH',
+                          shadow={'rule_t1': 'BENAR', 'rule_t3': 'SALAH'}),
+            make_analysis(model_identifier='model-a'),
+        ]
+
+    def _model_b(self):
+        return [
+            make_analysis(model_identifier='model-b', sim_t1=0.9, sim_t3=0.9,
+                          llm_t1='SALAH', llm_t3='SALAH',
+                          shadow={'rule_t1': 'BENAR', 'rule_t3': 'SALAH'}),
+        ]
+
+    def test_row_carries_all_new_keys_alongside_existing(self):
+        row = _by_model_row('model-a', [], self._model_a())
+        for key in ('model_identifier', 'grounding_similarity_mean', 'citation_coverage',
+                    'citation_validity_rate', 'hallucinated_citation_rate'):
+            self.assertIn(key, row)                      # existing keys kept
+        for key in self.PER_MODEL_KEYS:
+            self.assertIn(key, row)
+
+    def test_each_row_uses_only_its_own_model_analyses(self):
+        a = _by_model_row('model-a', [], self._model_a())
+        b = _by_model_row('model-b', [], self._model_b())
+        # model-a: 1 of 2 rows has a similarity, 1 comparable sees agreement.
+        self.assertAlmostEqual(a['answer_similarity_t1_mean'], 0.6, places=4)
+        self.assertAlmostEqual(a['answer_similarity_t3_mean'], 0.7, places=4)
+        self.assertEqual(a['answer_similarity_coverage'], 0.5)
+        self.assertEqual(a['verdict_comparable_count'], 1)
+        self.assertAlmostEqual(a['verdict_agreement_rate'], 1.0, places=4)
+        # model-b: its own (different) numbers, not pooled with model-a.
+        self.assertAlmostEqual(b['answer_similarity_t1_mean'], 0.9, places=4)
+        self.assertAlmostEqual(b['answer_similarity_t3_mean'], 0.9, places=4)
+        self.assertEqual(b['answer_similarity_coverage'], 1.0)
+        self.assertEqual(b['verdict_comparable_count'], 1)
+        self.assertAlmostEqual(b['verdict_agreement_rate'], 0.0, places=4)
+
+    def test_model_with_no_analyses_is_null_not_zero_or_one(self):
+        row = _by_model_row('ghost', [], [])
+        self.assertIsNone(row['answer_similarity_t1_mean'])
+        self.assertIsNone(row['answer_similarity_t3_mean'])
+        self.assertIsNone(row['answer_similarity_coverage'])
+        self.assertIsNone(row['verdict_agreement_rate'])   # never 0.0, never 1.0
+        self.assertEqual(row['verdict_comparable_count'], 0)
+
+
 class GroundingDetailShapeTests(SimpleTestCase):
     def test_grounded_analysis_shape(self):
         analysis = SimpleNamespace(
