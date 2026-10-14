@@ -160,17 +160,20 @@ the reconcile counts (`created`, `already present`) separately from the embed co
 from `question_versions` directly while leaving `reference_answers` empty: C3 reads the cache from
 `reference_answers` and would then miss 2 of 3 questions.
 
-**Invalidation hooks** (D13) — both are required, because signals cannot see raw SQL:
+**Invalidation — split across C2 and C4** (D13). The hooks cannot live here: they mark
+`generated_reading_materials` rows `STALE`, and that table is C4's. C2 owns the **reference-embedding**
+half only; C4 adds the material half.
 
-| trigger | mechanism |
-|---|---|
-| `QuestionVersion` saved via the ORM (question edit / republish) | `post_save` → mark dependents `STALE` |
-| `ReferenceAnswer` written via `_sync_reference_answers` | `post_save` → mark dependents `STALE` |
-| raw-SQL writes (stored procs, psql, migrations, direct imports) | **`--refresh` sweep** — the backstop, run alongside the worker |
-| `ingest_materials` completes a document | explicitly mark the subject's materials `STALE` (corpus changed) |
+| trigger | owner | mechanism |
+|---|---|---|
+| reference text changed (`short_answer` / `model_answer` / mirror row edited) | **C2** | `answer_hash` change detection — the sweep recomputes the hash every pass, so no signal is needed for this |
+| raw-SQL writes (stored procs, psql, migrations, direct imports) | **C2** | **`--refresh` sweep** — the backstop; no signal can see raw SQL |
+| `QuestionVersion` / `ReferenceAnswer` saved via the ORM | **C4** | `post_save` → mark the subject's **material** rows `STALE` |
+| `ingest_materials` completes a document | **C4** | explicitly mark the subject's materials `STALE` (corpus changed) |
 
-`post_save` fires for `managed = False` models on ORM saves. State plainly in the C2 report which paths
-are signal-covered and which rely on the sweep — do not claim full coverage.
+`post_save` fires for `managed = False` models on ORM saves. **C2 therefore ships no signals at all** —
+hash-based change detection is sufficient for embeddings because the sweep recomputes the hash. State
+plainly in the C2 report which paths are covered and which rely on the sweep.
 
 ## 4. C3 — Similarity + **shadow** rule verdict
 
