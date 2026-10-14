@@ -501,6 +501,58 @@ class KnowledgeDocument(models.Model):
         return self.title
 
 
+class GeneratedReadingMaterial(models.Model):
+    """Read-model for the C4 async reading-material store (`managed = False`).
+
+    Rows are written by `api/reading_materials.py` via raw SQL (the analysis path
+    inserts a `PENDING` row; the drain command fills the rest), never by ORM
+    `save()`. The key is `(question_version_id, category)`; there is no
+    `misconception_id` (D12).
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Menunggu digenerate'
+        READY = 'READY', 'Siap digunakan'
+        STALE = 'STALE', 'Kedaluwarsa'
+        FAILED = 'FAILED', 'Gagal digenerate'
+
+    class ReviewStatus(models.TextChoices):
+        UNREVIEWED = 'UNREVIEWED', 'Belum ditinjau'
+        OK = 'OK', 'Disetujui'
+        FLAGGED = 'FLAGGED', 'Ditandai'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question_version = models.ForeignKey(
+        QuestionVersion, on_delete=models.CASCADE, db_column='question_version_id',
+        related_name='reading_materials',
+    )
+    category = models.CharField(max_length=10)
+    status = models.CharField(max_length=20, choices=Status, default=Status.PENDING)
+    content_md = models.TextField(null=True, blank=True)
+    sources_json = models.JSONField(default=list)
+    grounded = models.BooleanField(default=False)
+    ungrounded_source_count = models.IntegerField(default=0)
+    input_fingerprint = models.CharField(max_length=64, null=True, blank=True)
+    error = models.TextField(null=True, blank=True)
+    attempts = models.IntegerField(default=0)
+    review_status = models.CharField(
+        max_length=20, choices=ReviewStatus, default=ReviewStatus.UNREVIEWED,
+    )
+    flag_note = models.TextField(null=True, blank=True)
+    flagged_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, db_column='flagged_by', null=True, blank=True,
+    )
+    flagged_at = models.DateTimeField(null=True, blank=True)
+    model_identifier = models.CharField(max_length=100, null=True, blank=True)
+    prompt_version = models.CharField(max_length=50, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'generated_reading_materials'
+        managed = False
+
+
 class KnowledgeChunk(models.Model):
     # Read-model: written by ingestion via raw SQL (%s::vector cast), searched via
     # fn_search_knowledge_chunks. `embedding` is pgvector vector(1536) in the DB;

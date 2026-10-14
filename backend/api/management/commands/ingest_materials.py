@@ -26,6 +26,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
 from api.embeddings import EmbeddingError, embed_texts, vector_literal
+from api.reading_materials import mark_stale_for_subject
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +345,8 @@ def _insert_chunks(document_id, subject_id, topic_id, chunks, vectors, batch_siz
             )
 
 
-def _mark_ready(document_id: str, chunk_count: int, raw_text: str | None = None) -> None:
+def _mark_ready(document_id: str, subject_id: str, chunk_count: int,
+                raw_text: str | None = None) -> None:
     with connection.cursor() as cur:
         cur.execute(
             """UPDATE knowledge_documents
@@ -353,6 +355,10 @@ def _mark_ready(document_id: str, chunk_count: int, raw_text: str | None = None)
                WHERE id = %s""",
             [chunk_count, raw_text, document_id],
         )
+    # C4 (D13): the corpus changed, so the subject's generated reading material is
+    # now stale. The fingerprint deliberately does not see corpus drift, so this
+    # hook is the only detector for it.
+    mark_stale_for_subject(subject_id)
 
 
 def _mark_failed(document_id: str, error: str) -> None:
@@ -480,7 +486,7 @@ class Command(BaseCommand):
             _insert_chunks(
                 document_id, subject_id, topic_id, chunks, vectors, options['batch_size'],
             )
-            _mark_ready(document_id, len(chunks))
+            _mark_ready(document_id, subject_id, len(chunks))
         except Exception as e:  # noqa: BLE001 — any failure marks the doc FAILED
             logger.exception('Ingestion failed for %s', document_id)
             _mark_failed(document_id, f'{type(e).__name__}: {e}')
@@ -566,5 +572,5 @@ class Command(BaseCommand):
                 f'Embedding count mismatch: {len(vectors)} vectors for {len(chunks)} chunks'
             )
         _insert_chunks(document_id, subject_id, topic_id, chunks, vectors, batch_size)
-        _mark_ready(document_id, len(chunks), raw_text=full_text)
+        _mark_ready(document_id, subject_id, len(chunks), raw_text=full_text)
         return len(chunks)
