@@ -52,7 +52,12 @@ from api.validation_views import (
     _reading_material_staleness,
     _zero_validation_payload,
 )
-from api.views import is_lecturer_for_subject
+from api.views import (
+    _STUDENT_HIDDEN_ANALYSIS_KEYS,
+    _student_analysis_detail,
+    _student_reading_material,
+    is_lecturer_for_subject,
+)
 
 
 def make_ctx(**overrides) -> FourTierContext:
@@ -1334,3 +1339,97 @@ class ReadingMaterialFlagTests(SimpleTestCase):
         from api.urls import urlpatterns
         patterns = [str(p.pattern) for p in urlpatterns]
         self.assertIn('materials/reading/<uuid:pk>/flag', patterns)
+
+
+class StudentReadingMaterialTests(SimpleTestCase):
+    """C7: the student surface gets the material only when it is READY."""
+
+    SOURCES = [{'chunk_id': 'c1', 'document_id': 'd1', 'document_title': 'Doc', 'page': 3}]
+
+    def _fake(self, row):
+        fake = MagicMock()
+        fake.objects.filter.return_value.first.return_value = row
+        return fake
+
+    def _ready_row(self):
+        return SimpleNamespace(content_md='# Materi', sources_json=self.SOURCES)
+
+    def test_ready_returns_content_and_sources_only(self):
+        fake = self._fake(self._ready_row())
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            detail = _student_reading_material('qv-1', 'MSC')
+        self.assertEqual(
+            detail, {'content_md': '# Materi', 'sources': self.SOURCES},
+        )
+        # No lecturer-only field leaks into the student block.
+        self.assertEqual(set(detail), {'content_md', 'sources'})
+        # The status is constrained in the query, so non-READY rows cannot match.
+        fake.objects.filter.assert_called_once_with(
+            question_version_id='qv-1', category='MSC', status='READY',
+        )
+
+    def test_pending_returns_none(self):
+        fake = self._fake(None)
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            self.assertIsNone(_student_reading_material('qv-1', 'FN'))
+        self.assertEqual(fake.objects.filter.call_args.kwargs['status'], 'READY')
+
+    def test_failed_returns_none_not_a_placeholder(self):
+        # A FAILED row is excluded by the READY filter; the helper returns None
+        # rather than a status/attempts placeholder.
+        fake = self._fake(None)
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            self.assertIsNone(_student_reading_material('qv-1', 'FN'))
+        self.assertEqual(fake.objects.filter.call_args.kwargs['status'], 'READY')
+
+    def test_sc_returns_none_without_querying(self):
+        fake = MagicMock()
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            self.assertIsNone(_student_reading_material('qv-1', 'SC'))
+        fake.objects.filter.assert_not_called()
+
+    def test_missing_category_returns_none_without_querying(self):
+        fake = MagicMock()
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            self.assertIsNone(_student_reading_material('qv-1', None))
+        fake.objects.filter.assert_not_called()
+
+    def _analysis(self):
+        return SimpleNamespace(
+            grounding_similarity=None, grounding_similarity_max=None,
+            grounding_citation_count=None, grounding_payload_json={},
+            suggested_materials_json=[],
+            answer_similarity_t1=None, answer_similarity_t3=None,
+            llm_t1_score=None, llm_t3_score=None, verdict_shadow_json={},
+            four_tier_category='FN',
+            submission=SimpleNamespace(question_version_id='qv-1'),
+        )
+
+    def test_student_detail_drops_lecturer_diagnostics(self):
+        lecturer_material = MagicMock()
+        lecturer_material.objects.filter.return_value.first.return_value = None
+        student_material = MagicMock()
+        student_material.objects.filter.return_value.first.return_value = None
+        with patch('api.validation_views.GeneratedReadingMaterial', lecturer_material), \
+             patch('api.views.GeneratedReadingMaterial', student_material):
+            detail = _student_analysis_detail(self._analysis(), {}, 'qv-1')
+        for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
+            self.assertNotIn(key, detail, key)
+        # Pre-C5 keys are kept; the reading material is present (None here).
+        self.assertIn('grounding', detail)
+        self.assertIn('concept_breakdown_json', detail)
+        self.assertIn('reading_material', detail)
+        self.assertIsNone(detail['reading_material'])
+
+    def test_student_detail_serves_ready_material(self):
+        lecturer_material = MagicMock()
+        lecturer_material.objects.filter.return_value.first.return_value = None
+        student_material = MagicMock()
+        student_material.objects.filter.return_value.first.return_value = self._ready_row()
+        with patch('api.validation_views.GeneratedReadingMaterial', lecturer_material), \
+             patch('api.views.GeneratedReadingMaterial', student_material):
+            detail = _student_analysis_detail(self._analysis(), {}, 'qv-1')
+        self.assertEqual(detail['reading_material']['content_md'], '# Materi')
+        self.assertEqual(detail['reading_material']['sources'], self.SOURCES)
+        for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
+            self.assertNotIn(key, detail, key)
