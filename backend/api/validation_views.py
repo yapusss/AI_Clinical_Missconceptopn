@@ -844,10 +844,18 @@ def _by_model_row(identifier, validation_rows, analysis_rows):
     Validation-derived fields come from `validation_rows`; the grounding keys
     come from `analysis_rows` (that model's current analyses in scope), so a
     model with analyses but no validations still reports grounding.
+
+    C5F (D16 — calibrate per model): the answer-similarity keys and the
+    shadow-vs-LLM agreement keys are computed from the SAME `analysis_rows`
+    list the grounding keys use. They are not read from a fresh query — the
+    R5F bug was a second query that bypassed the model filter. "A θ fitted on
+    one model does not transfer to another", so every number the per-model
+    calibration reads has to live on the row.
     """
     scored = [v for v in validation_rows if v.status in ('ACCEPTED', 'EDITED')]
     m = _compute_metrics(scored, validation_rows)
     g = _grounding_metrics(analysis_rows)
+    s = _answer_similarity_metrics(analysis_rows)
     return {
         'model_identifier': identifier,
         'total_validations': m['total_validations'],
@@ -861,6 +869,14 @@ def _by_model_row(identifier, validation_rows, analysis_rows):
         'citation_coverage': g['citation_coverage'],
         'citation_validity_rate': g['citation_validity_rate'],
         'hallucinated_citation_rate': g['hallucinated_citation_rate'],
+        # --- C5F: per-model similarity + shadow agreement (D16) ---
+        # Same definitions as the top-level C5 block, but evaluated over this
+        # model's own analyses so the per-model calibration is readable.
+        'answer_similarity_t1_mean': s['answer_similarity_t1_mean'],
+        'answer_similarity_t3_mean': s['answer_similarity_t3_mean'],
+        'answer_similarity_coverage': s['answer_similarity_coverage'],
+        'verdict_agreement_rate': s['verdict_agreement_rate'],
+        'verdict_comparable_count': s['verdict_comparable_count'],
     }
 
 
