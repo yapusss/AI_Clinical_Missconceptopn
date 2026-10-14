@@ -9,9 +9,9 @@ The active change is the **C-phase**: answer-cosine similarity + LLM-generated r
 
 | | |
 |---|---|
-| Decision record | `D:/ClinicalAI_Misconception/Context/Answer_Cosine_Plan.md` (locked decisions D1–D10) |
-| Authoritative spec | `docs/COSINE_READING_MATERIAL_BRIEF.md` (phases C0–C7) |
-| Next phase | C1 — `docs/C1_TASK.md` (task file ready) |
+| Decision record | `D:/ClinicalAI_Misconception/Context/Answer_Cosine_Plan.md` (decisions D1–D15) |
+| Authoritative spec | `docs/COSINE_READING_MATERIAL_BRIEF.md` (**revision 2**, phases C0–C8) |
+| Next phase | C1 — `docs/C1_TASK.md` (revised for revision 2) |
 | Working branch | `feat/cosine-reading-material` |
 | Rollback point | `backup/pre-cosine-2026-10-14` @ `a6ed436` (== `main`, == this state) |
 | Rollback bundle | `D:/ClinicalAI_Misconception/backups/acm-pre-cosine-2026-10-14.bundle` (complete history, verified) |
@@ -20,6 +20,15 @@ Two things this change unsettles: it **reverses locked decision R1** for the sim
 (similarity is now student-answer-vs-lecturer-reference-answer, not citation fidelity; the `grounding_*`
 columns are retained untouched so R1–R6 rows stay interpretable), and it **moves the LLM's output from
 lecturer-facing reasoning to student-facing reading material**.
+
+Revision 2 (2026-10-14, seven operator inputs) changed four things a fresh reader must know before
+touching C1: the **LLM verdict still drives the matrix** and the new θ-based rule ships **in shadow**
+(`TIER_VERDICT_SOURCE='llm'`), so **C3 changes no diagnosis in production**; `misconception_id` is
+**deferred** (the catalog is empty), so the material key is `(question_version, category)` and the
+`UNIQUE NULLS NOT DISTINCT` / `COALESCE` complexity from revision 1 is **withdrawn**; generation is
+**asynchronous** behind a `PENDING` row plus a drain, because an inline call risks the 10-minute
+`ANALYZING` zombie window; and metric removal moved to a new **C8** so the additive **C5** cannot break
+**C6**. Also: **C2 is a change-detecting sync, not a backfill.**
 
 Also on the record: commit `a6ed436` renders grounding citations on the **student** review
 (`questions/[id]/students/[studentId]`), which contradicts hard rule 6 below. Decision 4 of the C-phase
