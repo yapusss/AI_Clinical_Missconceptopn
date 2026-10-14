@@ -91,7 +91,6 @@ function AnswerSetContent() {
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showExitWarningModal, setShowExitWarningModal] = useState(false);
-  const [showExpiryWarning, setShowExpiryWarning] = useState(false);
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
@@ -297,9 +296,10 @@ function AnswerSetContent() {
   }, [autoSubmit, data?.expiry_behavior, expired]);
 
   useEffect(() => {
-    if (expired && data?.expiry_behavior === "REJECT")
-      setShowExpiryWarning(true);
-  }, [data?.expiry_behavior, expired]);
+    if (!expired || data?.expiry_behavior !== "REJECT") return;
+    if (storageKey) localStorage.removeItem(storageKey);
+    router.replace("/code#pengumpulan");
+  }, [data?.expiry_behavior, expired, router, storageKey]);
 
   const handleNextOrFinish = () => {
     if (!data || !activeQuestion || !currentAnswer || expired) return;
@@ -847,12 +847,6 @@ function AnswerSetContent() {
           </div>
         </div>
       )}
-      <FeedbackModal
-        open={showExpiryWarning}
-        message="Waktu pengerjaan telah habis. Pengumpulan jawaban tidak lagi dapat dilakukan."
-        variant="warning"
-        onClose={() => setShowExpiryWarning(false)}
-      />
       <FeedbackModal
         open={!!error}
         message={error}

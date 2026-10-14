@@ -159,13 +159,13 @@ class PromptInjectionTests(SimpleTestCase):
         ctx = make_ctx(reference_chunks=[])
         captured = {}
 
-        def fake_call(system_prompt, user_prompt):
+        def fake_call(system_prompt, user_prompt, model_identifier):
             captured['system'] = system_prompt
             captured['user'] = user_prompt
             return {'score': 'BENAR', 'reasoning': 'r', 'student_feedback': {}}
 
         with patch('api.llm._call_llm_json', side_effect=fake_call):
-            run_module_b(ctx)
+            run_module_b(ctx, 'test-model')
 
         self.assertNotIn('SUMBER REFERENSI', captured['user'])
         self.assertNotIn('ATURAN SITASI', captured['system'])
@@ -179,7 +179,7 @@ class PromptInjectionTests(SimpleTestCase):
         }])
         captured = {}
 
-        def fake_call(system_prompt, user_prompt):
+        def fake_call(system_prompt, user_prompt, model_identifier):
             captured['system'] = system_prompt
             captured['user'] = user_prompt
             return {
@@ -189,7 +189,7 @@ class PromptInjectionTests(SimpleTestCase):
             }
 
         with patch('api.llm._call_llm_json', side_effect=fake_call):
-            _, _, _, referensi, wsl = run_module_b(ctx)
+            _, _, _, referensi, wsl = run_module_b(ctx, 'test-model')
 
         self.assertIn('SUMBER REFERENSI', captured['user'])
         self.assertIn('cid-1', captured['user'])
@@ -203,20 +203,20 @@ class PromptInjectionTests(SimpleTestCase):
     def test_modul_c_prompt_gains_referensi_only_with_chunks(self):
         captured = {}
 
-        def fake_call(system_prompt, user_prompt):
+        def fake_call(system_prompt, user_prompt, model_identifier):
             captured['system'] = system_prompt
             captured['user'] = user_prompt
             return {'misconception_code': 'MK-LAIN'}
 
         with patch('api.llm._call_llm_json', side_effect=fake_call):
-            run_module_c(make_ctx(reference_chunks=[]))
+            run_module_c(make_ctx(reference_chunks=[]), 'test-model')
         self.assertNotIn('referensi', captured['system'])
         self.assertNotIn('SUMBER REFERENSI', captured['user'])
 
         with patch('api.llm._call_llm_json', side_effect=fake_call):
             run_module_c(make_ctx(reference_chunks=[{
                 'chunk_id': 'c1', 'page_start': 1, 'document_title': 'B', 'content': 'x',
-            }]))
+            }]), 'test-model')
         self.assertIn('referensi', captured['system'])
         self.assertIn('SUMBER REFERENSI', captured['user'])
 

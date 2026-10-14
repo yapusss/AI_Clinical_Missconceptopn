@@ -68,6 +68,13 @@ class AdminManagedUserSerializer(serializers.Serializer):
     subject_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
 
 
+class AiModelActivationSerializer(serializers.Serializer):
+    identifier = serializers.CharField(max_length=100)
+
+    def validate_identifier(self, value):
+        return value.strip()
+
+
 # ============================================================================
 # SPRINT 2: QUESTION BANK SERIALIZERS (DOSEN)
 # ============================================================================

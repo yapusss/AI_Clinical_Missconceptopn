@@ -29,11 +29,14 @@ from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissio
 from .authentication import TokenAuthentication
 from .models import (
     AuthToken,
+    AiModelChange,
+    AiRuntimeSettings,
     ExamPackage,
     ExamPackageAttempt,
     ExamPackageQuestion,
     HelpArticle,
     LlmAnalysis,
+    LlmModel,
     Misconception,
     Question,
     QuestionSet,
@@ -52,6 +55,7 @@ from .models import (
 )
 from .serializers import (
     AdminManagedUserSerializer,
+    AiModelActivationSerializer,
     LoginSerializer,
     ExamPackageCreateSerializer,
     QuestionSetCreateSerializer,
@@ -608,6 +612,91 @@ def require_admin(request):
     return request.user.is_superuser
 
 
+def serialize_llm_model(model):
+    return {
+        'identifier': model.identifier,
+        'display_name': model.display_name or model.identifier,
+        'provider': model.provider,
+    }
+
+
+class AdminAiSettingsView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        models = list(LlmModel.objects.filter(is_enabled=True, deprecated_at__isnull=True).order_by('display_name', 'identifier'))
+        active_identifier = settings.LLM_MODEL
+        try:
+            configured = AiRuntimeSettings.objects.select_related('active_model').get(pk=True)
+            if configured.active_model.is_enabled and configured.active_model.deprecated_at is None:
+                active_identifier = configured.active_model.identifier
+        except AiRuntimeSettings.DoesNotExist:
+            pass
+        return Response({'active_model_identifier': active_identifier, 'models': [serialize_llm_model(model) for model in models]})
+
+    def patch(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AiModelActivationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            model = LlmModel.objects.get(
+                identifier=serializer.validated_data['identifier'], is_enabled=True, deprecated_at__isnull=True
+            )
+        except LlmModel.DoesNotExist:
+            return Response({'detail': 'Model tidak tersedia untuk analisis.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            configured, created = AiRuntimeSettings.objects.select_for_update().get_or_create(
+                pk=True,
+                defaults={'active_model': model, 'updated_by': request.user},
+            )
+            previous_identifier = '' if created else configured.active_model.identifier
+            if created or configured.active_model_id != model.id:
+                configured.active_model = model
+                configured.updated_by = request.user
+                configured.save(update_fields=['active_model', 'updated_by', 'updated_at'])
+                AiModelChange.objects.create(
+                    previous_model_identifier=previous_identifier,
+                    active_model=model,
+                    changed_by=request.user,
+                )
+        return Response({'active_model_identifier': model.identifier})
+
+
+class AdminAiModelTestView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request):
+        if not require_admin(request):
+            return Response({'detail': 'Akses administrator diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AiModelActivationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            model = LlmModel.objects.get(
+                identifier=serializer.validated_data['identifier'], is_enabled=True, deprecated_at__isnull=True
+            )
+        except LlmModel.DoesNotExist:
+            return Response({'detail': 'Model tidak tersedia untuk pengujian.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from .llm import get_llm_client
+
+            response = get_llm_client().chat.completions.create(
+                model=model.identifier,
+                messages=[{'role': 'user', 'content': 'Balas dengan OK.'}],
+                temperature=0,
+                max_tokens=8,
+            )
+            if not response.choices or not response.choices[0].message.content:
+                raise RuntimeError('Respons model kosong.')
+        except Exception as exc:
+            return Response({'detail': f'Koneksi model gagal: {str(exc)[:300]}'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'detail': 'Koneksi model berhasil.'})
+
+
 def plain_text_preview(value, length):
     """Collapse rich-text HTML into a single-line plain-text preview."""
     text = ' '.join(strip_tags(str(value or '')).split())
@@ -623,6 +712,7 @@ def serialize_help_article(article):
 
 class HelpArticleListView(APIView):
     authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         role = request.query_params.get('role', 'GENERAL')
@@ -850,11 +940,14 @@ class AdminManagedUserDetailView(APIView):
 
 class AdminSubjectListView(APIView):
     authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if require_admin(request):
             subjects = Subject.objects.order_by('name')
         else:
+            if not UserRole.objects.filter(user=request.user, role=UserRole.Role.LECTURER).exists():
+                return Response({'detail': 'Akses administrator atau dosen diperlukan.'}, status=status.HTTP_403_FORBIDDEN)
             subject_ids = UserSubjectRole.objects.filter(user=request.user, role=UserSubjectRole.Role.LECTURER).values_list('subject_id', flat=True)
             subjects = Subject.objects.filter(id__in=subject_ids).order_by('name')
         return Response([serialize_admin_subject(subject) for subject in subjects])
@@ -1134,6 +1227,21 @@ def _read_xlsx_rows(upload, subject_name=None):
 
     normalized_headers = [COLUMN_MAP.get(h.upper(), h.lower()) for h in headers]
 
+    images_by_row = {}
+    for img in getattr(target_sheet, '_images', []):
+        anchor = getattr(img, 'anchor', None)
+        from_anchor = getattr(anchor, '_from', None)
+        if from_anchor is None:
+            continue
+        row_number = from_anchor.row + 1
+        try:
+            content = img._data()
+        except Exception:
+            continue
+        saved_name = default_storage.save(f'uploads/{uuid.uuid4().hex}.png', ContentFile(content))
+        media_url = f"{settings.MEDIA_URL.rstrip('/')}/{saved_name.lstrip('/')}"
+        images_by_row[row_number] = media_url
+
     rows = []
     for r_idx, row in enumerate(target_sheet.iter_rows(values_only=True), start=1):
         if r_idx <= header_row_idx:
@@ -1151,6 +1259,7 @@ def _read_xlsx_rows(upload, subject_name=None):
             'title': raw_dict.get('title', ''),
             'topic': raw_dict.get('topic', ''),
             'description': raw_dict.get('description', ''),
+            'image_url': images_by_row.get(r_idx, ''),
         }))
 
     if not rows:
@@ -1402,8 +1511,15 @@ class QuestionImportCreateView(APIView):
         for r in parsed_rows:
             raw = r['raw_data']
             if raw.get('prompt') and raw.get('short_answer'):
+                prompt_text = raw.get('prompt', '')
+                image_url = raw.get('image_url', '')
+                if image_url:
+                    prompt_text = (
+                        f'<p>{prompt_text}</p>'
+                        f'<p><img src="{image_url}" style="max-width:100%;height:auto;" /></p>'
+                    )
                 questions_payload.append({
-                    'prompt': raw.get('prompt', ''),
+                    'prompt': prompt_text,
                     'short_answer': raw.get('short_answer', ''),
                     'alasan': raw.get('alasan', ''),
                 })
@@ -1471,23 +1587,25 @@ class QuestionImportTemplateView(APIView):
             "JUDUL_UJIAN",
             "DESKRIPSI_INSTRUKSI",
             "PERTANYAAN",
+            "GAMBAR",
             "JAWABAN_SINGKAT",
             "ALASAN_JAWABAN",
         ]
 
-        ws.merge_cells("A1:F4")
+        ws.merge_cells("A1:G4")
         banner_cell = ws["A1"]
         banner_cell.value = (
             f"⚠️ SHEET MATA KULIAH: {target_subject.name.upper()}\n"
             f"Pastikan seluruh soal pada file ini diperuntukkan bagi mata kuliah {target_subject.name}.\n"
-            f"Isi judul ujian, instruksi, pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6."
+            f"Isi judul ujian, instruksi, pertanyaan, jawaban singkat, dan alasan jawaban mulai dari baris ke-6.\n"
+            f"Sisipkan gambar langsung ke dalam sel kolom GAMBAR jika ada."
         )
         banner_cell.fill = banner_fill
         banner_cell.font = banner_font
         banner_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for r in range(1, 5):
-            for c in range(1, 7):
+            for c in range(1, 8):
                 ws.cell(row=r, column=c).border = banner_border
             ws.row_dimensions[r].height = 18
 
@@ -1504,6 +1622,7 @@ class QuestionImportTemplateView(APIView):
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Mengapa berat semu seseorang di dalam lift yang dipercepat turun menjadi lebih kecil?",
+                "",
                 "Berat semu menjadi lebih kecil.",
                 "Karena gaya normal N = m(g - a): percepatan lift ke bawah mengurangi gaya normal sehingga gaya kontak kaki pada timbangan berkurang.",
             ],
@@ -1512,6 +1631,7 @@ class QuestionImportTemplateView(APIView):
                 f"Evaluasi Konseptual {target_subject.name} Bagian 1",
                 "Bacalah soal dengan saksama dan sertakan penalaran ilmiah.",
                 "Jelaskan mengapa gaya berat dan gaya normal pada balok diam bukan pasangan aksi-reaksi!",
+                "",
                 "Karena keduanya bekerja pada benda yang sama.",
                 "Pasangan aksi-reaksi bekerja pada dua benda berbeda, sedangkan gaya berat dan gaya normal sama-sama bekerja pada balok.",
             ],
@@ -2483,6 +2603,7 @@ def exam_package_payload(package, question_count=0, question_ids=None):
         'subject_id': str(package.subject_id), 'subject_name': package.subject.name,
         'is_active': package.is_active, 'question_count': question_count,
         'opens_at': package.opens_at, 'closes_at': package.closes_at,
+        'is_closed': package_is_closed(package),
         'duration_minutes': package.duration_minutes, 'max_attempts': package.max_attempts,
         'score_policy': package.score_policy,
         'expiry_behavior': package.expiry_behavior,
@@ -2522,41 +2643,49 @@ def package_is_open(package):
     return package.is_active and (not package.opens_at or now >= package.opens_at) and (not package.closes_at or now <= package.closes_at)
 
 
+def package_is_closed(package):
+    return bool(package.closes_at and timezone.now() >= package.closes_at)
+
+
 def package_access_error(package):
     if not package.is_active:
         return 'Paket ujian belum aktif.'
     now = timezone.now()
     if package.opens_at and now < package.opens_at:
         return 'Paket ujian belum dibuka.'
-    if package.closes_at and now > package.closes_at:
+    if package.closes_at and now >= package.closes_at:
         return 'Paket ujian sudah ditutup.'
     return None
 
 
 def package_attempt_deadline(package, attempt):
-    deadlines = []
-    if package.duration_minutes:
-        deadlines.append(attempt.started_at + timedelta(minutes=package.duration_minutes))
-    if package.closes_at:
-        deadlines.append(package.closes_at)
-    return min(deadlines) if deadlines else None
+    if not package.duration_minutes:
+        return None
+    return attempt.started_at + timedelta(minutes=package.duration_minutes)
 
 
 def start_or_get_package_attempt(package, student, password=None):
-    """Start one resumable package attempt only after its access checks succeed."""
+    """Resume an existing attempt by its timer; closing time only blocks new attempts."""
+    attempt = ExamPackageAttempt.objects.filter(
+        exam_package=package, student=student, submitted_at__isnull=True,
+    ).order_by('-attempt_number').first()
+    if attempt:
+        if not package.is_active:
+            return None, 'Paket ujian belum aktif.'
+        if package.opens_at and timezone.now() < package.opens_at:
+            return None, 'Paket ujian belum dibuka.'
+        if package.password_hash and not check_password(password or '', package.password_hash):
+            return None, 'Password paket ujian tidak valid.'
+        deadline = package_attempt_deadline(package, attempt)
+        if deadline and timezone.now() >= deadline:
+            return None, 'Batas waktu pengerjaan telah berakhir.'
+        return attempt, None
+
     error = package_access_error(package)
     if error:
         return None, error
     if package.password_hash and not check_password(password or '', package.password_hash):
         return None, 'Password paket ujian tidak valid.'
-    attempt = ExamPackageAttempt.objects.filter(
-        exam_package=package, student=student, submitted_at__isnull=True,
-    ).order_by('-attempt_number').first()
-    if attempt:
-        deadline = package_attempt_deadline(package, attempt)
-        if deadline and timezone.now() >= deadline:
-            return None, 'Batas waktu pengerjaan telah berakhir.'
-        return attempt, None
     completed = ExamPackageAttempt.objects.filter(exam_package=package, student=student, submitted_at__isnull=False).count()
     if package.max_attempts and completed >= package.max_attempts:
         return None, 'Batas maksimal percobaan telah tercapai.'
@@ -2656,6 +2785,8 @@ class ExamPackageDetailView(APIView):
         package, error = self.get_package(request, pk)
         if error:
             return error
+        if package_is_closed(package):
+            return Response({'detail': 'Paket ujian yang sudah ditutup tidak dapat diubah.'}, status=status.HTTP_409_CONFLICT)
         merged = {
             'subject_id': package.subject_id, 'code': package.code, 'title': package.title,
             'question_ids': list(ExamPackageQuestion.objects.filter(exam_package=package).order_by('order_index').values_list('question_id', flat=True)),
@@ -2699,6 +2830,8 @@ class ExamPackageDetailView(APIView):
         package, error = self.get_package(request, pk)
         if error:
             return error
+        if package_is_closed(package):
+            return Response({'detail': 'Paket ujian yang sudah ditutup tidak dapat dihapus.'}, status=status.HTTP_409_CONFLICT)
         if Submission.objects.filter(exam_package=package).exists():
             return Response({'detail': 'Paket dengan pengumpulan mahasiswa tidak dapat dihapus.'}, status=status.HTTP_409_CONFLICT)
         package.delete()
@@ -2716,6 +2849,8 @@ class ExamPackageToggleActiveView(APIView):
             return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
         if not is_lecturer_for_subject(request.user, package.subject_id):
             return Response({'detail': 'Anda tidak berwenang mengubah paket ujian ini.'}, status=status.HTTP_403_FORBIDDEN)
+        if package_is_closed(package):
+            return Response({'detail': 'Paket ujian yang sudah ditutup tidak dapat diubah.'}, status=status.HTTP_409_CONFLICT)
         if not package.is_active and not ExamPackageQuestion.objects.filter(exam_package=package).exists():
             return Response({'detail': 'Paket aktif harus memiliki minimal satu soal.'}, status=status.HTTP_400_BAD_REQUEST)
         package.is_active = not package.is_active
