@@ -17,7 +17,7 @@
 import json
 
 from django.db import connection, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -25,6 +25,7 @@ from rest_framework.views import APIView
 
 from .authentication import TokenAuthentication
 from .models import (
+    GeneratedReadingMaterial,
     LlmAnalysis,
     Question,
     QuestionSet,
@@ -112,6 +113,19 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
             if analysis.grounding_similarity is not None else None
         ),
         'grounding_payload': analysis.grounding_payload_json or {},
+        # C5: answer-similarity + shadow verdict. Pre-C5 rows have NULLs; the
+        # keys stay present (as `null`/`{}`) so the frontend never has to guess.
+        'answer_similarity_t1': (
+            float(analysis.answer_similarity_t1)
+            if getattr(analysis, 'answer_similarity_t1', None) is not None else None
+        ),
+        'answer_similarity_t3': (
+            float(analysis.answer_similarity_t3)
+            if getattr(analysis, 'answer_similarity_t3', None) is not None else None
+        ),
+        'llm_t1_score': getattr(analysis, 'llm_t1_score', None),
+        'llm_t3_score': getattr(analysis, 'llm_t3_score', None),
+        'verdict_shadow': getattr(analysis, 'verdict_shadow_json', None) or {},
         # Nested block (R4 task §3).
         'grounding': {
             'similarity_mean': (
@@ -486,6 +500,130 @@ def _median(values):
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def _analysis_question_version_ids(analyses):
+    """Distinct question-version ids behind the scoped analyses (C5).
+
+    Used to restrict `reading_material_counts` to the question versions in
+    scope. Returns an empty set when the materialised rows carry no submission
+    relation (the pure-helper tests build lightweight stand-ins), which keeps
+    those tests DB-free.
+    """
+    ids = set()
+    for a in analyses:
+        submission = getattr(a, 'submission', None)
+        question_version_id = getattr(submission, 'question_version_id', None)
+        if question_version_id is not None:
+            ids.add(question_version_id)
+    return ids
+
+
+def _reading_material_counts(question_version_ids):
+    """Status histogram of `generated_reading_materials` (C5).
+
+    Filtered to the analyses' question versions in scope. Every status key is
+    always present (zero when absent) so the payload shape is stable, and
+    `total` is their sum.
+    """
+    counts = {'READY': 0, 'PENDING': 0, 'STALE': 0, 'FAILED': 0}
+    if question_version_ids:
+        rows = (
+            GeneratedReadingMaterial.objects
+            .filter(question_version_id__in=question_version_ids)
+            .values('status')
+            .annotate(count=Count('id'))
+        )
+        for row in rows:
+            if row['status'] in counts:
+                counts[row['status']] = row['count']
+    counts['total'] = sum(counts[k] for k in ('READY', 'PENDING', 'STALE', 'FAILED'))
+    return counts
+
+
+def _bucket_similarities(analyses, key):
+    """Group non-NULL similarities by `key` for the per-bucket breakdowns.
+
+    A row contributes when at least one tier similarity is non-NULL. Each
+    bucket carries its own `count` plus the mean of whichever tier values are
+    present, so a NULL tier drops out of that tier's mean without removing the
+    row from the bucket count.
+    """
+    buckets = {}
+    for a in analyses:
+        s1 = getattr(a, 'answer_similarity_t1', None)
+        s3 = getattr(a, 'answer_similarity_t3', None)
+        if s1 is None and s3 is None:
+            continue
+        label = key(a) or 'UNKNOWN'
+        entry = buckets.setdefault(label, {'count': 0, 't1': [], 't3': []})
+        entry['count'] += 1
+        if s1 is not None:
+            entry['t1'].append(float(s1))
+        if s3 is not None:
+            entry['t3'].append(float(s3))
+    return {
+        label: {
+            'count': v['count'],
+            't1_mean': round(sum(v['t1']) / len(v['t1']), 4) if v['t1'] else None,
+            't3_mean': round(sum(v['t3']) / len(v['t3']), 4) if v['t3'] else None,
+        }
+        for label, v in buckets.items()
+    }
+
+
+def _answer_similarity_metrics(analyses):
+    """Answer-similarity + shadow-agreement aggregates (C5).
+
+    Similarity measures alignment with the LECTURER's reference answer; it needs
+    no lecturer validation and is NOT accuracy. The verdict is driven by the
+    LLM, with the θ-based rule recorded in shadow, so `verdict_agreement_rate`
+    is a diagnostic (how often the two disagree), not a quality score.
+    """
+    total = len(analyses)
+    sim1 = [
+        float(a.answer_similarity_t1) for a in analyses
+        if getattr(a, 'answer_similarity_t1', None) is not None
+    ]
+    sim3 = [
+        float(a.answer_similarity_t3) for a in analyses
+        if getattr(a, 'answer_similarity_t3', None) is not None
+    ]
+
+    comparable = 0
+    agree = 0
+    for a in analyses:
+        shadow = getattr(a, 'verdict_shadow_json', None) or {}
+        rule_t1 = shadow.get('rule_t1')
+        rule_t3 = shadow.get('rule_t3')
+        llm_t1 = getattr(a, 'llm_t1_score', None)
+        llm_t3 = getattr(a, 'llm_t3_score', None)
+        if rule_t1 is None or rule_t3 is None or llm_t1 is None or llm_t3 is None:
+            continue
+        comparable += 1
+        if llm_t1 == rule_t1 and llm_t3 == rule_t3:
+            agree += 1
+
+    similarity_count = len(sim1)
+    return {
+        'answer_similarity_t1_mean': round(sum(sim1) / len(sim1), 4) if sim1 else None,
+        'answer_similarity_t1_median': round(_median(sim1), 4) if sim1 else None,
+        'answer_similarity_t3_mean': round(sum(sim3) / len(sim3), 4) if sim3 else None,
+        'answer_similarity_t3_median': round(_median(sim3), 4) if sim3 else None,
+        'answer_similarity_coverage': (
+            round(similarity_count / total, 4) if total else None
+        ),
+        'no_similarity_count': total - similarity_count,
+        'answer_similarity_by_category': _bucket_similarities(
+            analyses, lambda a: getattr(a, 'four_tier_category', None)
+        ),
+        'answer_similarity_by_prompt_version': _bucket_similarities(
+            analyses, lambda a: getattr(a, 'prompt_version', None)
+        ),
+        'verdict_agreement_rate': round(agree / comparable, 4) if comparable else None,
+        'verdict_disagreement_count': comparable - agree,
+        'verdict_comparable_count': comparable,
+    }
+
+
 def _grounding_metrics(analyses):
     """Grounding (citation-fidelity) metrics — properties of the ANALYSIS.
 
@@ -493,6 +631,11 @@ def _grounding_metrics(analyses):
     `grounding_payload_json.references`) and therefore require **no lecturer
     validation** and no ground truth. Grounding similarity measures alignment
     between the AI's advice and the passages it cited; it is NOT accuracy.
+
+    C5 extends this block (additive only — every historical key is retained)
+    with answer-similarity aggregates, the shadow-vs-LLM verdict agreement and
+    the reading-material status counts. All are computed over **all current
+    analyses in scope**, model-filter-aware, exactly like grounding.
     """
     total = len(analyses)
     grounded = [a for a in analyses if (a.grounding_citation_count or 0) >= 1]
@@ -529,6 +672,8 @@ def _grounding_metrics(analyses):
 
     validity_rate = round(valid_citations / all_citations, 4) if all_citations else None
 
+    question_version_ids = _analysis_question_version_ids(analyses)
+
     return {
         'grounding_similarity_mean': round(sum(sims) / len(sims), 4) if sims else None,
         'grounding_similarity_median': round(_median(sims), 4) if sims else None,
@@ -544,6 +689,9 @@ def _grounding_metrics(analyses):
             for k, v in by_prompt.items()
         },
         'no_grounding_count': total - len(grounded),
+        # --- C5 additive block (never a replacement for the keys above) ---
+        **_answer_similarity_metrics(analyses),
+        'reading_material_counts': _reading_material_counts(question_version_ids),
     }
 
 
@@ -648,7 +796,13 @@ def _compute_metrics(scored, all_validations):
 METRICS_NOTE = (
     'Metrik kesesuaian = perbandingan dengan validasi dosen (satu-satunya ground truth di sistem). '
     'Metrik grounding = keselarasan keluaran AI dengan kutipan sumber yang dipilihnya sendiri; '
-    'tidak memerlukan validasi dosen dan BUKAN akurasi.'
+    'tidak memerlukan validasi dosen dan BUKAN akurasi. '
+    'Answer similarity = cosine(jawaban siswa, jawaban referensi dosen), diukur terhadap jawaban '
+    'referensi dosen, tidak memerlukan validasi dosen, dan BUKAN akurasi. '
+    'Verdict digerakkan oleh LLM; aturan berbasis θ (theta) dicatat sebagai shadow dan tidak '
+    'menggerakkan kategori mana pun. verdict_agreement_rate mengukur seberapa sering kedua verdict '
+    'berbeda — ini diagnostik, bukan skor kualitas, dan kalibrasi dilakukan terhadap dosen, '
+    'bukan terhadap LLM.'
 )
 
 
@@ -664,7 +818,7 @@ def _scope_analyses(user, subject_id=None, model_filter=None):
     optional `?model=`. The model filter must narrow the grounding block too, or
     `?model=` would leak pooled numbers from other providers.
     """
-    qs = LlmAnalysis.objects.filter(_scope_filter(user), is_current=True)
+    qs = LlmAnalysis.objects.filter(_scope_filter(user), is_current=True).select_related('submission')
     if subject_id:
         qs = qs.filter(subject_id=subject_id)
     if model_filter:
