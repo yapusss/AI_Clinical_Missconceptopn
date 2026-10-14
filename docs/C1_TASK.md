@@ -1,4 +1,4 @@
-# C1 TASK — Migration 0025: answer-similarity + shadow columns, reference-answer hash/embedding, sp v4
+# C1 TASK — Migration 0026: answer-similarity + shadow columns, reference-answer hash/embedding, sp v4
 
 You are implementing **PHASE C1 ONLY** of the answer-cosine / reading-material change.
 Authoritative spec: `docs/COSINE_READING_MATERIAL_BRIEF.md` — **revision 2, 2026-10-14** — read §1, §2,
@@ -9,7 +9,7 @@ untouched, and proving that is part of this phase.
 
 ## Deliverables
 
-1. **`backend/api/migrations/0025_answer_similarity_and_reference_embeddings.py`** — hand-written
+1. **`backend/api/migrations/0026_answer_similarity_and_reference_embeddings.py`** — hand-written
    reversible `RunSQL`. **7 columns:**
 
    ```sql
@@ -73,7 +73,8 @@ untouched, and proving that is part of this phase.
 - `knowledge_chunks.embedding` is already `vector(1536)` with `idx_knowledge_chunks_vector_hnsw`. Do not
   touch either, and do not add an index to `reference_answers.embedding`.
 - `question_versions.short_answer` is **nullable**. Nothing in C1 makes it non-null.
-- Highest migration is `0024`. Do not create a duplicate leaf (`0016`/`0018`, `0019`/`0020`).
+- Highest migration is **`0025`** — the 2026-10-14 reconciliation's merge migration that linearized the two
+  `0024` leaves. Do not create a duplicate leaf (`0016`/`0018`, `0019`/`0020`, and now `0025`).
 - The dev DB is the **evidence base, not a test DB** — never insert app data to make a check pass. That
   is why verification 4 rolls back.
 
@@ -108,8 +109,8 @@ the file specified`. Start `"C:\Program Files\Docker\Docker\Docker Desktop.exe"`
 2. Baseline: `venv/Scripts/python.exe manage.py test api.tests_reference_materials` — record the count
    the runner prints. Expected **36**; the old HANDOFF's 34 is wrong, so do not adjust anything to
    match it.
-3. `venv/Scripts/python.exe manage.py migrate` → `0025` applies; then `migrate api 0024` → reverse; then
-   `migrate` → forward again.
+3. `venv/Scripts/python.exe manage.py migrate` → `0026` applies; then `migrate api 0025` → reverse (back to the
+   merge migration); then `migrate` → forward again.
 4. **Backward compatibility BY EXECUTION** — the acceptance test for this phase. Run the *existing*
    21-placeholder `CALL` against the migrated DB, inside a transaction that is rolled back so the
    evidence base gains no row:
@@ -146,7 +147,7 @@ the file specified`. Start `"C:\Program Files\Docker\Docker\Docker Desktop.exe"`
 Commit exactly:
 
 ```
-feat(api): migration 0025 answer-similarity and shadow columns, sp_record_llm_analysis v4
+feat(api): migration 0026 answer-similarity and shadow columns, sp_record_llm_analysis v4
 ```
 
 Report back: files changed, raw verification output, commit hash. **Do not start C2.**

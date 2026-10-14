@@ -15,6 +15,32 @@ The active change is the **C-phase**: answer-cosine similarity + LLM-generated r
 | Working branch | `feat/cosine-reading-material` |
 | Rollback point | `backup/pre-cosine-2026-10-14` @ `a6ed436` (== `main`, == this state) |
 | Rollback bundle | `D:/ClinicalAI_Misconception/backups/acm-pre-cosine-2026-10-14.bundle` (complete history, verified) |
+| Also on disk 0 | `C:/Users/Pongo/backups/acm-pre-cosine-2026-10-14.bundle` (same sha256) |
+
+### Reconciliation, 2026-10-14 (read before touching migrations)
+
+`main` had **diverged** from `origin/main`: local 22 ahead, **5 behind**. A plain `git push` would have
+been rejected, and a force-push would have destroyed 5 commits of real feature work (subject detail
+management, login forms, AI model settings, Excel embedded images in the question import, exam attempt
+timers). Both are now merged — `main` @ `9daddb8`, the C branch @ `8255141`.
+
+- **`llm.py` was the only conflict**, 5 hunks, all the same shape: `origin/main` added a
+  `model_identifier` parameter, this branch added `referensi` / `what_should_be_learned` returns. Both
+  kept. `models.py`, `urls.py`, `views.py`, `settings.py` auto-merged correctly.
+- **Two migrations were both numbered `0024`** (`admin_ai_model_settings` from `origin/main`,
+  `grounding_and_knowledge_ingest` from this branch), both depending on `0023` — Django refused with a
+  multiple-leaf error. Linearized by hand-written
+  `0025_merge_admin_ai_model_settings_and_grounding_and_knowledge_ingest`, the third instance of the
+  `0018`/`0020` pattern. **Highest migration is now `0025`, so the C-phase's first migration is `0026`.**
+- **3 `PromptInjectionTests` broke** on the merge (the modules now require `model_identifier`); fixed,
+  suite back to **36 OK, exit 0**. `manage.py check` clean, `migrate` applied both migrations.
+- **`llm_analyses.model_identifier` now comes from `ai_runtime_settings`** (`get_active_model_identifier()`,
+  `llm.py:787`, currently `openai/gpt-oss-20b`) instead of the settings constant. The stored value is
+  unchanged so existing model grouping stays comparable, but the model is now **admin-editable at
+  runtime**, so the shadow calibration sample must be grouped per model (D16).
+- Full record: `scripts/_postmerge_baseline_2026-10-14.json`; the pre-merge snapshot stays at
+  `scripts/_c0_baseline.json`.
+- **Nothing has been pushed.** Per this project's convention, the operator pushes.
 
 Two things this change unsettles: it **reverses locked decision R1** for the similarity metric only
 (similarity is now student-answer-vs-lecturer-reference-answer, not citation fidelity; the `grounding_*`

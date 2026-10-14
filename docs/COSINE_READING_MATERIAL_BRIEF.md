@@ -18,7 +18,7 @@ Phase order is strict. Each phase ends with a commit and a report; do not start 
 | Phase | Scope | Depends on | Deployable |
 |-------|-------|------------|------------|
 | **C0** | Baseline, DB up, branch safety net | — | — |
-| **C1** | Migration `0025`: 7 columns, `sp_record_llm_analysis` v4 | C0 | backend, inert |
+| **C1** | Migration `0026`: 7 columns, `sp_record_llm_analysis` v4 | C0 | backend, inert |
 | **C2** | `sync_reference_embeddings` — change-detecting, **not** a one-shot | C1 | backend, inert |
 | **C3** | Similarity + **shadow** rule verdict | C2 | backend, inert |
 | **C4** | Reading material: table, async queue, drain | C3 | backend, inert |
@@ -91,10 +91,9 @@ Three consequences that must be respected by C1–C4:
    `question_versions` (3/3 populated); `reference_answers` is a partial mirror (2 rows). Embedding
    only what is in `reference_answers` would leave 2 of 3 question versions without a cached vector.
 
-## 2. C1 — Migration `0025`
+## 2. C1 — Migration `0026`
 
-Highest existing migration is `0024`. Do **not** create a duplicate leaf (the repo has a
-merge-migration pattern: `0016`/`0018`, `0019`/`0020`). 7 columns:
+Highest existing migration is **`0025`** — the 2026-10-14 reconciliation's hand-written merge migration, which linearized the two `0024` leaves (`0024_admin_ai_model_settings` from `origin/main` and `0024_grounding_and_knowledge_ingest` from this branch). The repo now has **three** instances of that pattern: `0018`, `0020`, `0025`. **Do not create a duplicate leaf.** 7 columns:
 
 ```sql
 ALTER TABLE reference_answers
@@ -209,7 +208,11 @@ tuning objective — the LLM verdict is itself unvalidated, so agreeing with it 
 unvalidated judge". θ is fitted **offline over lecturer-validated rows**, maximising agreement with the
 lecturer's corrected tier (the ground truth `tier_agreement_accuracy` already uses). **Review point:
 ≥50 lecturer-validated analyses.** Below that, flipping `TIER_VERDICT_SOURCE` to `'rule'` is
-**forbidden**. At the review point there are three legitimate outcomes: flip to `'rule'`; keep the shadow
+**forbidden**. **Calibrate per model** — the 2026-10-14 reconciliation made the active model a runtime
+setting (`ai_runtime_settings.active_model_id`, currently `openai/gpt-oss-20b`) and
+`llm_analyses.model_identifier` now comes from it (`llm.py:787`). A θ fitted on one model does not
+transfer to another; group the shadow sample by `model_identifier` and decide per model. At the review
+point there are three legitimate outcomes: flip to `'rule'`; keep the shadow
 (still inconclusive); or **delete the shadow** and revert C3's machinery. Without that third option the
 shadow becomes permanent overhead — 2 embed calls per analysis for data nobody reads.
 
