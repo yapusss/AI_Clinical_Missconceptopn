@@ -37,7 +37,11 @@ untouched, and proving that is part of this phase.
 
 2. **`sp_record_llm_analysis` → v4.** `DROP PROCEDURE` the **20-arg** signature by its exact argument
    types (copy them from `0024_grounding_and_knowledge_ingest.py:63`). Append the **5** new IN params
-   **after** the grounding params, each `DEFAULT NULL`, `OUT p_analysis_id UUID` last. Result:
+   **after** the grounding params, each `DEFAULT NULL`. **`OUT p_analysis_id UUID` stays in its v3
+   slot** — after the 16 IN params, before the first defaulted param. PostgreSQL rejects an `OUT`
+   parameter that follows a defaulted one (the same live constraint `0024` recorded), so "OUT last" is
+   not achievable. C1's implementation got this right; an earlier revision of this task file said
+   "OUT last" and was wrong. Result:
    `pronargs` 20 → **25**. Body = the v3 body with the 5 new columns added to the
    `INSERT INTO llm_analyses` column list and `VALUES` list, and to the audit `metadata_json`.
 
