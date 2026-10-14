@@ -238,8 +238,8 @@ Use `student@acm.local`. Do not use the same account used for earlier historical
 Create short-lived dedicated packages in a throwaway environment so this can be tested quickly.
 
 1. **Normal completion:** submit before deadline; only completed answers are recorded and package attempt becomes submitted.
-2. **Duration deadline:** start package with duration shorter than close time; timer must use the server-provided effective deadline.
-3. **Closing deadline:** start package with close time earlier than duration deadline; closing time wins.
+2. **Duration deadline:** start package with a configured duration; timer must use the server-provided `started_at + duration_minutes` deadline.
+3. **Closed package, active attempt:** start a package before `closes_at`, then continue after `closes_at`. The student must retain the full configured timer and submit successfully before their attempt deadline. A student without an existing attempt must be denied after `closes_at`.
 4. **REJECT behavior:** let deadline pass, attempt submit, verify no answer is submitted, local draft is removed, and UI redirects to `/code#pengumpulan` without an expiry modal.
 5. **AUTO_SUBMIT behavior:** let deadline pass with some incomplete questions. Verify automatic request is made once, only complete answers are sent, and no second submission is created on reload.
 6. Reload, open second tab, change client clock, return after sleep, and navigate backward/forward. Server must remain authoritative; client time manipulation cannot extend access.
