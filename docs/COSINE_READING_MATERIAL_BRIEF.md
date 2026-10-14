@@ -24,10 +24,12 @@ Phase order is strict. Each phase ends with a commit and a report; do not start 
 | **C5** | Metrics — **additive only** | C4 | backend |
 | **C6** | Lecturer surfaces + flag/regenerate | C5 | frontend |
 | **C7** | Student surfaces | C6 | frontend |
-| **C8** | Contract: remove the superseded keys | C6 **deployed** | backend |
+| **C8** | Contract: remove the superseded keys | C6, **same release** | backend |
 
-C1–C4 are behaviour-neutral and can ship independently. C5 must precede C6. **C8 must not ship before
-C6 is live** (§9).
+C1–C4 are behaviour-neutral and can ship independently. **C5, C6 and C8 are one release** — backend and
+frontend are built and deployed together in a private architecture, so C8 is the *last commit of that
+release*, verified after C6, not a later deployment (§9). The phase/commit granularity is kept: one
+verifiable commit per phase.
 
 ---
 
@@ -193,9 +195,22 @@ Settings appended to the existing `RETRIEVAL_*` block in `backend/config/setting
 `CROSSCHECK_LLM_VERDICT` and `GENERATION_MISCONCEPTION_CONFIDENCE` from revision 1 are **withdrawn**:
 the first is obsolete now that the LLM drives, the second goes with D12.
 
-Modul A/B prompts shrink to **verdict-only** (drop the `reasoning` field, drop everything that builds
-`student_feedback`). Their outputs go to `llm_t1_score` / `llm_t3_score`, feed the matrix, and **never**
-enter `concept_breakdown_json`.
+Modul A/B become **verdict-only for the matrix**: their scores go to `llm_t1_score` / `llm_t3_score` and
+drive `t1`/`t3`. **Their `reasoning` and `student_feedback` output is RETAINED until C8 (D17) and keeps
+being written into `concept_breakdown_json` exactly as today.** Do **not** strip it in C3:
+`grounding_similarity`'s `advisory_text` is built from `student_feedback['konsep_seharusnya']`
+(`llm.py:851`), so removing it makes every new row compute the still-live legacy metric from a different
+input while C5 pools old and new rows in one mean. Nothing renders `student_feedback` today (it is typed
+in `studentSubmissions.ts`, read by no `.tsx`), so keeping it costs nothing.
+
+**Calibration procedure and shadow sunset (D16).** `verdict_agreement_rate` is a **diagnostic**, never a
+tuning objective — the LLM verdict is itself unvalidated, so agreeing with it optimises "imitate an
+unvalidated judge". θ is fitted **offline over lecturer-validated rows**, maximising agreement with the
+lecturer's corrected tier (the ground truth `tier_agreement_accuracy` already uses). **Review point:
+≥50 lecturer-validated analyses.** Below that, flipping `TIER_VERDICT_SOURCE` to `'rule'` is
+**forbidden**. At the review point there are three legitimate outcomes: flip to `'rule'`; keep the shadow
+(still inconclusive); or **delete the shadow** and revert C3's machinery. Without that third option the
+shadow becomes permanent overhead — 2 embed calls per analysis for data nobody reads.
 
 **Consequence to state, not hide:** because the LLM verdict still drives the matrix, C3 changes
 **nothing** about the diagnosis in production. The shadow block is populated in parallel and the matrix
@@ -270,8 +285,12 @@ the worker re-claims anything left in `ANALYZING` past **10 minutes** as `ANALYS
 - the analysis path does only a cheap
   `INSERT ... ON CONFLICT (question_version_id, category) DO NOTHING` with `status='PENDING'`, **only
   when `category != 'SC'`**, and **never calls the LLM**;
-- draining is `manage.py generate_reading_material --pending|--loop|--refresh|--replace|--question-version <id>`,
-  mirroring the `ingest_materials` drain.
+- draining is **one** command, `manage.py drain_reading_materials --loop`, which per tick runs the C2
+  `--refresh` sweep (a hash compare — change detection, not work, so it needs no schedule of its own),
+  then a batch of `PENDING`/`STALE` material, then sleeps. Run it next to `analyze_submissions --loop`.
+  Individual sub-modes stay available for manual use (`--pending`, `--refresh`, `--replace`,
+  `--question-version <id>`), mirroring the `ingest_materials` drain. This is safe with respect to the
+  10-minute zombie window because generation never sits inside an `ANALYZING` window (D18).
 
 `generate_reading_material(ctx, category)`:
 - Retrieves chunks exactly as R3 already does (`retrieve_reference_chunks`) and puts them in the
@@ -302,8 +321,16 @@ affected subject's rows `STALE` (D13). Do **not** claim the fingerprint covers c
 `verdict_agreement_rate`, `verdict_disagreement_count`, and
 `reading_material_counts` (`READY`/`PENDING`/`STALE`/`FAILED`).
 
-**Keep every existing key in this phase, including `grounding_*` and the citation rates.** Removal is
-C8 (D15). This is what stops C5 from breaking C6.
+**Keep every existing key in this phase, including `grounding_*` and the citation rates** — but
+**label them deprecated in the UI** (D19): `metrics/page.tsx` renders them as
+*"(deprecated — digantikan Answer similarity)"*. Removal is C8, the last commit of the same release
+(D15). Retaining a key protects code; a lecturer reading a plausible `grounding_similarity` of `1.0` is
+a different failure mode and needs the UI-level fix.
+
+**Every new aggregate is displayed with its denominator** (D9): `answer_similarity_coverage` /
+`no_similarity_count` beside the means and medians, and `verdict_comparable_count` beside
+`verdict_agreement_rate`. Rows with NULL similarities drop out of the rate, so an unreported denominator
+silently biases it.
 
 `METRICS_NOTE` (`backend/api/validation_views.py:648`) is rewritten in place to add: the new similarity
 measures alignment with the **lecturer's reference answer**; the verdict is driven by the **LLM**, with
@@ -327,6 +354,12 @@ keys**, so pre-C5 analyses (NULL similarity) need no frontend guessing.
   regenerates with the note carried into the prompt ("the previous version was flagged for: …"), capped
   by `READING_MATERIAL_MAX_RUNS`. A lecturer must be able to mark bad material and get a replacement
   without being able to hand-edit text.
+- **Staleness badge** (D18): the lecturer surfaces recompute the artifact's fingerprint /
+  `answer_hash` **at read time** (no network call, no embedding) and badge a stale artifact —
+  *"referensi berubah sejak materi ini dibuat"*. This is the only detector for an unstarted drain
+  daemon, so it is not optional.
+- **Deprecation labels** (D19) on the superseded metric keys, and denominators beside every new
+  aggregate.
 - Prod build on `:3002`; CDP pass via `scripts/r6_ui_audit.py`. **Stop the dev server first** —
   `:3001` belongs to the Hermes bridge.
 
@@ -341,7 +374,15 @@ never a `PENDING`/`FAILED` placeholder.
 
 ## 9. C8 — Contract removal
 
-Only after **C6 is live**. Remove from the API payload (DB columns retained):
+The **last commit of the same release** as C5 and C6 — verified after C6, not deployed months later
+(D15). Backend and frontend are built and deployed together in a private architecture, so the
+expand/contract split exists for *commit* and *verification* granularity, not for deployment safety.
+Residual risk: an already-open browser tab holding the pre-C8 frontend bundle hits the post-C8 backend —
+safe here because every affected field is optional in the TS types, so it degrades to a missing value and
+clears on reload.
+
+This phase also removes `student_feedback` / Modul B `reasoning` from `concept_breakdown_json` (D17),
+together with the `grounding_*` keys whose input it feeds. Remove from the API payload (DB columns retained):
 `grounding_similarity_mean`, `grounding_similarity_median`, `citation_validity_rate`,
 `hallucinated_citation_rate`, `citation_coverage`, `grounding_by_category`,
 `grounding_by_prompt_version`, `no_grounding_count`. They measured fidelity of a verdict's citations,
@@ -363,7 +404,11 @@ any time; a subtractive change cannot ship before its consumer is updated.
 - Do not overload the `grounding_*` columns.
 - Do not present the new similarity as accuracy, and do not set the thresholds to values that look
   tuned when they are not — they are provisional until `verdict_agreement_rate` says otherwise.
-- The reading material is never editable by a lecturer (D7); flagging is a review action, not an edit.
+- The reading material is never lecturer-editable (D7); flagging is a review action, not an edit.
+- **Do not strip `student_feedback` / Modul B `reasoning` before C8** (D17) — the retained
+  `grounding_similarity` is computed from it.
+- **Do not flip `TIER_VERDICT_SOURCE` to `'rule'` below 50 lecturer-validated analyses** (D16), and never
+  tune θ against the LLM verdict.
 - The analysis path must **not** call the LLM for generation (10-minute zombie window).
 - **C5 adds, C8 removes — never in the same release.**
 - Never create app data to make a number line up — the dev DB is the evidence base, not a test DB.
@@ -406,12 +451,26 @@ Phase-specific:
 6. **C3 neutrality** — after a real analysis, `llm_t1_score`/`llm_t3_score` populate, the matrix output
    is **identical** to pre-C3 for the same submission, and `verdict_shadow_json` carries both rule
    verdicts plus the thresholds in force.
+   **D17 check:** `concept_breakdown_json.student_feedback.konsep_seharusnya` is still populated on the
+   new row, and the new row's `grounding_similarity` is still computed from it (compare against the
+   pre-C3 value for an equivalent submission). If `student_feedback` is empty, C3 has broken the
+   retained legacy metric — stop and fix before proceeding.
 7. **C4 async** — the analysis path creates a `PENDING` row and makes **no** generation call; the drain
    turns it `READY`; a second student in the same `(question_version, category)` reuses it
    byte-identically with no new call; a dead `EMBEDDINGS_BASE_URL` still reaches `PENDING_VALIDATION`
    and leaves the material `PENDING`/`FAILED`, never failing the analysis.
+   **D18 check:** one `drain_reading_materials --loop` tick performs both the `--refresh` sweep and a
+   material batch (show the log lines for both in one tick).
 8. **C4 flag loop** — flag → `STALE` + note → drain regenerates with the note in the prompt → the
    attempt cap stops a repeat loop at `READING_MATERIAL_MAX_RUNS`.
 9. **C5 additivity** — the payload contains **every** pre-C5 key **and** the new ones.
+   **D19 check:** the frontend renders the superseded keys with their deprecation label, and every new
+   aggregate has its denominator beside it (`answer_similarity_coverage` / `no_similarity_count`,
+   `verdict_comparable_count`).
+   **D18 check:** with a reference answer edited behind the cache's back, the lecturer surface badges the
+   artifact as stale **without** any drain run.
 10. **C6** — `npm run build` clean; `/materials` and `/metrics` in the route list; CDP pass on `:3002`.
-11. **C8** — only after C6 is live; the removed keys are gone and no frontend file still reads them.
+11. **C8** — the last commit of the same release as C5/C6, verified after C6. The removed keys are gone,
+    no frontend file still reads them, and `student_feedback` / Modul B `reasoning` are gone from
+    `concept_breakdown_json` (D17). Confirm no new analysis can produce a `grounding_similarity` after
+    this commit — the metric and its input leave together.
