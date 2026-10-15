@@ -2,10 +2,64 @@
 
 Read this first. It is the cheap entry point: everything else is on disk, so no transcript is needed.
 
-## Current work — read this before anything else (2026-10-14)
+## Current work — read this before anything else (2026-10-15)
 
-**R0–R6 are complete and committed. The R-phase plan is finished, not mid-flight.**
-The active change is the **C-phase**: answer-cosine similarity + LLM-generated reading material.
+**R0–R6 are complete. The C-phase is COMPLETE and committed** on `feat/cosine-reading-material`
+@ `a9740d2` — every phase implemented, independently verified, one commit each. Nothing is mid-flight.
+
+| | |
+|---|---|
+| Decision record | `D:/ClinicalAI_Misconception/Context/Answer_Cosine_Plan.md` (D1–D19) |
+| Authoritative spec | `docs/COSINE_READING_MATERIAL_BRIEF.md` (**revision 3**, phases C0–C8) |
+| Task files | `docs/C1_TASK.md` … `docs/C8R_TASK.md` (per-phase, just-in-time) |
+| Rollback point | `backup/pre-cosine-2026-10-14` @ `a6ed436` (the pre-C state) |
+| Bundles | `D:/…/backups/` and `C:/Users/Pongo/backups/` (same sha256, two physical disks) |
+| Branch state | `main` @ `9daddb8` (ahead 23 of `origin/main`); C work on `feat/cosine-reading-material`, **fast-forwardable into `main`** |
+
+### What shipped (one commit per phase)
+
+C1 migration `0026` (7 cols, `sp_record_llm_analysis` v4, `pronargs` 25) · C2 `sync_reference_embeddings`
+(change-detecting, `answer_hash`) · C3 answer similarity + **shadow** rule verdict · C4
+`generated_reading_materials` + async queue + drain + invalidation hooks · C5 metrics (additive) · C5F
+per-model keys · C6 lecturer surfaces + flag/regenerate + staleness badge · C7 student surfaces · **C8
+contract removal**.
+
+**Three things that will confuse a fresh reader:**
+
+1. **Nothing changed about any diagnosis.** `TIER_VERDICT_SOURCE='llm'` (D11) — the LLM verdict still
+   drives the matrix. The θ-based rule is computed and stored in `verdict_shadow_json` **in shadow** and
+   drives nothing. **Do not flip it below 50 lecturer-validated analyses** (D16 — the dev DB has 4), and
+   calibrate against the **lecturer**, never against the LLM.
+2. **`student_feedback` may still appear in old payloads.** C8 stopped Modul B *producing* it; the 8
+   pre-existing rows keep it in their stored `concept_breakdown_json`. That is history, not a regression.
+3. **Both audit scripts live OUTSIDE the repo** (`D:/ClinicalAI_Misconception/scripts/`), so their edits
+   are not committed. `r4_audit.py` and `r6_ui_audit.py` are both **green** (`fails: 0`).
+
+### Live state at hand-off
+
+Backend `127.0.0.1:8000`, prod frontend `0.0.0.0:3002`, both running. `misconception_db` up.
+**95 tests OK.** `r4_audit` 0 fails / 29 passed · `r6_ui_audit` 0 fails / 31 passed, no hydration errors.
+Evidence base unchanged: 8 analyses, 6 submissions (2 `PENDING_VALIDATION` / 4 `VALIDATED`), 3 questions.
+Historical grounding rows byte-identical to pre-C8 (`n=4 mean=0.6185 max=0.8620 sum=8`) — the columns are
+retained even though the API no longer exposes them.
+
+**Fixture note:** `(qv …0004, FN)` in `generated_reading_materials` was regenerated on 2026-10-15 (it was
+`FAILED`, capped at 3 attempts) so the student page's **positive** READY path is live-renderable — 3 real
+sources, 2293 chars. `(qv …0004, MSC)` is also `READY`. Both `UNREVIEWED`. This is fixture data, not
+course-quality content.
+
+### Not done, deliberately
+
+- **Nothing is pushed.** Per this project's convention, the operator pushes.
+- **The shadow is not calibrated** and has no sunset decision yet — see D16 (flip / keep / delete).
+- **The misconception catalog is still empty** (`misconceptions` = 0), so Modul C can only emit `MK-LAIN`
+  and D12's per-misconception material key stays deferred.
+- **The `--refresh` sweep has no operator** — D18 says it rides `drain_reading_materials --loop`; nothing
+  starts that daemon yet, so staleness is only visible via the read-time badge.
+
+## Original C-phase framing (kept for context)
+
+The active change was the **C-phase**: answer-cosine similarity + LLM-generated reading material.
 
 | | |
 |---|---|
