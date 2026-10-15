@@ -101,20 +101,29 @@ class Command(BaseCommand):
                 WHERE id = (
                     SELECT s.id FROM submissions s
                     WHERE (
-                            s.status IN ('SUBMITTED', 'ANALYSIS_FAILED')
+                            -- Migration 0028: cap by the retry counter, not by the
+                            -- analysis count. A failure at the LLM level writes no
+                            -- llm_analyses row, so counting those left the cap inert
+                            -- and the row was re-claimed forever, blocking the queue.
+                            (
+                                s.status IN ('SUBMITTED', 'ANALYSIS_FAILED')
+                                AND s.analysis_attempts < %s
+                            )
                             OR (
                                 s.status = 'REJECTED'
                                 AND (SELECT count(*) FROM llm_analyses la
                                      WHERE la.submission_id = s.id) < %s
                             )
                           )
-                    ORDER BY s.submitted_at
+                    -- Fresh work first: a row that keeps failing sorts last instead of
+                    -- being the permanent head of the queue.
+                    ORDER BY (s.status = 'ANALYSIS_FAILED'), s.submitted_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
                 RETURNING id;
                 """,
-                [max_runs],
+                [max_runs, max_runs],
             )
             row = cur.fetchone()
         return str(row[0]) if row else None

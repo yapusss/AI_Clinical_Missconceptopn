@@ -401,6 +401,10 @@ class Submission(models.Model):
     heuristic_flags = models.JSONField(default=list)
     attempt_no = models.IntegerField(default=1)
     status = models.CharField(max_length=30)
+    # Migration 0028: retry counter for the analysis queue, incremented by
+    # sp_mark_submission_failed. The worker's claim caps on it at LLM_MAX_RUNS, so a
+    # submission that keeps failing at the LLM level cannot starve the queue.
+    analysis_attempts = models.IntegerField(default=0)
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
