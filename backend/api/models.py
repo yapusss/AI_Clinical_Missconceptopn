@@ -575,3 +575,18 @@ class KnowledgeChunk(models.Model):
     class Meta:
         db_table = 'knowledge_chunks'
         managed = False
+
+
+class WorkerHeartbeat(models.Model):
+    # Liveness row for a background worker (migration 0029). One row per worker kind,
+    # upserted on every loop tick by api/worker_health.record_heartbeat. Written and
+    # read with raw SQL; this model exists so the table is visible to the ORM.
+    worker_name = models.TextField(primary_key=True)
+    last_seen_at = models.DateTimeField()
+    pid = models.IntegerField(null=True, blank=True)
+    loop_count = models.BigIntegerField(default=0)
+    detail_json = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = 'worker_heartbeats'
+        managed = False

@@ -41,6 +41,7 @@ from api.reading_materials import (
     input_fingerprint,
     load_question_version_context,
 )
+from api.worker_health import record_heartbeat, supervisor_gone
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,17 @@ class Command(BaseCommand):
         options['question_version'] = question_version_id
 
         while True:
+            # Liveness (migration 0029): materials silently piling up as PENDING is
+            # how a missing drainer used to look from the outside.
+            record_heartbeat(
+                'materials',
+                {'mode': 'loop' if options['loop'] else 'once', 'limit': limit},
+            )
+            if supervisor_gone():
+                self.stderr.write(
+                    '[material] supervisor gone; exiting (a backend restart starts a fresh worker)'
+                )
+                return
             self._tick(options)
             if not options['loop']:
                 break

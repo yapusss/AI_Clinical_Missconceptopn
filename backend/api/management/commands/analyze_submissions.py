@@ -24,6 +24,7 @@ from django.db import connection
 from django.utils import timezone
 
 from api.llm import analyze_submission
+from api.worker_health import record_heartbeat, supervisor_gone
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,17 @@ class Command(BaseCommand):
             format='%(asctime)s %(levelname)s %(name)s: %(message)s',
         )
         while True:
+            # Liveness: "worker down" and "worker idle" must be distinguishable from
+            # outside (migration 0029). Never fatal — see api/worker_health.
+            record_heartbeat(
+                'analysis',
+                {'mode': 'loop' if options['loop'] else 'once', 'limit': options['limit']},
+            )
+            if supervisor_gone():
+                self.stderr.write(
+                    '[analysis] supervisor gone; exiting (a backend restart starts a fresh worker)'
+                )
+                return
             processed = self._pass(options['limit'])
             if not options['loop']:
                 self.stdout.write(f'Pass complete: {processed} submission(s) processed.')
