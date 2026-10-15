@@ -321,6 +321,10 @@ class ReferenceAnswer(models.Model):
     answer_text = models.TextField()
     answer_type = models.CharField(max_length=30, default='CANONICAL')
     is_primary = models.BooleanField(default=True)
+    # C1: pgvector vector(1536) in the DB; exposed as text for reads only (C2 cache).
+    embedding = models.TextField(null=True, blank=True)
+    # C1: sha256 of the effective reference text; the C2 change-detection key.
+    answer_hash = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -427,6 +431,15 @@ class LlmAnalysis(models.Model):
     module_c_code = models.CharField(max_length=100, null=True, blank=True)
     four_tier_category = models.CharField(max_length=10, null=True, blank=True)
     risk_level = models.CharField(max_length=20, null=True, blank=True)
+    grounding_similarity = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    grounding_similarity_max = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    grounding_citation_count = models.IntegerField(null=True, blank=True)
+    grounding_payload_json = models.JSONField(default=dict)
+    answer_similarity_t1 = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    answer_similarity_t3 = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    llm_t1_score = models.CharField(max_length=20, null=True, blank=True)
+    llm_t3_score = models.CharField(max_length=20, null=True, blank=True)
+    verdict_shadow_json = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -457,4 +470,104 @@ class Validation(models.Model):
 
     class Meta:
         db_table = 'validations'
+        managed = False
+
+
+class KnowledgeDocument(models.Model):
+    # Read-model: rows are written by ingestion (raw SQL), never by ORM save().
+    class IngestStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Menunggu ingest'
+        READY = 'READY', 'Siap digunakan'
+        FAILED = 'FAILED', 'Gagal ingest'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, db_column='topic_id', null=True, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.RESTRICT, db_column='uploaded_by')
+    title = models.CharField(max_length=255)
+    file_path = models.CharField(max_length=1024, null=True, blank=True)
+    mime_type = models.CharField(max_length=100, default='text/plain')
+    raw_text = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    ingest_status = models.CharField(max_length=20, choices=IngestStatus, default=IngestStatus.PENDING)
+    ingest_error = models.TextField(null=True, blank=True)
+    chunk_count = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'knowledge_documents'
+        managed = False
+
+    def __str__(self):
+        return self.title
+
+
+class GeneratedReadingMaterial(models.Model):
+    """Read-model for the C4 async reading-material store (`managed = False`).
+
+    Rows are written by `api/reading_materials.py` via raw SQL (the analysis path
+    inserts a `PENDING` row; the drain command fills the rest), never by ORM
+    `save()`. The key is `(question_version_id, category)`; there is no
+    `misconception_id` (D12).
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Menunggu digenerate'
+        READY = 'READY', 'Siap digunakan'
+        STALE = 'STALE', 'Kedaluwarsa'
+        FAILED = 'FAILED', 'Gagal digenerate'
+
+    class ReviewStatus(models.TextChoices):
+        UNREVIEWED = 'UNREVIEWED', 'Belum ditinjau'
+        OK = 'OK', 'Disetujui'
+        FLAGGED = 'FLAGGED', 'Ditandai'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question_version = models.ForeignKey(
+        QuestionVersion, on_delete=models.CASCADE, db_column='question_version_id',
+        related_name='reading_materials',
+    )
+    category = models.CharField(max_length=10)
+    status = models.CharField(max_length=20, choices=Status, default=Status.PENDING)
+    content_md = models.TextField(null=True, blank=True)
+    sources_json = models.JSONField(default=list)
+    grounded = models.BooleanField(default=False)
+    ungrounded_source_count = models.IntegerField(default=0)
+    input_fingerprint = models.CharField(max_length=64, null=True, blank=True)
+    error = models.TextField(null=True, blank=True)
+    attempts = models.IntegerField(default=0)
+    review_status = models.CharField(
+        max_length=20, choices=ReviewStatus, default=ReviewStatus.UNREVIEWED,
+    )
+    flag_note = models.TextField(null=True, blank=True)
+    flagged_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, db_column='flagged_by', null=True, blank=True,
+    )
+    flagged_at = models.DateTimeField(null=True, blank=True)
+    model_identifier = models.CharField(max_length=100, null=True, blank=True)
+    prompt_version = models.CharField(max_length=50, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'generated_reading_materials'
+        managed = False
+
+
+class KnowledgeChunk(models.Model):
+    # Read-model: written by ingestion via raw SQL (%s::vector cast), searched via
+    # fn_search_knowledge_chunks. `embedding` is pgvector vector(1536) in the DB;
+    # this field exposes its text form for reads only.
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE, db_column='document_id', related_name='chunks')
+    subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
+    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, db_column='topic_id', null=True, blank=True)
+    chunk_index = models.IntegerField()
+    content = models.TextField()
+    token_count = models.IntegerField(null=True, blank=True)
+    embedding = models.TextField(null=True, blank=True)
+    metadata_json = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'knowledge_chunks'
         managed = False

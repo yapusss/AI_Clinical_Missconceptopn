@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  BarChart3,
   BookOpen,
   Building2,
   CircleHelp,
@@ -11,6 +12,7 @@ import {
   FileSearch,
   GraduationCap,
   LayoutDashboard,
+  Library,
   LogOut,
   Menu,
   PanelsTopLeft,
@@ -46,6 +48,8 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Kelola Dosen", path: "/admin/lecturers", icon: UserRound, roles: ["ADMIN"] },
   { label: "Kelola Mahasiswa", path: "/admin/students", icon: GraduationCap, roles: ["ADMIN"] },
   { label: "Kelola Mata Kuliah", path: "/admin/subjects", icon: BookOpen, roles: ["ADMIN", "LECTURER"] },
+  { label: "Materi Referensi", path: "/materials", icon: Library, roles: ["ADMIN", "LECTURER"] },
+  { label: "Metrik Model", path: "/metrics", icon: BarChart3, roles: ["ADMIN", "LECTURER"] },
   { label: "Kelola Website", path: "/admin/website", icon: PanelsTopLeft, roles: ["ADMIN"] },
   { label: "Pusat Bantuan", path: "/help", icon: CircleHelp, roles: ["ADMIN"] },
   { label: "Bantuan", path: "/help", icon: CircleHelp, roles: ["LECTURER", "STUDENT", "GENERAL"] },

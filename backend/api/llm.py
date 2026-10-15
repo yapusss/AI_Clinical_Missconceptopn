@@ -9,7 +9,7 @@
 2. Direct Modular AI Grading (Bebas Rubrik 40/30/30):
    - Module A: Menilai kesimpulan Tier 1 (maks 120 karakter) -> BENAR / BENAR_SEBAGIAN / SALAH
    - Module B: Menilai alasan Tier 3 langsung terhadap Jawaban Model -> BENAR / SALAH
-               sekaligus menyusun umpan balik terstruktur mahasiswa (student_feedback).
+               (C8/D17: verdict-only; citation provenance via referensi/what_should_be_learned).
    - Module C: Klasifikasi tipe miskonsepsi jika Modul B bernilai SALAH.
 
 3. Deterministic Decision Matrix (16 Rules):
@@ -25,16 +25,27 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.conf import settings
 from django.db import connection
 from openai import OpenAI
 
+from api.embeddings import (
+    EmbeddingError,
+    answer_similarity,
+    cosine,
+    embed_text,
+    vector_literal,
+)
+
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = 'four-tier-v2.8'
+# Source-derived so metrics never pool a judged run with a shadow run: the
+# source selects the bucket, and `llm_analyses.prompt_version` records it per
+# row. The pre-C3 rows stay in their own `four-tier-v2.9-rag` bucket.
+PROMPT_VERSION = f'four-tier-v3.0-{settings.TIER_VERDICT_SOURCE}'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
@@ -184,6 +195,11 @@ class FourTierContext:
     misconceptions: list      # [{id, label, description}]
     rejection_notes: str
     prior_explanation: str
+    topic_id: str | None = None
+    question_version_id: str | None = None
+    reference_chunks: list = field(default_factory=list)  # retrieved reference passages
+    reference_t1_vec: list | None = None  # cached JAWABAN_SINGKAT embedding (C2)
+    reference_t3_vec: list | None = None  # cached ALASAN embedding (C2)
 
 
 def load_context(submission_id: str) -> FourTierContext:
@@ -194,7 +210,8 @@ def load_context(submission_id: str) -> FourTierContext:
                    COALESCE(s.tier1_answer, ''), COALESCE(s.tier2_confidence, 1),
                    COALESCE(s.tier3_reason, s.answer_text), COALESCE(s.tier4_confidence, 1),
                    COALESCE(s.heuristic_flags, '[]'::jsonb),
-                   qv.prompt, qv.model_answer, COALESCE(qv.short_answer, ''), qs.title
+                   qv.prompt, qv.model_answer, COALESCE(qv.short_answer, ''), qs.title,
+                   qs.topic_id
             FROM submissions s
             JOIN question_versions qv ON qv.id = s.question_version_id
             JOIN questions q ON q.id = qv.question_id
@@ -251,14 +268,20 @@ def load_context(submission_id: str) -> FourTierContext:
         
         cur.execute(
             """
-            SELECT answer_key, answer_text
+            SELECT answer_key, answer_text, embedding::text
             FROM reference_answers
             WHERE question_version_id = %s AND answer_key IN ('JAWABAN_SINGKAT', 'ALASAN')
             """,
             [qv_id],
         )
-        ref_answers = {r[0]: r[1] for r in cur.fetchall()}
-        
+        ref_answers = {}
+        ref_vectors = {}
+        for r in cur.fetchall():
+            ref_answers[r[0]] = r[1]
+            vec = _parse_vector(r[2])
+            if vec:
+                ref_vectors[r[0]] = vec
+
         # Use reference_answers as primary source, fall back to question_versions columns
         reference_short_answer = (qv_short_answer or '').strip() or ref_answers.get('JAWABAN_SINGKAT', '').strip() or ''
         reference_reason = (qv_model_answer or '').strip() or ref_answers.get('ALASAN', '').strip() or ''
@@ -283,6 +306,10 @@ def load_context(submission_id: str) -> FourTierContext:
         misconceptions=misconceptions,
         rejection_notes=(prior[0] or '')[:2000],
         prior_explanation=(prior[1] or '')[:2000],
+        topic_id=str(row[12]) if row[12] else None,
+        question_version_id=str(qv_id),
+        reference_t1_vec=ref_vectors.get('JAWABAN_SINGKAT'),
+        reference_t3_vec=ref_vectors.get('ALASAN'),
     )
 
 
@@ -303,19 +330,22 @@ def _extract_json(raw: str) -> dict:
         raise LlmAnalysisError('LLM output is not valid JSON')
 
 
-def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str) -> dict:
+def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str,
+                   temperature: float | None = None) -> dict:
     client = get_llm_client()
     messages = [
         {'role': 'system', 'content': system_prompt},
         {'role': 'user', 'content': user_prompt},
     ]
+    if temperature is None:
+        temperature = LLM_TEMPERATURE
     last_error = None
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
             kwargs = {
                 'model': model_identifier,
                 'messages': messages,
-                'temperature': LLM_TEMPERATURE,
+                'temperature': temperature,
             }
             try:
                 response = client.chat.completions.create(
@@ -331,6 +361,232 @@ def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str) 
                 time.sleep(1.5 * (attempt + 1))
                 continue
     raise LlmAnalysisError(f'LLM call failed after retries: {last_error}')
+
+
+# ----------------------------------------------------------------------------
+# 3b. Reference Retrieval + Citation Validation + Grounding (RAG)
+# ----------------------------------------------------------------------------
+
+CITATION_RULES = (
+    'ATURAN SITASI:\n'
+    '1. Anda HANYA boleh mengutip chunk_id yang tercantum di bagian SUMBER REFERENSI.\n'
+    '2. Field "referensi" WAJIB berupa array objek {"chunk_id": "<uuid>", "kutipan": "<potongan kalimat>"}.\n'
+    '3. Jika tidak ada kutipan yang relevan, kembalikan "referensi": [].'
+)
+
+REFERENSI_SCHEMA_LINE = '  "referensi": [{"chunk_id": "<uuid>", "kutipan": "<potongan kalimat>"}]'
+
+
+def _parse_vector(text):
+    """Parse a `vector` column read as text ('[0.1,0.2,...]') into floats."""
+    if text is None:
+        return None
+    if isinstance(text, (list, tuple)):
+        try:
+            return [float(x) for x in text]
+        except (TypeError, ValueError):
+            return None
+    try:
+        return [float(x) for x in json.loads(text)]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def retrieve_reference_chunks(subject_id, topic_id, query_text, k=None, threshold=None) -> list[dict]:
+    """Retrieve the top-k reference passages for a subject (optionally a topic).
+
+    Non-fatal by contract: any embedding/DB error is logged and yields `[]`, so
+    an analysis always proceeds rubric-only (brief §8.2, HANDOFF rule 4).
+    """
+    if k is None:
+        k = settings.RETRIEVAL_TOP_K
+    if threshold is None:
+        threshold = settings.RETRIEVAL_SIMILARITY_THRESHOLD
+    try:
+        query_vec = embed_text(query_text)
+        with connection.cursor() as cur:
+            # Only narrow by topic when that topic actually has chunks.
+            effective_topic = None
+            if topic_id:
+                cur.execute(
+                    """SELECT EXISTS(
+                           SELECT 1 FROM knowledge_chunks
+                           WHERE subject_id = %s AND topic_id = %s AND embedding IS NOT NULL
+                       )""",
+                    [subject_id, topic_id],
+                )
+                if cur.fetchone()[0]:
+                    effective_topic = topic_id
+            cur.execute(
+                """SELECT chunk_id, document_id, chunk_index, content, token_count,
+                          metadata_json, similarity
+                   FROM fn_search_knowledge_chunks(
+                       %s::uuid, %s::vector, %s::uuid, %s::int, %s::float)""",
+                [subject_id, vector_literal(query_vec), effective_topic, k, threshold],
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return []
+
+        chunk_ids = [str(r[0]) for r in rows]
+        doc_ids = sorted({str(r[1]) for r in rows})
+        # fn_search_knowledge_chunks returns neither the embedding nor the
+        # document title, so fetch both in a second query. Chunks are NEVER
+        # re-embedded — the stored vector is the source of truth (rule 3).
+        with connection.cursor() as cur:
+            cur.execute(
+                'SELECT id, embedding::text FROM knowledge_chunks WHERE id = ANY(%s)',
+                [chunk_ids],
+            )
+            embeddings = {str(r[0]): _parse_vector(r[1]) for r in cur.fetchall()}
+            cur.execute(
+                'SELECT id, title FROM knowledge_documents WHERE id = ANY(%s)',
+                [doc_ids],
+            )
+            titles = {str(r[0]): r[1] for r in cur.fetchall()}
+
+        chunks = []
+        for r in rows:
+            cid = str(r[0])
+            meta = r[5]
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except (TypeError, ValueError):
+                    meta = {}
+            if not isinstance(meta, dict):
+                meta = {}
+            chunks.append({
+                'chunk_id': cid,
+                'document_id': str(r[1]),
+                'chunk_index': r[2],
+                'content': r[3],
+                'token_count': r[4],
+                'metadata_json': meta,
+                'similarity': float(r[6]),
+                'embedding': embeddings.get(cid),
+                'document_title': titles.get(str(r[1]), ''),
+                'page_start': meta.get('page_start'),
+            })
+        return chunks
+    except Exception as e:  # noqa: BLE001 — retrieval must never fail an analysis
+        logger.warning('Reference retrieval failed for subject %s (non-fatal): %s', subject_id, e)
+        return []
+
+
+def build_reference_block(reference_chunks) -> str:
+    """The SUMBER REFERENSI prompt block (brief §8.3). Empty when no chunks."""
+    if not reference_chunks:
+        return ''
+    lines = ['SUMBER REFERENSI (Kutipan Buku Acuan — gunakan HANYA kutipan di bawah ini):']
+    for i, chunk in enumerate(reference_chunks, start=1):
+        page = chunk.get('page_start')
+        lines.append(
+            f'[S{i}] chunk_id={chunk.get("chunk_id")} | hal. {page} | {chunk.get("document_title", "")}'
+        )
+        lines.append(f'"{chunk.get("content", "")}"')
+    return '\n'.join(lines)
+
+
+def validate_citations(referensi, retrieved) -> list[dict]:
+    """Validate the LLM's `referensi` against the retrieved chunks.
+
+    `retrieved` is keyed by chunk_id. A citation is valid iff its chunk_id is in
+    the retrieved set; invalid reasons are 'not_in_retrieved_set' or 'malformed'.
+    Each entry carries the full audit shape (brief §8.5).
+    """
+    if not isinstance(referensi, list):
+        referensi = []
+    entries = []
+    for ref in referensi:
+        if not isinstance(ref, dict):
+            entries.append({
+                'chunk_id': '', 'document_id': None, 'page': None, 'quote': '',
+                'similarity': None, 'valid': False, 'reason_if_invalid': 'malformed',
+            })
+            continue
+        raw_id = ref.get('chunk_id')
+        cid = str(raw_id) if raw_id is not None else ''
+        quote = str(ref.get('kutipan', ''))
+        if not cid:
+            entries.append({
+                'chunk_id': '', 'document_id': None, 'page': None, 'quote': quote,
+                'similarity': None, 'valid': False, 'reason_if_invalid': 'malformed',
+            })
+            continue
+        chunk = retrieved.get(cid)
+        if chunk is None:
+            entries.append({
+                'chunk_id': cid, 'document_id': None, 'page': None, 'quote': quote,
+                'similarity': None, 'valid': False, 'reason_if_invalid': 'not_in_retrieved_set',
+            })
+            continue
+        entries.append({
+            'chunk_id': cid,
+            'document_id': chunk.get('document_id'),
+            'page': chunk.get('page_start'),
+            'quote': quote,
+            'similarity': chunk.get('similarity'),
+            'valid': True,
+            'reason_if_invalid': None,
+        })
+    return entries
+
+
+def grounded_similarity(citations, retrieved, advisory_text):
+    """Cosine between the advisory text and each VALID cited chunk's embedding.
+
+    Returns `(similarity_mean, similarity_max, citation_count)`. Zero valid
+    citations → `(None, None, None)` and no extra embedding call. Otherwise
+    exactly one extra embedding call (the advisory text). This measures
+    alignment with the cited source — it is NOT an accuracy score.
+    """
+    valid = [c for c in citations if c.get('valid')]
+    if not valid:
+        return None, None, None
+    advisory_vec = embed_text(advisory_text)
+    cosines = []
+    for citation in valid:
+        chunk = retrieved.get(citation['chunk_id'])
+        embedding = chunk.get('embedding') if chunk else None
+        if embedding:
+            cosines.append(cosine(advisory_vec, embedding))
+    if not cosines:
+        return None, None, None
+    return sum(cosines) / len(cosines), max(cosines), len(cosines)
+
+
+def _parse_referensi(raw) -> list[dict]:
+    """Defensively parse the LLM `referensi` field (missing/non-dict dropped)."""
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get('chunk_id')
+        if cid is None:
+            continue
+        out.append({'chunk_id': str(cid), 'kutipan': str(item.get('kutipan', ''))})
+    return out
+
+
+def _parse_what_should_be_learned(raw) -> list[dict]:
+    """Defensively parse Modul B's `what_should_be_learned` list."""
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        topik = item.get('topik')
+        if topik is None:
+            continue
+        sumber = item.get('sumber_chunk_ids')
+        if not isinstance(sumber, list):
+            sumber = []
+        out.append({'topik': str(topik), 'sumber_chunk_ids': [str(s) for s in sumber]})
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -363,39 +619,51 @@ def run_module_a(ctx: FourTierContext, model_identifier: str) -> tuple[str, str]
     return score, str(data.get('reasoning', ''))
 
 
-def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, dict]:
-    """Modul B — Penilai Alasan Ilmiah (Tier 3) langsung terhadap Model Answer & Penghasil Umpan Balik Mahasiswa."""
+def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list, list]:
+    """Modul B — Penilai Alasan Ilmiah (Tier 3) langsung terhadap Model Answer.
+
+    C8 (D17): Modul B is verdict-only. It no longer produces `student_feedback`
+    or a lecturer `reasoning` string — the retained legacy `grounding_similarity`
+    was built from `student_feedback['konsep_seharusnya']`, so the metric and its
+    input leave in the same commit. The only extra output is the citation
+    provenance (`referensi` / `what_should_be_learned`) when reference chunks
+    were supplied.
+    """
     sys_prompt = (
-        "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3) serta Asisten Pedagogis Fisika/Sains.\n"
-        "Tugas utama Anda:\n"
-        "1. Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
+        "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3).\n"
+        "Tugas: Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
         "   - BENAR: Penalaran fisis valid, tepat secara konsep, atau penurunan matematis/aljabar langkah-demi-langkah valid dan membuktikan kesimpulan.\n"
         "   - SALAH: Terdapat miskonsepsi, prinsip fisis salah, rumus keliru, penalaran tidak logis, atau bertentangan dengan sains.\n"
         "   PANDUAN EVALUASI ILMIAH:\n"
         "   - Mahasiswa DIPERBOLEHKAN menyajikan alasan dalam bentuk penurunan rumus matematis ringkas jika langkah fisisnya benar.\n"
         "   - Tidak wajib menuliskan paragraf narasi panjang jika penurunan aljabar sudah tepat membuktikan kesimpulan.\n"
         "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah yang tidak ada di teks mahasiswa.\n\n"
-        "2. Susun 'student_feedback' berupa umpan balik terstruktur dalam Bahasa Indonesia yang ramah, mendidik, dan jelas bagi mahasiswa:\n"
-        "   - 'poin_tepat': Bagian pemikiran/konsep mahasiswa yang sudah benar atau relevan (bila salah semua, sebutkan apresiasi atau variabel yang benar).\n"
-        "   - 'letak_kekeliruan': Di mana letak salah konsep, kesalahan logika, atau penurunan yang keliru (tulis '-' jika benar sepenuhnya).\n"
-        "   - 'konsep_seharusnya': Penjelasan konsep dan penalaran ilmiah yang sebenarnya sesuai Jawaban Model.\n\n"
         "Kembalikan HANYA format JSON valid:\n"
         "{\n"
-        '  "score": "BENAR" | "SALAH",\n'
-        '  "reasoning": "penjelasan analisis klinis untuk dosen dalam 1-2 kalimat Bahasa Indonesia formal",\n'
-        '  "student_feedback": {\n'
-        '    "poin_tepat": "...",\n'
-        '    "letak_kekeliruan": "...",\n'
-        '    "konsep_seharusnya": "..."\n'
-        "  }\n"
+        '  "score": "BENAR" | "SALAH"\n'
         "}"
     )
+    reference_block = build_reference_block(ctx.reference_chunks)
+    if reference_block:
+        # Only when references exist do the schema and rules change; with no
+        # references the prompt stays minimal.
+        sys_prompt = sys_prompt.replace(
+            '  "score": "BENAR" | "SALAH"\n}',
+            '  "score": "BENAR" | "SALAH",\n'
+            + REFERENSI_SCHEMA_LINE + ',\n'
+            '  "what_should_be_learned": [{"topik": "...", "sumber_chunk_ids": ["<uuid>"]}]\n'
+            "}",
+        )
+        sys_prompt += "\n\n" + CITATION_RULES
+
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
         f"Jawaban Model (Acuan Kebenaran Sains):\nJawaban Singkat Referensi: {ctx.reference_short_answer or ctx.model_answer}\nAlasan Referensi: {ctx.reference_reason or ctx.model_answer}\n\n"
         f"Kesimpulan Mahasiswa di Tier 1:\n\"{ctx.tier1_answer}\"\n\n"
         f"Alasan/Penalaran Mahasiswa di Tier 3:\n\"{ctx.tier3_reason}\""
     )
+    if reference_block:
+        user_prompt = reference_block + "\n\n" + user_prompt
     if ctx.rejection_notes:
         user_prompt += f"\n\n[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]:\n{ctx.rejection_notes}"
 
@@ -404,25 +672,13 @@ def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
     if score not in ('BENAR', 'SALAH'):
         score = 'SALAH'
 
-    reasoning = str(data.get('reasoning', ''))
-    raw_fb = data.get('student_feedback')
-    if isinstance(raw_fb, dict):
-        student_feedback = {
-            'poin_tepat': str(raw_fb.get('poin_tepat', '')).strip(),
-            'letak_kekeliruan': str(raw_fb.get('letak_kekeliruan', '')).strip(),
-            'konsep_seharusnya': str(raw_fb.get('konsep_seharusnya', '')).strip(),
-        }
-    else:
-        student_feedback = {
-            'poin_tepat': 'Telah menyajikan kesimpulan dan alasan.' if score == 'SALAH' else 'Kesimpulan dan alasan sudah selaras.',
-            'letak_kekeliruan': reasoning if score == 'SALAH' else '-',
-            'konsep_seharusnya': ctx.reference_reason or ctx.model_answer,
-        }
+    referensi = _parse_referensi(data.get('referensi'))
+    what_should_be_learned = _parse_what_should_be_learned(data.get('what_should_be_learned'))
 
-    return score, reasoning, student_feedback
+    return score, referensi, what_should_be_learned
 
 
-def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, float, str]:
+def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, float, str, list]:
     """Modul C — Klasifikasi Tipe Miskonsepsi dari Katalog."""
     misc_label_map = {str(m['id']): str(m['label']) for m in ctx.misconceptions}
     
@@ -451,6 +707,15 @@ def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
         '  "reasoning": "penjelasan evaluasi dalam Bahasa Indonesia"\n'
         "}"
     )
+    reference_block = build_reference_block(ctx.reference_chunks)
+    if reference_block:
+        sys_prompt = sys_prompt.replace(
+            '  "reasoning": "penjelasan evaluasi dalam Bahasa Indonesia"\n}',
+            '  "reasoning": "penjelasan evaluasi dalam Bahasa Indonesia",\n'
+            + REFERENSI_SCHEMA_LINE + '\n}',
+        )
+        sys_prompt += "\n\n" + CITATION_RULES
+
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
         f"Jawaban Referensi (Singkat): {ctx.reference_short_answer or ''}\n"
@@ -459,6 +724,8 @@ def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
         f"Jawaban (Tier 1): {ctx.tier1_answer}\n"
         f"Alasan (Tier 3): {ctx.tier3_reason}"
     )
+    if reference_block:
+        user_prompt = reference_block + "\n\n" + user_prompt
     data = _call_llm_json(sys_prompt, user_prompt, model_identifier)
     code = str(data.get('misconception_code') or 'MK-LAIN').strip()
     
@@ -473,7 +740,7 @@ def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
     except Exception:
         conf = 0.8
         
-    return code, label_name, conf, str(data.get('reasoning', ''))
+    return code, label_name, conf, str(data.get('reasoning', '')), _parse_referensi(data.get('referensi'))
 
 
 # ----------------------------------------------------------------------------
@@ -496,6 +763,42 @@ def evaluate_decision_matrix(
     return MATRIX_RULES.get(key, ('LK', 'Tidak konsisten', 'SEDANG_RENDAH'))
 
 
+def _classify_one(similarity, threshold) -> str | None:
+    if similarity is None:
+        return None
+    return 'BENAR' if similarity >= threshold else 'SALAH'
+
+
+def classify_tiers(sim1, sim3, threshold_t1, threshold_t3) -> tuple[str | None, str | None]:
+    """The theta-based rule verdict per tier. Pure: no DB, no network.
+
+    `BENAR` iff `sim >= threshold`, else `SALAH`. A `None` similarity yields a
+    `None` verdict — a missing measurement is not a judgement, so it must never
+    be recorded as `SALAH` (the agreement metric counts only rows where both
+    sides exist).
+    """
+    return (
+        _classify_one(sim1, threshold_t1),
+        _classify_one(sim3, threshold_t3),
+    )
+
+
+def _driving_verdicts(llm_t1, llm_t3, rule_t1, rule_t3) -> tuple[str, str]:
+    """The verdict pair the matrix consumes (D11).
+
+    Under the default `'llm'` this is the LLM's verdict — byte-identical to the
+    pre-C3 behaviour. Under `'rule'` the shadow verdict drives, falling back to
+    the LLM verdict on a tier the rule could not measure (a `None` rule verdict
+    must never reach the matrix).
+    """
+    if settings.TIER_VERDICT_SOURCE == 'rule':
+        return (
+            rule_t1 if rule_t1 is not None else llm_t1,
+            rule_t3 if rule_t3 is not None else llm_t3,
+        )
+    return llm_t1, llm_t3
+
+
 # ----------------------------------------------------------------------------
 # 6. Full Analysis Pipeline Execution
 # ----------------------------------------------------------------------------
@@ -516,6 +819,55 @@ def analyze_submission(submission_id: str) -> str:
         # Resolve once so every module and the audit record use the same model.
         model_identifier = get_active_model_identifier()
 
+        # Reference retrieval (non-fatal — a retrieval failure never fails an
+        # analysis; the pipeline proceeds rubric-only, HANDOFF rule 4).
+        retrieval_query = f"{ctx.question_prompt}\n{ctx.tier1_answer}\n{ctx.tier3_reason}"
+        ctx.reference_chunks = retrieve_reference_chunks(
+            ctx.subject_id, ctx.topic_id, retrieval_query
+        )
+
+        # Shadow answer-similarity + theta rule verdict (C3). Non-fatal and
+        # optional: skipped entirely (zero embed calls) when SHADOW_RULE_VERDICT
+        # is off. It is computed once for the submission, so both branches
+        # (t3_kosong and the normal path) share it — similarity is a property of
+        # the submission, not of which modules ran. Under the default
+        # TIER_VERDICT_SOURCE='llm' it never drives the matrix.
+        if settings.SHADOW_RULE_VERDICT:
+            try:
+                sim_t1, sim_t3 = answer_similarity(
+                    ctx.tier1_answer, ctx.tier3_reason,
+                    ctx.reference_t1_vec, ctx.reference_t3_vec,
+                )
+            except EmbeddingError as e:  # noqa: BLE001 — embedding failure is non-fatal
+                logger.warning(
+                    'Answer-similarity embedding failed for %s (non-fatal): %s',
+                    submission_id, e,
+                )
+                sim_t1 = sim_t3 = None
+        else:
+            sim_t1 = sim_t3 = None
+
+        rule_t1, rule_t3 = classify_tiers(
+            sim_t1, sim_t3,
+            settings.ANSWER_SIM_T1_THRESHOLD,
+            settings.ANSWER_SIM_T3_THRESHOLD,
+        )
+        verdict_shadow = {
+            'rule_t1': rule_t1,
+            'rule_t3': rule_t3,
+            'sim_t1': sim_t1,
+            'sim_t3': sim_t3,
+            'threshold_t1': settings.ANSWER_SIM_T1_THRESHOLD,
+            'threshold_t3': settings.ANSWER_SIM_T3_THRESHOLD,
+            'source': settings.TIER_VERDICT_SOURCE,
+        }
+
+        # Citation state, filled by Modul B/C below (stays empty on the
+        # zero-chunk path and the t3_kosong path).
+        referensi = []
+        what_should_be_learned = []
+        mod_c_referensi = []
+
         # 1. Deterministic Heuristic Pre-Checks
         flags = compute_heuristic_flags(ctx.tier1_answer, ctx.tier3_reason)
         with connection.cursor() as cur:
@@ -528,12 +880,6 @@ def analyze_submission(submission_id: str) -> str:
         if 't3_kosong' in flags:
             mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
             mod_b_score = 'SALAH'
-            mod_b_exp = 'Alasan tidak diisi atau kurang dari 5 kata (t3_kosong). Diarahkan ke LK untuk penguatan materi dasar.'
-            student_feedback = {
-                'poin_tepat': 'Kesimpulan jawaban telah disampaikan.' if mod_a_score == 'BENAR' else 'Belum ada poin jawaban yang lengkap.',
-                'letak_kekeliruan': 'Kolom alasan (Tier 3) belum diisi atau terlalu singkat (kurang dari 5 kata) sehingga dasar pemikiran belum dapat dinilai.',
-                'konsep_seharusnya': f'Penalaran konseptual yang diharapkan: {ctx.reference_reason or ctx.model_answer}',
-            }
             mod_c_code = None
             mod_c_label = None
             mod_c_conf = 0.0
@@ -541,6 +887,12 @@ def analyze_submission(submission_id: str) -> str:
             category = 'LK'
             meaning = 'Tidak paham konsep / alasan kosong'
             risk = 'SEDANG_RENDAH'
+
+            # C3: the LLM verdict is always recorded, independent of source.
+            llm_t1_score = mod_a_score
+            llm_t3_score = mod_b_score
+            mod_a_score, mod_b_score = _driving_verdicts(
+                llm_t1_score, llm_t3_score, rule_t1, rule_t3)
 
         else:
             if 't1_berisi_alasan' in flags or 't3_redundan' in flags:
@@ -550,7 +902,7 @@ def analyze_submission(submission_id: str) -> str:
                 eval_b_ctx = ctx
 
             mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
-            mod_b_score, mod_b_exp, student_feedback = run_module_b(eval_b_ctx, model_identifier)
+            mod_b_score, referensi, what_should_be_learned = run_module_b(eval_b_ctx, model_identifier)
 
             # Safeguard C: Validasi di Python
             t3_words = [w for w in ctx.tier3_reason.strip().split() if w]
@@ -558,22 +910,43 @@ def analyze_submission(submission_id: str) -> str:
 
             if mod_b_score == 'BENAR' and len(t3_words) <= 3 and not has_math_derivation:
                 mod_b_score = 'SALAH'
-                mod_b_exp = 'Teks alasan terlalu singkat untuk memuat penurunan konsep ilmiah yang valid.'
-                student_feedback['letak_kekeliruan'] = 'Alasan terlalu singkat dan belum memuat penurunan rumus atau prinsip fisis yang lengkap.'
+
+            # C3: the LLM verdict is always recorded, before source selection
+            # (Safeguard C above already applies to the LLM verdict).
+            llm_t1_score = mod_a_score
+            llm_t3_score = mod_b_score
 
             # Modul C: Ambil code dan label_name
             mod_c_code = None
             mod_c_label = None
             mod_c_exp = ''
             mod_c_conf = 0.0
+            mod_c_referensi = []
             if mod_b_score == 'SALAH' or 't1_berisi_alasan' in flags:
-                mod_c_code, mod_c_label, mod_c_conf, mod_c_exp = run_module_c(ctx, model_identifier)
+                mod_c_code, mod_c_label, mod_c_conf, mod_c_exp, mod_c_referensi = run_module_c(ctx, model_identifier)
+
+            # Source selection (D11): 'llm' drives by default; 'rule' would use
+            # the shadow verdict, falling back to the LLM where unmeasured.
+            mod_a_score, mod_b_score = _driving_verdicts(
+                llm_t1_score, llm_t3_score, rule_t1, rule_t3)
 
             # Matriks Keputusan
             category, meaning, risk = evaluate_decision_matrix(
                 mod_a_score, ctx.tier2_confidence,
                 mod_b_score, ctx.tier4_confidence
             )
+
+        # 2b. Citation validation + grounding (valid citations only)
+        retrieved_by_id = {c['chunk_id']: c for c in ctx.reference_chunks}
+        seen_citation_ids = set()
+        combined_referensi = []
+        for ref in (referensi + mod_c_referensi):
+            cid = ref.get('chunk_id')
+            if cid in seen_citation_ids:
+                continue
+            seen_citation_ids.add(cid)
+            combined_referensi.append(ref)
+        references = validate_citations(combined_referensi, retrieved_by_id)
 
         # 3. Perhitungan Skor Biner All-or-Nothing (Target 3 & Target 4)
         if mod_a_score == 'BENAR' and mod_b_score == 'BENAR':
@@ -609,7 +982,7 @@ def analyze_submission(submission_id: str) -> str:
         explanation_lines = [
             f"Kategori: [{category}] {meaning}.",
             f"Jawaban (Tier 1): {mod_a_score} ({mod_a_exp}).",
-            f"Alasan (Tier 3): {mod_b_score} ({mod_b_exp}).",
+            f"Alasan (Tier 3): {mod_b_score}.",
         ]
         if mod_c_code and misc_role_label:
             display_text = mod_c_label if mod_c_label else mod_c_code
@@ -620,7 +993,7 @@ def analyze_submission(submission_id: str) -> str:
 
         concept_breakdown = {
             'module_a': {'score': mod_a_score, 'reasoning': mod_a_exp},
-            'module_b': {'score': mod_b_score, 'reasoning': mod_b_exp},
+            'module_b': {'score': mod_b_score},
             'module_c': {
                 'code': mod_c_code,
                 'label': mod_c_label,
@@ -634,10 +1007,11 @@ def analyze_submission(submission_id: str) -> str:
                 't3': mod_b_score, 't4_yakin': ctx.tier4_confidence >= 4,
                 'category': category, 'meaning': meaning, 'risk': risk,
             },
-            'student_feedback': student_feedback,
             'heuristic_flags': flags,
             'percentage_correct': float(percentage_correct),
             'intervention': intervention_text,
+            'references': references,
+            'what_should_be_learned': what_should_be_learned,
         }
 
         # 6. Simpan Hasil Analisis via Stored Procedure
@@ -647,8 +1021,12 @@ def analyze_submission(submission_id: str) -> str:
             cur.execute(
                 """
                 CALL sp_record_llm_analysis(
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, NULL
+                    %s::uuid, %s::varchar, %s::varchar, %s::numeric, %s::integer,
+                    %s::jsonb, %s::jsonb, %s::text, %s::numeric, %s::jsonb, %s::integer,
+                    %s::varchar, %s::varchar, %s::varchar, %s::varchar, %s::varchar,
+                    NULL,
+                    %s::numeric, %s::numeric, %s::integer, %s::jsonb,
+                    %s::numeric, %s::numeric, %s::varchar, %s::varchar, %s::jsonb
                 );
                 """,
                 [
@@ -658,7 +1036,7 @@ def analyze_submission(submission_id: str) -> str:
                     percentage_correct,
                     tier_level,
                     json.dumps(concept_breakdown, ensure_ascii=False),
-                    json.dumps([]),
+                    json.dumps(what_should_be_learned, ensure_ascii=False),
                     explanation,
                     Decimal('0.900'),
                     json.dumps({'concept_breakdown': concept_breakdown}),
@@ -668,6 +1046,17 @@ def analyze_submission(submission_id: str) -> str:
                     mod_c_code,
                     category,
                     risk,
+                    # C8/D17: the grounding metric and its input left together.
+                    # The columns stay (history), but no new row produces them.
+                    None,
+                    None,
+                    None,
+                    json.dumps({}, ensure_ascii=False),
+                    sim_t1,
+                    sim_t3,
+                    llm_t1_score,
+                    llm_t3_score,
+                    json.dumps(verdict_shadow, ensure_ascii=False),
                 ],
             )
 
@@ -675,6 +1064,20 @@ def analyze_submission(submission_id: str) -> str:
             'Four-Tier Submission %s dianalisis -> [%s] %s (Skor: %s%%) dalam %dms',
             submission_id, category, meaning, percentage_correct, total_ms
         )
+
+        # C4: enqueue reading material for every non-SC category. This is a cheap
+        # INSERT ... ON CONFLICT DO NOTHING and makes NO LLM call — generation is
+        # asynchronous (the 10-minute zombie window means it must not run here).
+        # A queue failure is non-fatal: it must never fail an analysis.
+        if category != 'SC' and getattr(ctx, 'question_version_id', None):
+            try:
+                from api.reading_materials import enqueue_reading_material
+                enqueue_reading_material(ctx.question_version_id, category)
+            except Exception as e:  # noqa: BLE001 — queueing must never fail an analysis
+                logger.warning(
+                    'Reading-material enqueue failed for %s (non-fatal): %s',
+                    submission_id, e,
+                )
         return 'PENDING_VALIDATION'
 
     except Exception as e:

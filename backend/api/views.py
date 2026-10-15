@@ -34,6 +34,7 @@ from .models import (
     ExamPackage,
     ExamPackageAttempt,
     ExamPackageQuestion,
+    GeneratedReadingMaterial,
     HelpArticle,
     LlmAnalysis,
     LlmModel,
@@ -2322,6 +2323,57 @@ class QuestionSetReviewView(APIView):
         })
 
 
+# C7: keys that belong to the lecturer's surface only. They are stripped from the
+# student review payload — the student never sees the calibration diagnostics.
+_STUDENT_HIDDEN_ANALYSIS_KEYS = (
+    'answer_similarity_t1',
+    'answer_similarity_t3',
+    'llm_t1_score',
+    'llm_t3_score',
+    'verdict_shadow',
+)
+
+
+def _student_reading_material(question_version_id, category):
+    """The material the LLM wrote for one question, or `None` (C7).
+
+    Served only for a `(question_version_id, category)` row with
+    `status='READY'`. A `PENDING`/`STALE`/`FAILED` row, an absent row, or the
+    `SC` category (D6 — a fully-correct confident student gets no remediation)
+    all return `None`: the student sees the material, or nothing. Never a
+    placeholder, and never the lecturer-only review/flag/staleness fields.
+    """
+    if not question_version_id or not category or category == 'SC':
+        return None
+    row = GeneratedReadingMaterial.objects.filter(
+        question_version_id=question_version_id, category=category, status='READY'
+    ).first()
+    if row is None:
+        return None
+    return {
+        'content_md': row.content_md,
+        'sources': row.sources_json or [],
+    }
+
+
+def _student_analysis_detail(analysis, breakdown, question_version_id):
+    """`_grounding_detail` restricted to the student surface (C7).
+
+    Keeps every pre-C5 key, drops the C5/C6 lecturer diagnostics
+    (`_STUDENT_HIDDEN_ANALYSIS_KEYS`) and replaces the verdict's citation list
+    with the student's own reading material (READY-only, or `None`).
+    """
+    from .validation_views import _grounding_detail
+
+    detail = _grounding_detail(analysis, breakdown)
+    for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
+        detail.pop(key, None)
+    detail['reading_material'] = _student_reading_material(
+        question_version_id, getattr(analysis, 'four_tier_category', None)
+    )
+    return detail
+
+
 class QuestionSetStudentReviewView(APIView):
     """Full package review for one student, supporting all submission attempts, 4-tier diagnostics, and package score aggregation."""
 
@@ -2422,7 +2474,10 @@ class QuestionSetStudentReviewView(APIView):
                         'module_c_code': getattr(analysis, 'module_c_code', None),
                         'four_tier_category': getattr(analysis, 'four_tier_category', None),
                         'risk_level': getattr(analysis, 'risk_level', None),
-                        'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        **_student_analysis_detail(
+                            analysis, analysis.concept_breakdown_json or {},
+                            s.question_version_id,
+                        ),
                         'validation': {
                             'status': validation.status,
                             'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
@@ -2972,6 +3027,7 @@ class ExamPackageStudentReviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, student_id):
+        from .validation_views import _grounding_detail
         try:
             package = ExamPackage.objects.select_related('subject').get(pk=pk)
         except ExamPackage.DoesNotExist:
@@ -3018,7 +3074,8 @@ class ExamPackageStudentReviewView(APIView):
                         'confidence': str(analysis.confidence), 'explanation': analysis.explanation, 'execution_time_ms': analysis.execution_time_ms,
                         'module_a_score': analysis.module_a_score, 'module_b_score': analysis.module_b_score,
                         'module_c_code': analysis.module_c_code, 'four_tier_category': analysis.four_tier_category,
-                        'risk_level': analysis.risk_level, 'concept_breakdown_json': analysis.concept_breakdown_json or {},
+                        'risk_level': analysis.risk_level,
+                        **_grounding_detail(analysis, analysis.concept_breakdown_json or {}),
                         'validation': {'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
                             'final_tier_level': validation.final_tier_level_snapshot, 'final_feedback': validation.final_feedback,
                             'lecturer_name': validation.lecturer.full_name, 'validated_at': validation.validated_at} if validation else None,
@@ -3583,25 +3640,8 @@ def _build_submission_package_groups(user):
                 evaluation_payload = None
 
                 if s.status == 'VALIDATED' and validation:
-                    breakdown = analysis.concept_breakdown_json or {}
-                    raw_student_fb = breakdown.get('student_feedback') or {}
-
-                    # Target 7: Umpan balik terstruktur 3 kartu
-                    student_feedback_payload = {
-                        'poin_tepat': raw_student_fb.get('poin_tepat') or (
-                            'Kesimpulan dan penalaran fisis yang disampaikan sudah tepat.'
-                            if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
-                            else 'Telah menyampaikan kesimpulan dan alasan.'
-                        ),
-                        'letak_kekeliruan': raw_student_fb.get('letak_kekeliruan') or (
-                            '-' if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
-                            else (analysis.module_b_score if analysis else 'Terdapat ketidaksinkronan konsep atau penalaran.')
-                        ),
-                        'konsep_seharusnya': raw_student_fb.get('konsep_seharusnya') or (
-                            version.model_answer
-                        ),
-                    }
-
+                    # C8 (D17): `student_feedback` is gone. It was the input to
+                    # the removed grounding metric and no surface read it.
                     final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
 
                     evaluation_payload = {
@@ -3611,7 +3651,6 @@ def _build_submission_package_groups(user):
                         'tier_level': validation.final_tier_level_snapshot or analysis.tier_level_snapshot,
                         'tier_label': validation.final_tier_label_snapshot or analysis.tier_label_snapshot,
                         'clinical_feedback': validation.final_feedback or analysis.explanation,
-                        'student_feedback': student_feedback_payload,
                         'misconception_info': {
                             'code': analysis.module_c_code,
                             'category': analysis.four_tier_category,

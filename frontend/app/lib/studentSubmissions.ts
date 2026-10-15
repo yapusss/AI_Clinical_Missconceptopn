@@ -1,9 +1,3 @@
-export type StudentFeedbackDetail = {
-  poin_tepat: string;
-  letak_kekeliruan: string;
-  konsep_seharusnya: string;
-};
-
 export type StudentEvaluation = {
   percentage_correct: number;
   is_score_modified: boolean;
@@ -11,12 +5,15 @@ export type StudentEvaluation = {
   tier_level: number;
   tier_label: string;
   clinical_feedback: string;
-  student_feedback?: StudentFeedbackDetail | null;
   misconception_info?: {
     code: string;
     category?: string;
   } | null;
   suggested_materials?: string[];
+  // C7: the reading material the LLM wrote for this question, or `null`. The
+  // student sees the text and the reference the LLM used — never the lecturer's
+  // citation/review/staleness diagnostics.
+  reading_material?: StudentReadingMaterial | null;
   validator_name?: string;
   validated_at?: string;
 };
@@ -122,6 +119,111 @@ export const SHORT_LABEL: Record<string, string> = {
 
 export const statusMeta = (status: string): StatusMeta =>
   STATUS_META[status] ?? { label: status, cls: "badge-role", hint: "" };
+
+// --- Grounding / citation shapes (R6; the student surface in R7 inherits these) ---
+
+export type GroundingReference = {
+  chunk_id: string;
+  document_id: string | null;
+  document_title: string | null;
+  page: number | null;
+  quote: string;
+  similarity: number | null;
+  valid: boolean;
+  reason_if_invalid: string | null;
+};
+
+export type LearnedTopic = {
+  topik: string;
+  sumber_chunk_ids: string[];
+};
+
+// --- Reading material / answer-similarity shapes (C6, consumed by the lecturer
+// surfaces). Additive to the R1–R6 grounding shapes; nothing above is removed.
+// C8 removed `GroundingSummary` / `GroundingPayload` with the superseded
+// grounding keys. `references` (provenance of the reading material) stays.
+
+export type ReadingMaterialSource = {
+  chunk_id: string;
+  document_id?: string | null;
+  document_title?: string | null;
+  page?: number | null;
+};
+
+export type VerdictShadow = {
+  rule_t1?: string | null;
+  rule_t3?: string | null;
+  sim_t1?: number | null;
+  sim_t3?: number | null;
+  threshold_t1?: number | null;
+  threshold_t3?: number | null;
+  source?: string | null;
+};
+
+export type ReadingMaterial = {
+  id: string;
+  status: string;
+  content_md: string | null;
+  sources: ReadingMaterialSource[];
+  grounded: boolean;
+  ungrounded_source_count: number;
+  stale: boolean;
+  stale_reason: string | null;
+  review_status: string;
+  flag_note: string | null;
+  prompt_version: string | null;
+  model_identifier: string | null;
+  attempts: number;
+};
+
+// The student-facing slice of a reading material (C7): the text and the
+// reference the LLM used. Lecturer-only diagnostics (status, review_status,
+// flag_note, staleness, cosine) are deliberately not part of this shape — the
+// student payload never carries them.
+export type StudentReadingMaterial = {
+  content_md: string | null;
+  sources: ReadingMaterialSource[];
+};
+
+// Flat keys the analysis detail adds alongside the grounding block (C5/C6).
+export type AnalysisSimilarityDetail = {
+  answer_similarity_t1?: number | null;
+  answer_similarity_t3?: number | null;
+  llm_t1_score?: string | null;
+  llm_t3_score?: string | null;
+  verdict_shadow?: VerdictShadow;
+  reading_material?: ReadingMaterial | null;
+};
+
+export type AnswerSimilarityBucket = {
+  count: number;
+  t1_mean: number | null;
+  t3_mean: number | null;
+};
+
+export type ReadingMaterialCounts = {
+  READY: number;
+  PENDING: number;
+  STALE: number;
+  FAILED: number;
+  total: number;
+};
+
+// The C5 aggregate keys (D9/D19). Every aggregate is shown with its denominator.
+export type AnswerSimilarityMetrics = {
+  answer_similarity_t1_mean?: number | null;
+  answer_similarity_t1_median?: number | null;
+  answer_similarity_t3_mean?: number | null;
+  answer_similarity_t3_median?: number | null;
+  answer_similarity_coverage?: number | null;
+  no_similarity_count?: number | null;
+  answer_similarity_by_category?: Record<string, AnswerSimilarityBucket>;
+  answer_similarity_by_prompt_version?: Record<string, AnswerSimilarityBucket>;
+  verdict_agreement_rate?: number | null;
+  verdict_disagreement_count?: number | null;
+  verdict_comparable_count?: number | null;
+  reading_material_counts?: ReadingMaterialCounts;
+};
 
 export type SemanticStatus = {
   badgeLabel: string;
