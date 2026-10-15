@@ -49,6 +49,8 @@ class Command(BaseCommand):
                             help='only write the import XLSX; do not touch the DB')
         parser.add_argument('--replace', action='store_true',
                             help='delete an existing question set with the same code first')
+        parser.add_argument('--limit', type=int, default=0,
+                            help='import only the first N COMPLETE rows (fast flow tests)')
         parser.add_argument('--xlsx-out', default='', help='also write the import-format XLSX here')
 
     def handle(self, *args, **o):
@@ -83,6 +85,13 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f'   Soal {no_soal}: {", ".join(probs)}'))
         else:
             self.stdout.write('incomplete rows: none')
+
+        if o['limit']:
+            complete = [r for r in rows if not row_problems(r)]
+            skipped_n = len(rows) - len(complete)
+            rows = complete[:o['limit']]
+            self.stdout.write(f'--limit {o["limit"]}: importing {len(rows)} complete row(s) '
+                              f'({skipped_n} incomplete row(s) skipped)')
 
         if o['xlsx_only']:
             subject = Subject.objects.filter(name__iexact=o['subject'], is_active=True).first()
