@@ -46,6 +46,20 @@ READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.0'
 # testable and the schema CHECK and the code agree.
 MATERIAL_CATEGORIES = ('LK', 'FP', 'FN', 'MSC')
 
+# Mirror of the frontend's levelToCode convention. `FP` and `MSC` both map to
+# level 2, so a bare level->code map would silently rewrite a lecturer's FP into
+# MSC; when the lecturer left the tier alone we keep the AI's own category.
+LEVEL_TO_CATEGORY = {4: 'SC', 3: 'FN', 2: 'MSC', 1: 'LK'}
+
+
+def lecturer_category(analysis, final_tier_level):
+    """The category code implied by the lecturer's final tier level, or None."""
+    if final_tier_level is None:
+        return None
+    if final_tier_level == analysis.tier_level_snapshot:
+        return analysis.four_tier_category
+    return LEVEL_TO_CATEGORY.get(final_tier_level)
+
 _SYSTEM_PROMPT = (
     "Anda adalah penulis materi bacaan (reading material) untuk mahasiswa pada asesmen Four-Tier.\n"
     "Tugas: tulis materi bacaan dalam Bahasa Indonesia formal yang membantu mahasiswa "

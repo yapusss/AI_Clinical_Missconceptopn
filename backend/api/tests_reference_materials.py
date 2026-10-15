@@ -8,6 +8,7 @@ the pipeline test monkeypatches `load_context`, retrieval, the three modules and
 """
 
 import json
+from contextlib import ExitStack
 from decimal import Decimal
 from io import StringIO
 from types import SimpleNamespace
@@ -37,8 +38,10 @@ from api.reading_materials import (
     enqueue_reading_material,
     generate_reading_material,
     input_fingerprint,
+    lecturer_category,
 )
 from api.validation_views import (
+    ValidationSubmitView,
     _analysis_metrics,
     _answer_similarity_metrics,
     _attach_document_titles,
@@ -1376,3 +1379,229 @@ class StudentReadingMaterialTests(SimpleTestCase):
         self.assertEqual(detail['reading_material']['sources'], self.SOURCES)
         for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
             self.assertNotIn(key, detail, key)
+
+
+class LecturerCategoryTests(SimpleTestCase):
+    """S1: level -> category mirrors the frontend and preserves FP vs MSC.
+
+    `FP` and `MSC` both map to level 2, so a bare level->code map would silently
+    rewrite a lecturer's FP into MSC. When the lecturer left the tier alone the
+    AI's own category is kept.
+    """
+
+    def _analysis(self, tier_level=2, category='FP'):
+        return SimpleNamespace(tier_level_snapshot=tier_level, four_tier_category=category)
+
+    def test_none_level_is_none(self):
+        self.assertIsNone(lecturer_category(self._analysis(), None))
+
+    def test_unchanged_tier_keeps_the_ai_category(self):
+        self.assertEqual(lecturer_category(self._analysis(2, 'FP'), 2), 'FP')
+        self.assertEqual(lecturer_category(self._analysis(2, 'MSC'), 2), 'MSC')
+
+    def test_changed_tier_maps_by_level(self):
+        a = self._analysis(tier_level=3, category='FN')
+        self.assertEqual(lecturer_category(a, 3), 'FN')   # equal -> AI category
+        self.assertEqual(lecturer_category(a, 4), 'SC')
+        self.assertEqual(lecturer_category(a, 2), 'MSC')
+        self.assertEqual(lecturer_category(a, 1), 'LK')
+
+    def test_unknown_level_is_none(self):
+        self.assertIsNone(lecturer_category(self._analysis(3, 'FN'), 9))
+
+
+class _FakeMaterialStore:
+    """A stand-in Postgres for `enqueue_reading_material`'s INSERT.
+
+    Only the ON CONFLICT guarantee is emulated: a repeated (question_version,
+    category) insert is a no-op (rowcount 0), a fresh one counts 1. Lets the
+    idempotency test drive the REAL enqueue helper without a database.
+    """
+
+    def __init__(self):
+        self.rows = set()
+
+    def cursor(self):
+        return _FakeMaterialCursor(self)
+
+
+class _FakeMaterialCursor:
+    def __init__(self, store):
+        self.store = store
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.rowcount = 0
+        if 'INSERT INTO generated_reading_materials' in sql:
+            key = (str(params[0]), params[1])
+            if key not in self.store.rows:
+                self.store.rows.add(key)
+                self.rowcount = 1
+
+
+def _hook_analysis(qv='qv-1', tier_level=3, category='FN'):
+    """The `LlmAnalysis` the validation hook reads the AI category from."""
+    return SimpleNamespace(
+        id='ana-1',
+        subject_id='subj-1',
+        submission_id='sub-1',
+        tier_level_snapshot=tier_level,
+        four_tier_category=category,
+        explanation='llm explanation',
+        concept_breakdown_json={},
+        submission=SimpleNamespace(
+            status='PENDING_VALIDATION',
+            question_version_id=qv,
+            refresh_from_db=MagicMock(),
+        ),
+    )
+
+
+def _hook_validation(**over):
+    """A stored `Validation` row as the hook re-reads it after commit."""
+    base = dict(
+        id='val-1',
+        status='ACCEPTED',
+        final_percentage=Decimal('50.00'),
+        final_tier_level_snapshot=2,
+        original_percentage=Decimal('40.00'),
+        original_tier_level_snapshot=3,
+        original_tier_id='tier-3',
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+class LecturerVerdictEnqueueTests(SimpleTestCase):
+    """S1: the lecturer's verdict, not the LLM's, decides the enqueued category.
+
+    DB-free like the rest of this module: the transaction, both raw-SQL branches
+    and the re-read are stubbed. `enqueue_reading_material` is observed at the
+    hook here; its own `PENDING` insert + ON CONFLICT guard are covered by
+    `EnqueueReadingMaterialTests`, and the two are composed in
+    `test_saving_the_same_salah_verdict_twice_leaves_one_row`.
+    """
+
+    def _run_post(self, data, analysis, validations, store=None, sql_error=None):
+        serializer = MagicMock()
+        serializer.is_valid.return_value = True
+        serializer.validated_data = data
+        request = SimpleNamespace(
+            user=SimpleNamespace(id='u-1', is_superuser=True), data={},
+        )
+
+        fake_conn = MagicMock()
+        cursor = fake_conn.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = None
+        if sql_error is not None:
+            fake_conn.cursor.side_effect = RuntimeError(sql_error)
+
+        llm = MagicMock()
+        llm.objects.filter.return_value.select_related.return_value.get.return_value = analysis
+
+        validation = MagicMock()
+        validation.objects.filter.return_value.first.side_effect = list(validations)
+
+        enqueue = MagicMock()
+        with ExitStack() as stack:
+            stack.enter_context(patch(
+                'api.validation_views.ValidationSubmitSerializer', return_value=serializer))
+            stack.enter_context(patch('api.validation_views.LlmAnalysis', llm))
+            stack.enter_context(patch('api.validation_views.Validation', validation))
+            stack.enter_context(patch('api.validation_views.connection', fake_conn))
+            stack.enter_context(patch('api.validation_views.transaction'))
+            if store is not None:
+                # Hook must call the REAL enqueue; only the DB engine is faked.
+                stack.enter_context(patch('api.reading_materials.connection', store))
+            else:
+                stack.enter_context(patch(
+                    'api.validation_views.enqueue_reading_material', enqueue))
+            response = ValidationSubmitView().post(request, 'ana-1')
+        return response, enqueue, store
+
+    def _salah_data(self, **over):
+        data = {
+            'status': 'EDITED',
+            'final_percentage': Decimal('50.00'),
+            'final_tier_level': 3,
+            'final_feedback': 'Perbaiki konsepnya.',
+            'notes': None,
+        }
+        data.update(over)
+        return data
+
+    def test_salah_new_validation_enqueues_lecturer_category(self):
+        analysis = _hook_analysis(tier_level=3, category='FN')
+        row = _hook_validation(final_tier_level_snapshot=3)
+        response, enqueue, _ = self._run_post(self._salah_data(), analysis, [None, row])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_called_once_with('qv-1', 'FN')
+
+    def test_salah_changed_tier_uses_the_lecturer_level_not_the_ai_category(self):
+        # AI said FN (level 3); the lecturer overrides to level 2 -> MSC, not FN.
+        analysis = _hook_analysis(tier_level=3, category='FN')
+        row = _hook_validation(final_tier_level_snapshot=2)
+        data = self._salah_data(final_tier_level=2)
+        response, enqueue, _ = self._run_post(data, analysis, [None, row])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_called_once_with('qv-1', 'MSC')
+
+    def test_benar_does_not_enqueue(self):
+        analysis = _hook_analysis(tier_level=4, category='SC')
+        row = _hook_validation(
+            final_percentage=Decimal('100.00'), final_tier_level_snapshot=4)
+        data = self._salah_data(
+            status='ACCEPTED', final_percentage=Decimal('100.00'), final_tier_level=4)
+        response, enqueue, _ = self._run_post(data, analysis, [None, row])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_not_called()
+
+    def test_rejected_does_not_enqueue(self):
+        data = {'status': 'REJECTED', 'final_feedback': None}
+        response, enqueue, _ = self._run_post(data, _hook_analysis(), [None])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_not_called()
+
+    def test_missing_validation_row_after_commit_does_not_enqueue(self):
+        # The hook re-reads the row; if it is absent nothing is served.
+        response, enqueue, _ = self._run_post(
+            self._salah_data(), _hook_analysis(), [None, None])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_not_called()
+
+    def test_correction_mode_changing_to_salah_enqueues(self):
+        existing = _hook_validation(final_tier_level_snapshot=3)
+        row = _hook_validation(
+            final_percentage=Decimal('30.00'), final_tier_level_snapshot=2)
+        analysis = _hook_analysis(tier_level=3, category='FN')
+        data = self._salah_data(
+            final_percentage=Decimal('30.00'), final_tier_level=2)
+        response, enqueue, _ = self._run_post(data, analysis, [existing, row])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_called_once_with('qv-1', 'MSC')
+
+    def test_saving_the_same_salah_verdict_twice_leaves_one_row(self):
+        store = _FakeMaterialStore()
+        analysis = _hook_analysis(tier_level=2, category='MSC')
+        row = _hook_validation(final_tier_level_snapshot=2)
+        data = self._salah_data(final_tier_level=2)
+        for _ in range(2):
+            response, _, _ = self._run_post(data, analysis, [None, row], store=store)
+            self.assertEqual(response.status_code, 201)
+        # The real enqueue ran on both saves; ON CONFLICT collapsed it to one row.
+        self.assertEqual(store.rows, {('qv-1', 'MSC')})
+
+    def test_rolled_back_validation_never_enqueues(self):
+        # The SQL branch raises inside the atomic block -> 400 before the hook.
+        response, enqueue, _ = self._run_post(
+            self._salah_data(), _hook_analysis(), [None, _hook_validation()],
+            sql_error='boom',
+        )
+        self.assertEqual(response.status_code, 400)
+        enqueue.assert_not_called()

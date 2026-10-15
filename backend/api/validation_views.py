@@ -34,7 +34,12 @@ from .models import (
     UserSubjectRole,
     Validation,
 )
-from .reading_materials import input_fingerprint, load_question_version_context
+from .reading_materials import (
+    enqueue_reading_material,
+    input_fingerprint,
+    lecturer_category,
+    load_question_version_context,
+)
 from .serializers import ValidationSubmitSerializer
 from .views import is_lecturer_for_subject, plain_text_preview
 
@@ -534,6 +539,17 @@ class ValidationSubmitView(APIView):
                     LlmAnalysis.objects.filter(pk=a.pk).update(concept_breakdown_json=breakdown)
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # S1: the lecturer's verdict decides which category's material the student is
+        # served (brief S-D1/S-D2). Runs after commit, so a rolled-back validation never
+        # leaves a PENDING row. `enqueue_reading_material` is idempotent and returns
+        # False for SC, so a Salah verdict with an unchanged category is a no-op.
+        if data['status'] != 'REJECTED':
+            val = Validation.objects.filter(analysis=a).first()
+            if val and val.final_percentage is not None and float(val.final_percentage) < 99.9:
+                category = lecturer_category(a, val.final_tier_level_snapshot)
+                if category:
+                    enqueue_reading_material(a.submission.question_version_id, category)
 
         a.submission.refresh_from_db()
         return Response({
