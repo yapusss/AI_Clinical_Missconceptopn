@@ -39,6 +39,7 @@ from api.reading_materials import (
     input_fingerprint,
 )
 from api.validation_views import (
+    _analysis_metrics,
     _answer_similarity_metrics,
     _attach_document_titles,
     _bucket_similarities,
@@ -46,7 +47,6 @@ from api.validation_views import (
     _compute_metrics,
     _filter_analyses_by_model,
     _grounding_detail,
-    _grounding_metrics,
     _reading_material_counts,
     _reading_material_detail,
     _reading_material_staleness,
@@ -210,7 +210,7 @@ class PromptInjectionTests(SimpleTestCase):
             }
 
         with patch('api.llm._call_llm_json', side_effect=fake_call):
-            _, _, _, referensi, wsl = run_module_b(ctx, 'test-model')
+            _, referensi, wsl = run_module_b(ctx, 'test-model')
 
         self.assertIn('SUMBER REFERENSI', captured['user'])
         self.assertIn('cid-1', captured['user'])
@@ -260,11 +260,7 @@ class ZeroChunkPipelineTests(SimpleTestCase):
                 patch('api.llm.load_context', return_value=ctx), \
                 patch('api.llm.retrieve_reference_chunks', return_value=[]), \
                 patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
-                patch('api.llm.run_module_b', return_value=(
-                    'BENAR', 'ok',
-                    {'poin_tepat': '', 'letak_kekeliruan': '', 'konsep_seharusnya': 'concept'},
-                    [], [],
-                )):
+                patch('api.llm.run_module_b', return_value=('BENAR', [], [])):
             result = llm.analyze_submission('sub-1')
 
         self.assertEqual(result, 'PENDING_VALIDATION')
@@ -272,13 +268,14 @@ class ZeroChunkPipelineTests(SimpleTestCase):
         params = recorded['params']
         self.assertEqual(params[2], llm.PROMPT_VERSION)      # source-derived prompt_version
         self.assertEqual(params[6], json.dumps([]))         # suggested_materials
+        # C8: no new analysis writes grounding (metric + input left together).
         self.assertIsNone(params[16])                       # grounding_similarity
         self.assertIsNone(params[17])                       # grounding_similarity_max
         self.assertIsNone(params[18])                       # grounding_citation_count
-        payload = json.loads(params[19])
-        self.assertEqual(payload['references'], [])
-        self.assertIsNone(payload['grounding']['citation_count'])
-        self.assertIsNone(payload['grounding']['similarity_mean'])
+        self.assertEqual(json.loads(params[19]), {})        # grounding_payload_json
+        breakdown = json.loads(params[5])
+        self.assertNotIn('student_feedback', breakdown)
+        self.assertNotIn('grounding', breakdown)
 
 
 def make_analysis(similarity=None, citation_count=None, category=None,
@@ -315,94 +312,72 @@ def make_validation(analysis, status='ACCEPTED', orig_tier=2, final_tier=2,
     )
 
 
-class GroundingMetricsTests(SimpleTestCase):
-    def test_aggregates_grounded_analyses(self):
-        a1 = make_analysis(similarity=0.50, citation_count=2, category='SC',
-                           references=[{'valid': True}, {'valid': True}])
-        a2 = make_analysis(similarity=0.70, citation_count=1, category='SC',
-                           references=[{'valid': True}, {'valid': False}])
-        a3 = make_analysis(similarity=None, citation_count=None, category='LK')
-        metrics = _grounding_metrics([a1, a2, a3])
+class AnalysisMetricsContractTests(SimpleTestCase):
+    """C8: the superseded grounding keys are gone from the analysis metrics."""
 
-        self.assertAlmostEqual(metrics['grounding_similarity_mean'], 0.6, places=4)
-        self.assertAlmostEqual(metrics['grounding_similarity_median'], 0.6, places=4)
-        self.assertEqual(metrics['citation_coverage'], round(2 / 3, 4))
-        self.assertEqual(metrics['citation_validity_rate'], 0.75)       # 3 valid / 4 total
-        self.assertEqual(metrics['hallucinated_citation_rate'], 0.25)
-        self.assertEqual(metrics['no_grounding_count'], 1)
-        self.assertEqual(metrics['grounding_by_category']['SC']['count'], 2)
-        self.assertAlmostEqual(
-            metrics['grounding_by_category']['SC']['similarity_mean'], 0.6, places=4)
-        self.assertEqual(
-            metrics['grounding_by_prompt_version']['four-tier-v2.9-rag']['count'], 2)
+    REMOVED_KEYS = (
+        'grounding_similarity_mean', 'grounding_similarity_median',
+        'citation_coverage', 'citation_validity_rate',
+        'hallucinated_citation_rate', 'grounding_by_category',
+        'grounding_by_prompt_version', 'no_grounding_count',
+    )
+    KEPT_KEYS = (
+        'answer_similarity_t1_mean', 'answer_similarity_t1_median',
+        'answer_similarity_t3_mean', 'answer_similarity_t3_median',
+        'answer_similarity_coverage', 'no_similarity_count',
+        'answer_similarity_by_category', 'answer_similarity_by_prompt_version',
+        'verdict_agreement_rate', 'verdict_disagreement_count',
+        'verdict_comparable_count', 'reading_material_counts',
+    )
 
-    def test_median_odd_count(self):
-        analyses = [
-            make_analysis(similarity=0.5, citation_count=1, references=[{'valid': True}]),
-            make_analysis(similarity=0.9, citation_count=1, references=[{'valid': True}]),
-            make_analysis(similarity=0.7, citation_count=1, references=[{'valid': True}]),
-        ]
-        metrics = _grounding_metrics(analyses)
-        self.assertAlmostEqual(metrics['grounding_similarity_median'], 0.7, places=4)
-        self.assertAlmostEqual(metrics['grounding_similarity_mean'], 0.7, places=4)
-
-    def test_zero_citations_is_all_none(self):
-        metrics = _grounding_metrics([make_analysis(category='LK')])
-        self.assertIsNone(metrics['grounding_similarity_mean'])
-        self.assertIsNone(metrics['grounding_similarity_median'])
-        self.assertIsNone(metrics['citation_validity_rate'])
-        self.assertIsNone(metrics['hallucinated_citation_rate'])
-        self.assertEqual(metrics['citation_coverage'], 0.0)
-        self.assertEqual(metrics['no_grounding_count'], 1)
+    def test_analysis_metrics_drops_removed_keys_keeps_kept_keys(self):
+        m = _analysis_metrics([make_analysis(category='SC', sim_t1=0.6, sim_t3=0.7)])
+        for key in self.REMOVED_KEYS:
+            self.assertNotIn(key, m, key)
+        for key in self.KEPT_KEYS:
+            self.assertIn(key, m, key)
+        self.assertEqual(m['reading_material_counts']['total'], 0)
 
     def test_compute_metrics_has_no_grounding_keys(self):
-        # Grounding no longer comes from the validations passed to
-        # _compute_metrics — it is sourced from all analyses in scope.
+        # Grounding is not a validation-derived metric; C8 also removed it from
+        # the analysis metrics. It must never reappear in either payload.
         analysis = make_analysis(similarity=0.8, citation_count=1, category='SC',
                                  references=[{'valid': True}])
         validation = make_validation(analysis)
         metrics = _compute_metrics([validation], [validation])
-        for key in (
-            'grounding_similarity_mean', 'grounding_similarity_median',
-            'citation_coverage', 'citation_validity_rate',
-            'hallucinated_citation_rate', 'grounding_by_category',
-            'grounding_by_prompt_version', 'no_grounding_count',
-        ):
+        for key in self.REMOVED_KEYS:
             self.assertNotIn(key, metrics)
 
 
 class ZeroValidationMetricsTests(SimpleTestCase):
-    def test_zero_validation_payload_reports_grounding(self):
-        grounded = make_analysis(similarity=0.6, citation_count=2, category='SC',
-                                 references=[{'valid': True}, {'valid': True}])
-        ungrounded = make_analysis(category='LK')
-        payload = _zero_validation_payload([grounded, ungrounded])
+    def test_zero_validation_payload_reports_analysis_metrics(self):
+        first = make_analysis(category='SC', sim_t1=0.6, sim_t3=0.7)
+        second = make_analysis(category='LK')
+        payload = _zero_validation_payload([first, second])
 
         self.assertEqual(payload['total_validations'], 0)
         self.assertIn('note', payload)
-        for key in (
-            'grounding_similarity_mean', 'grounding_similarity_median',
-            'citation_coverage', 'citation_validity_rate',
-            'hallucinated_citation_rate', 'grounding_by_category',
-            'grounding_by_prompt_version', 'no_grounding_count',
-        ):
+        for key in AnalysisMetricsContractTests.REMOVED_KEYS:
+            self.assertNotIn(key, payload)
+        for key in AnalysisMetricsContractTests.KEPT_KEYS:
             self.assertIn(key, payload)
-        self.assertAlmostEqual(payload['grounding_similarity_mean'], 0.6, places=4)
-        self.assertEqual(payload['citation_coverage'], 0.5)
-        self.assertEqual(payload['no_grounding_count'], 1)
+        self.assertAlmostEqual(payload['answer_similarity_t1_mean'], 0.6, places=4)
+        self.assertEqual(payload['no_similarity_count'], 1)
         self.assertEqual(len(payload['by_model']), 1)
         row = payload['by_model'][0]
         self.assertIsNone(row['tier_agreement_accuracy'])       # no validations
-        self.assertAlmostEqual(row['grounding_similarity_mean'], 0.6, places=4)
+        self.assertAlmostEqual(row['answer_similarity_t1_mean'], 0.6, places=4)
 
-    def test_by_model_row_grounding_from_analyses_not_validations(self):
-        analysis = make_analysis(similarity=0.7, citation_count=1,
-                                 references=[{'valid': True}])
+    def test_by_model_row_similarity_from_analyses_not_validations(self):
+        analysis = make_analysis(sim_t1=0.7, sim_t3=0.8)
         row = _by_model_row('m1', [], [analysis])
         self.assertEqual(row['total_validations'], 0)
         self.assertIsNone(row['tier_agreement_accuracy'])
-        self.assertAlmostEqual(row['grounding_similarity_mean'], 0.7, places=4)
-        self.assertEqual(row['citation_coverage'], 1.0)
+        self.assertAlmostEqual(row['answer_similarity_t1_mean'], 0.7, places=4)
+        self.assertAlmostEqual(row['answer_similarity_t3_mean'], 0.8, places=4)
+        self.assertEqual(row['answer_similarity_coverage'], 1.0)
+        for key in AnalysisMetricsContractTests.REMOVED_KEYS:
+            self.assertNotIn(key, row)
 
 
 class ByModelPerModelKeysTests(SimpleTestCase):
@@ -435,13 +410,15 @@ class ByModelPerModelKeysTests(SimpleTestCase):
                           shadow={'rule_t1': 'BENAR', 'rule_t3': 'SALAH'}),
         ]
 
-    def test_row_carries_all_new_keys_alongside_existing(self):
+    def test_row_carries_new_keys_and_drops_removed_grounding_keys(self):
         row = _by_model_row('model-a', [], self._model_a())
-        for key in ('model_identifier', 'grounding_similarity_mean', 'citation_coverage',
-                    'citation_validity_rate', 'hallucinated_citation_rate'):
-            self.assertIn(key, row)                      # existing keys kept
+        self.assertIn('model_identifier', row)
         for key in self.PER_MODEL_KEYS:
             self.assertIn(key, row)
+        # C8: the superseded grounding keys are gone from the per-model row.
+        for key in ('grounding_similarity_mean', 'citation_coverage',
+                    'citation_validity_rate', 'hallucinated_citation_rate'):
+            self.assertNotIn(key, row)
 
     def test_each_row_uses_only_its_own_model_analyses(self):
         a = _by_model_row('model-a', [], self._model_a())
@@ -469,12 +446,8 @@ class ByModelPerModelKeysTests(SimpleTestCase):
 
 
 class GroundingDetailShapeTests(SimpleTestCase):
-    def test_grounded_analysis_shape(self):
+    def test_references_kept_grounding_dropped(self):
         analysis = SimpleNamespace(
-            grounding_similarity=Decimal('0.5679'),
-            grounding_similarity_max=Decimal('0.6123'),
-            grounding_citation_count=2,
-            grounding_payload_json={'references': [{'valid': True}], 'grounding': {}},
             suggested_materials_json=[{'topik': 'Entropy'}],
         )
         breakdown = {
@@ -488,28 +461,20 @@ class GroundingDetailShapeTests(SimpleTestCase):
         self.assertIsNone(detail['references'][0]['document_title'])
         self.assertEqual(detail['what_should_be_learned'], breakdown['what_should_be_learned'])
         self.assertEqual(detail['suggested_materials'], analysis.suggested_materials_json)
-        self.assertAlmostEqual(detail['grounding']['similarity_mean'], 0.5679, places=4)
-        self.assertAlmostEqual(detail['grounding']['similarity_max'], 0.6123, places=4)
-        self.assertEqual(detail['grounding']['citation_count'], 2)
-        self.assertEqual(detail['grounding']['payload'], analysis.grounding_payload_json)
+        # C8: `references` is the provenance of the reading material and stays;
+        # the superseded grounding keys are gone.
+        for key in ('grounding_similarity', 'grounding_payload', 'grounding'):
+            self.assertNotIn(key, detail)
 
     def test_old_analysis_shape_is_stable(self):
-        analysis = SimpleNamespace(
-            grounding_similarity=None,
-            grounding_similarity_max=None,
-            grounding_citation_count=None,
-            grounding_payload_json={},
-            suggested_materials_json=[],
-        )
+        analysis = SimpleNamespace(suggested_materials_json=[])
         detail = _grounding_detail(analysis, {})
         self.assertEqual(detail['concept_breakdown_json'], {})
         self.assertEqual(detail['references'], [])
         self.assertEqual(detail['what_should_be_learned'], [])
         self.assertEqual(detail['suggested_materials'], [])
-        self.assertIsNone(detail['grounding']['similarity_mean'])
-        self.assertIsNone(detail['grounding']['similarity_max'])
-        self.assertIsNone(detail['grounding']['citation_count'])
-        self.assertEqual(detail['grounding']['payload'], {})
+        for key in ('grounding_similarity', 'grounding_payload', 'grounding'):
+            self.assertNotIn(key, detail)
 
 
 class MaterialUploadValidationTests(SimpleTestCase):
@@ -611,14 +576,17 @@ class ModelFilterTests(SimpleTestCase):
         payload = _zero_validation_payload(kept, 'does-not-exist')
         self.assertEqual(payload['total_validations'], 0)
         self.assertEqual(payload['model_filter'], 'does-not-exist')
-        self.assertIsNone(payload['grounding_similarity_mean'])
-        self.assertIsNone(payload['grounding_similarity_median'])
-        self.assertIsNone(payload['citation_coverage'])
-        self.assertIsNone(payload['citation_validity_rate'])
-        self.assertIsNone(payload['hallucinated_citation_rate'])
-        self.assertEqual(payload['grounding_by_category'], {})
-        self.assertEqual(payload['grounding_by_prompt_version'], {})
-        self.assertEqual(payload['no_grounding_count'], 0)
+        self.assertIsNone(payload['answer_similarity_t1_mean'])
+        self.assertIsNone(payload['answer_similarity_t1_median'])
+        self.assertIsNone(payload['answer_similarity_t3_mean'])
+        self.assertIsNone(payload['answer_similarity_coverage'])
+        self.assertEqual(payload['no_similarity_count'], 0)
+        self.assertEqual(payload['answer_similarity_by_category'], {})
+        self.assertEqual(payload['answer_similarity_by_prompt_version'], {})
+        self.assertEqual(payload['verdict_comparable_count'], 0)
+        self.assertIsNone(payload['verdict_agreement_rate'])
+        for key in AnalysisMetricsContractTests.REMOVED_KEYS:
+            self.assertNotIn(key, payload)
         self.assertEqual(payload['by_model'], [])
 
 
@@ -728,11 +696,7 @@ class ShadowPipelineTests(SimpleTestCase):
                 patch('api.llm.retrieve_reference_chunks', return_value=[]), \
                 patch('api.llm.answer_similarity', similarity), \
                 patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
-                patch('api.llm.run_module_b', return_value=(
-                    'BENAR', 'ok',
-                    {'poin_tepat': 'p', 'letak_kekeliruan': 'l', 'konsep_seharusnya': 'concept'},
-                    [], [],
-                )):
+                patch('api.llm.run_module_b', return_value=('BENAR', [], [])):
             result = llm.analyze_submission('sub-1')
         return result, recorded, similarity
 
@@ -764,10 +728,16 @@ class ShadowPipelineTests(SimpleTestCase):
         self.assertEqual(shadow['threshold_t3'], 0.75)
         self.assertEqual(shadow['source'], 'llm')
 
-        # D17: student_feedback is still written into concept_breakdown_json.
+        # C8/D17: student_feedback and Modul B reasoning are gone, and no new
+        # row writes the grounding they used to feed.
+        self.assertIsNone(params[16])            # grounding_similarity
+        self.assertIsNone(params[17])            # grounding_similarity_max
+        self.assertIsNone(params[18])            # grounding_citation_count
+        self.assertEqual(json.loads(params[19]), {})   # grounding_payload_json
         breakdown = json.loads(params[5])
-        self.assertIn('student_feedback', breakdown)
-        self.assertEqual(breakdown['student_feedback']['konsep_seharusnya'], 'concept')
+        self.assertNotIn('student_feedback', breakdown)
+        self.assertNotIn('grounding', breakdown)
+        self.assertEqual(breakdown['module_b'], {'score': 'BENAR'})
 
     @override_settings(SHADOW_RULE_VERDICT=False)
     def test_shadow_disabled_skips_embedding_and_records_nulls(self):
@@ -918,11 +888,7 @@ class ReadingMaterialQueueTests(SimpleTestCase):
         cursor = fake_connection.cursor.return_value.__enter__.return_value
         cursor.execute.side_effect = record
 
-        module_b_return = (
-            mod_b, 'ok',
-            {'poin_tepat': 'p', 'letak_kekeliruan': 'l', 'konsep_seharusnya': 'c'},
-            [], [],
-        )
+        module_b_return = (mod_b, [], [])
         with patch('api.llm.connection', fake_connection), \
                 patch('api.llm.load_context', return_value=ctx), \
                 patch('api.llm.retrieve_reference_chunks', return_value=[]), \
@@ -1065,40 +1031,15 @@ class ReadingMaterialCountsTests(SimpleTestCase):
         fake.objects.filter.assert_called_once_with(question_version_id__in={'qv-1'})
 
 
-class GroundingMetricsAdditivityTests(SimpleTestCase):
-    """C5 must ADD keys, never remove the pre-C5 ones."""
+class ZeroValidationPayloadShapeTests(SimpleTestCase):
+    """C8: the zero-validations payload keeps the C5 keys and drops the removed ones."""
 
-    PRE_C5_GROUNDING_KEYS = (
-        'grounding_similarity_mean', 'grounding_similarity_median',
-        'citation_coverage', 'citation_validity_rate',
-        'hallucinated_citation_rate', 'grounding_by_category',
-        'grounding_by_prompt_version', 'no_grounding_count',
-    )
-    C5_KEYS = (
-        'answer_similarity_t1_mean', 'answer_similarity_t1_median',
-        'answer_similarity_t3_mean', 'answer_similarity_t3_median',
-        'answer_similarity_coverage', 'no_similarity_count',
-        'answer_similarity_by_category', 'answer_similarity_by_prompt_version',
-        'verdict_agreement_rate', 'verdict_disagreement_count',
-        'verdict_comparable_count', 'reading_material_counts',
-    )
-
-    def test_old_keys_kept_and_new_keys_added(self):
-        a1 = make_analysis(similarity=0.5, citation_count=1, category='SC',
-                           references=[{'valid': True}], sim_t1=0.6, sim_t3=0.7)
-        m = _grounding_metrics([a1])
-        for key in self.PRE_C5_GROUNDING_KEYS:
-            self.assertIn(key, m)
-        for key in self.C5_KEYS:
-            self.assertIn(key, m)
-        self.assertEqual(m['reading_material_counts']['total'], 0)
-        self.assertEqual(m['verdict_comparable_count'], 0)
-        self.assertIsNone(m['verdict_agreement_rate'])
-
-    def test_zero_validation_payload_carries_every_key(self):
+    def test_zero_validation_payload_carries_kept_keys_only(self):
         payload = _zero_validation_payload([make_analysis(category='LK')])
         self.assertEqual(payload['total_validations'], 0)
-        for key in self.PRE_C5_GROUNDING_KEYS + self.C5_KEYS:
+        for key in AnalysisMetricsContractTests.REMOVED_KEYS:
+            self.assertNotIn(key, payload)
+        for key in AnalysisMetricsContractTests.KEPT_KEYS:
             self.assertIn(key, payload)
         self.assertIsNone(payload['answer_similarity_t1_mean'])
         self.assertEqual(payload['no_similarity_count'], 1)
@@ -1123,32 +1064,32 @@ class GroundingMetricsAdditivityTests(SimpleTestCase):
         self.assertEqual(payload['verdict_disagreement_count'], 0)
         self.assertIsNone(payload['verdict_agreement_rate'])
         self.assertEqual(payload['reading_material_counts']['total'], 0)
+        for key in AnalysisMetricsContractTests.REMOVED_KEYS:
+            self.assertNotIn(key, payload)
 
 
 class GroundingDetailAdditivityTests(SimpleTestCase):
-    """C5: the detail block gains the similarity + shadow keys, shape-stable."""
+    """C5: the detail block gains the similarity + shadow keys, shape-stable.
+
+    C8: it also drops the superseded grounding keys (`grounding_similarity`,
+    `grounding_payload`, nested `grounding`).
+    """
+
+    REMOVED_KEYS = ('grounding_similarity', 'grounding_payload', 'grounding')
 
     def test_pre_c5_row_still_exposes_new_keys_as_null(self):
-        analysis = SimpleNamespace(
-            grounding_similarity=None,
-            grounding_similarity_max=None,
-            grounding_citation_count=None,
-            grounding_payload_json={},
-            suggested_materials_json=[],
-        )
+        analysis = SimpleNamespace(suggested_materials_json=[])
         detail = _grounding_detail(analysis, {})
         for key in ('answer_similarity_t1', 'answer_similarity_t3',
                     'llm_t1_score', 'llm_t3_score'):
             self.assertIn(key, detail)
             self.assertIsNone(detail[key])
         self.assertEqual(detail['verdict_shadow'], {})
+        for key in self.REMOVED_KEYS:
+            self.assertNotIn(key, detail)
 
     def test_c5_row_exposes_similarity_verdict_and_shadow(self):
         analysis = SimpleNamespace(
-            grounding_similarity=Decimal('0.5000'),
-            grounding_similarity_max=None,
-            grounding_citation_count=1,
-            grounding_payload_json={},
             suggested_materials_json=[],
             answer_similarity_t1=Decimal('0.6000'),
             answer_similarity_t3=Decimal('0.7000'),
@@ -1162,9 +1103,9 @@ class GroundingDetailAdditivityTests(SimpleTestCase):
         self.assertEqual(detail['llm_t1_score'], 'BENAR')
         self.assertEqual(detail['llm_t3_score'], 'SALAH')
         self.assertEqual(detail['verdict_shadow'], {'rule_t1': 'BENAR', 'rule_t3': 'SALAH'})
-        # pre-C5 keys still present
-        self.assertIn('grounding', detail)
         self.assertIn('concept_breakdown_json', detail)
+        for key in self.REMOVED_KEYS:
+            self.assertNotIn(key, detail)
 
 
 class ReadingMaterialStalenessTests(SimpleTestCase):
@@ -1396,8 +1337,6 @@ class StudentReadingMaterialTests(SimpleTestCase):
 
     def _analysis(self):
         return SimpleNamespace(
-            grounding_similarity=None, grounding_similarity_max=None,
-            grounding_citation_count=None, grounding_payload_json={},
             suggested_materials_json=[],
             answer_similarity_t1=None, answer_similarity_t3=None,
             llm_t1_score=None, llm_t3_score=None, verdict_shadow_json={},
@@ -1415,8 +1354,12 @@ class StudentReadingMaterialTests(SimpleTestCase):
             detail = _student_analysis_detail(self._analysis(), {}, 'qv-1')
         for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
             self.assertNotIn(key, detail, key)
-        # Pre-C5 keys are kept; the reading material is present (None here).
-        self.assertIn('grounding', detail)
+        # C8: the grounding keys are gone; references/concept_breakdown and the
+        # reading material (None here) remain.
+        self.assertNotIn('grounding', detail)
+        self.assertNotIn('grounding_similarity', detail)
+        self.assertNotIn('grounding_payload', detail)
+        self.assertIn('references', detail)
         self.assertIn('concept_breakdown_json', detail)
         self.assertIn('reading_material', detail)
         self.assertIsNone(detail['reading_material'])

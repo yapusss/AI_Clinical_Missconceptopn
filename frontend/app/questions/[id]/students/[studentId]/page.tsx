@@ -31,7 +31,6 @@ import PageContainer from "../../../../components/PageContainer";
 import RichTextContent from "../../../../components/RichTextContent";
 import { apiFetch } from "../../../../lib/api";
 import type {
-  GroundingPayload,
   GroundingReference,
   LearnedTopic,
   StudentReadingMaterial,
@@ -66,8 +65,6 @@ type AttemptItem = {
     references?: GroundingReference[];
     what_should_be_learned?: LearnedTopic[];
     suggested_materials?: LearnedTopic[];
-    grounding_similarity?: number | null;
-    grounding_payload?: GroundingPayload | null;
     // C7: the material the LLM wrote for this question, or `null`.
     reading_material?: StudentReadingMaterial | null;
     validation: {

@@ -1,9 +1,3 @@
-export type StudentFeedbackDetail = {
-  poin_tepat: string;
-  letak_kekeliruan: string;
-  konsep_seharusnya: string;
-};
-
 export type StudentEvaluation = {
   percentage_correct: number;
   is_score_modified: boolean;
@@ -11,7 +5,6 @@ export type StudentEvaluation = {
   tier_level: number;
   tier_label: string;
   clinical_feedback: string;
-  student_feedback?: StudentFeedbackDetail | null;
   misconception_info?: {
     code: string;
     category?: string;
@@ -145,19 +138,10 @@ export type LearnedTopic = {
   sumber_chunk_ids: string[];
 };
 
-export type GroundingSummary = {
-  similarity_mean: number | null;
-  similarity_max: number | null;
-  citation_count: number | null;
-};
-
-export type GroundingPayload = {
-  references?: GroundingReference[];
-  grounding?: GroundingSummary;
-};
-
 // --- Reading material / answer-similarity shapes (C6, consumed by the lecturer
 // surfaces). Additive to the R1–R6 grounding shapes; nothing above is removed.
+// C8 removed `GroundingSummary` / `GroundingPayload` with the superseded
+// grounding keys. `references` (provenance of the reading material) stays.
 
 export type ReadingMaterialSource = {
   chunk_id: string;

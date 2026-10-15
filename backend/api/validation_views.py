@@ -170,25 +170,20 @@ def _reading_material_detail(analysis):
 
 
 def _grounding_detail(analysis, breakdown: dict) -> dict:
-    """Assemble the grounding/references block exposed to the lecturer UI.
+    """Assemble the reference/material block exposed to the lecturer UI.
 
-    Stable shape across prompt versions: pre-R3 analyses (NULL grounding, no
-    `references` key) still return every key with empty/None values, so the
-    frontend never has to guess. `grounding.similarity_mean` measures alignment
-    with the cited sources — it is NOT accuracy. C6 adds the generated
-    `reading_material` block (or `None`) without removing any existing key.
+    Stable shape across prompt versions. `references` is the provenance of the
+    generated reading material (D10) and is kept in C8 — it is not a verdict's
+    citation list. C8 removed the superseded grounding keys
+    (`grounding_similarity`, `grounding_payload` and the nested `grounding`
+    block); their DB columns stay so historical rows remain interpretable. C6
+    adds the generated `reading_material` block (or `None`).
     """
     return {
         'concept_breakdown_json': breakdown,
         'references': _attach_document_titles(breakdown.get('references') or []),
         'what_should_be_learned': breakdown.get('what_should_be_learned') or [],
         'suggested_materials': analysis.suggested_materials_json or [],
-        # Flat keys kept for the authoritative brief §10.1 contract.
-        'grounding_similarity': (
-            float(analysis.grounding_similarity)
-            if analysis.grounding_similarity is not None else None
-        ),
-        'grounding_payload': analysis.grounding_payload_json or {},
         # C5: answer-similarity + shadow verdict. Pre-C5 rows have NULLs; the
         # keys stay present (as `null`/`{}`) so the frontend never has to guess.
         'answer_similarity_t1': (
@@ -205,19 +200,6 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
         # C6: the generated reading material for this (question_version, category),
         # or `None` when none exists (SC, or a pre-drain analysis).
         'reading_material': _reading_material_detail(analysis),
-        # Nested block (R4 task §3).
-        'grounding': {
-            'similarity_mean': (
-                float(analysis.grounding_similarity)
-                if analysis.grounding_similarity is not None else None
-            ),
-            'similarity_max': (
-                float(analysis.grounding_similarity_max)
-                if analysis.grounding_similarity_max is not None else None
-            ),
-            'citation_count': analysis.grounding_citation_count,
-            'payload': analysis.grounding_payload_json or {},
-        },
     }
 
 
@@ -703,72 +685,24 @@ def _answer_similarity_metrics(analyses):
     }
 
 
-def _grounding_metrics(analyses):
-    """Grounding (citation-fidelity) metrics — properties of the ANALYSIS.
+def _analysis_metrics(analyses):
+    """Analysis-property aggregates (C5; the grounding block left in C8).
 
-    These are derived from the LLM's own output (`grounding_similarity` +
-    `grounding_payload_json.references`) and therefore require **no lecturer
-    validation** and no ground truth. Grounding similarity measures alignment
-    between the AI's advice and the passages it cited; it is NOT accuracy.
+    Answer similarity measures alignment with the **lecturer's reference
+    answer**; it needs no lecturer validation and is NOT accuracy. The verdict
+    is driven by the LLM, with the θ-based rule recorded in shadow, so
+    `verdict_agreement_rate` is a diagnostic (how often the two disagree), not a
+    quality score. `reading_material_counts` is the drain backlog.
 
-    C5 extends this block (additive only — every historical key is retained)
-    with answer-similarity aggregates, the shadow-vs-LLM verdict agreement and
-    the reading-material status counts. All are computed over **all current
-    analyses in scope**, model-filter-aware, exactly like grounding.
+    C8 (D17) removed the superseded grounding (citation-fidelity) block: its
+    input (`student_feedback`) left in the same commit, so a mean recomputed
+    from the residue would silently redefine the retained metric. The
+    `llm_analyses.grounding_*` columns stay for history; only the API surface
+    goes. All aggregates are computed over **all current analyses in scope**,
+    model-filter-aware.
     """
-    total = len(analyses)
-    grounded = [a for a in analyses if (a.grounding_citation_count or 0) >= 1]
-    sims = [
-        float(a.grounding_similarity)
-        for a in grounded
-        if a.grounding_similarity is not None
-    ]
-
-    valid_citations = 0
-    all_citations = 0
-    by_category = {}
-    by_prompt = {}
-    # Citation validity is counted over ALL analyses in scope (denominator =
-    # every citation in grounding_payload_json.references), independent of the
-    # similarity grouping below.
-    for a in analyses:
-        payload = a.grounding_payload_json or {}
-        for ref in (payload.get('references') or []):
-            all_citations += 1
-            if ref.get('valid'):
-                valid_citations += 1
-    for a in grounded:
-        sim = float(a.grounding_similarity) if a.grounding_similarity is not None else None
-        if sim is not None:
-            cat = getattr(a, 'four_tier_category', None) or 'UNKNOWN'
-            pv = getattr(a, 'prompt_version', None) or 'UNKNOWN'
-            by_category.setdefault(cat, {'count': 0, 'sum': 0.0})
-            by_category[cat]['count'] += 1
-            by_category[cat]['sum'] += sim
-            by_prompt.setdefault(pv, {'count': 0, 'sum': 0.0})
-            by_prompt[pv]['count'] += 1
-            by_prompt[pv]['sum'] += sim
-
-    validity_rate = round(valid_citations / all_citations, 4) if all_citations else None
-
     question_version_ids = _analysis_question_version_ids(analyses)
-
     return {
-        'grounding_similarity_mean': round(sum(sims) / len(sims), 4) if sims else None,
-        'grounding_similarity_median': round(_median(sims), 4) if sims else None,
-        'citation_coverage': round(len(grounded) / total, 4) if total else None,
-        'citation_validity_rate': validity_rate,
-        'hallucinated_citation_rate': round(1 - validity_rate, 4) if validity_rate is not None else None,
-        'grounding_by_category': {
-            k: {'count': v['count'], 'similarity_mean': round(v['sum'] / v['count'], 4)}
-            for k, v in by_category.items()
-        },
-        'grounding_by_prompt_version': {
-            k: {'count': v['count'], 'similarity_mean': round(v['sum'] / v['count'], 4)}
-            for k, v in by_prompt.items()
-        },
-        'no_grounding_count': total - len(grounded),
-        # --- C5 additive block (never a replacement for the keys above) ---
         **_answer_similarity_metrics(analyses),
         'reading_material_counts': _reading_material_counts(question_version_ids),
     }
@@ -779,7 +713,7 @@ def _compute_metrics(scored, all_validations):
 
     Returns the validation-derived payload only; `all_validations` feeds the
     rejection-rate denominator. Grounding keys are NOT merged here — they are
-    computed from all current analyses in scope (see `_grounding_metrics` /
+    computed from all current analyses in scope (see `_analysis_metrics` /
     `_scope_analyses`) so they never depend on a validation existing.
     """
     total = len(all_validations)
@@ -874,8 +808,6 @@ def _compute_metrics(scored, all_validations):
 
 METRICS_NOTE = (
     'Metrik kesesuaian = perbandingan dengan validasi dosen (satu-satunya ground truth di sistem). '
-    'Metrik grounding = keselarasan keluaran AI dengan kutipan sumber yang dipilihnya sendiri; '
-    'tidak memerlukan validasi dosen dan BUKAN akurasi. '
     'Answer similarity = cosine(jawaban siswa, jawaban referensi dosen), diukur terhadap jawaban '
     'referensi dosen, tidak memerlukan validasi dosen, dan BUKAN akurasi. '
     'Verdict digerakkan oleh LLM; aturan berbasis θ (theta) dicatat sebagai shadow dan tidak '
@@ -886,15 +818,15 @@ METRICS_NOTE = (
 
 
 def _scope_analyses(user, subject_id=None, model_filter=None):
-    """All CURRENT analyses in the caller's subject scope (grounding source).
+    """All CURRENT analyses in the caller's subject scope (analysis-metric source).
 
-    Grounding is a property of the analysis and needs no lecturer validation, so
-    it is computed over every current analysis in scope — not only the ones that
-    happen to have a validation. A grounding number that only appears (or
-    changes) after a validation would be useless as a pre-validation signal.
+    Answer similarity is a property of the analysis and needs no lecturer
+    validation, so it is computed over every current analysis in scope — not
+    only the ones that happen to have a validation. A number that only appears
+    (or changes) after a validation would be useless as a pre-validation signal.
 
     Scope = lecturer subject scope (superuser: all) + optional `?subject_id=` +
-    optional `?model=`. The model filter must narrow the grounding block too, or
+    optional `?model=`. The model filter must narrow the block too, or
     `?model=` would leak pooled numbers from other providers.
     """
     qs = LlmAnalysis.objects.filter(_scope_filter(user), is_current=True).select_related('submission')
@@ -920,20 +852,21 @@ def _filter_analyses_by_model(analyses, model_filter):
 def _by_model_row(identifier, validation_rows, analysis_rows):
     """One compact per-model comparison row.
 
-    Validation-derived fields come from `validation_rows`; the grounding keys
-    come from `analysis_rows` (that model's current analyses in scope), so a
-    model with analyses but no validations still reports grounding.
+    Validation-derived fields come from `validation_rows`; the answer-similarity
+    and shadow-agreement keys come from `analysis_rows` (that model's current
+    analyses in scope), so a model with analyses but no validations still
+    reports them. C8 removed the superseded grounding keys from this row — the
+    DB columns stay, but the API no longer exposes them.
 
     C5F (D16 — calibrate per model): the answer-similarity keys and the
     shadow-vs-LLM agreement keys are computed from the SAME `analysis_rows`
-    list the grounding keys use. They are not read from a fresh query — the
-    R5F bug was a second query that bypassed the model filter. "A θ fitted on
-    one model does not transfer to another", so every number the per-model
-    calibration reads has to live on the row.
+    list, not read from a fresh query — the R5F bug was a second query that
+    bypassed the model filter. "A θ fitted on one model does not transfer to
+    another", so every number the per-model calibration reads has to live on
+    the row.
     """
     scored = [v for v in validation_rows if v.status in ('ACCEPTED', 'EDITED')]
     m = _compute_metrics(scored, validation_rows)
-    g = _grounding_metrics(analysis_rows)
     s = _answer_similarity_metrics(analysis_rows)
     return {
         'model_identifier': identifier,
@@ -944,10 +877,6 @@ def _by_model_row(identifier, validation_rows, analysis_rows):
         'macro_f1': m['macro_f1'],
         'percentage_mae': m['percentage_mae'],
         'expected_calibration_error': m['expected_calibration_error'],
-        'grounding_similarity_mean': g['grounding_similarity_mean'],
-        'citation_coverage': g['citation_coverage'],
-        'citation_validity_rate': g['citation_validity_rate'],
-        'hallucinated_citation_rate': g['hallucinated_citation_rate'],
         # --- C5F: per-model similarity + shadow agreement (D16) ---
         # Same definitions as the top-level C5 block, but evaluated over this
         # model's own analyses so the per-model calibration is readable.
@@ -960,10 +889,12 @@ def _by_model_row(identifier, validation_rows, analysis_rows):
 
 
 def _zero_validation_payload(analyses, model_filter=None):
-    """Payload when no validations exist yet: grounding is still reported.
+    """Payload when no validations exist yet: analysis metrics are still reported.
 
-    Validation-derived metrics stay absent (no invented zeros); the 8 grounding
-    keys and one `by_model` row per model present in scope are always returned.
+    Validation-derived metrics stay absent (no invented zeros); the C5
+    answer-similarity/agreement/reading-material keys and one `by_model` row per
+    model present in scope are always returned. The superseded grounding keys
+    left the payload in C8.
     """
     identifiers = sorted({a.model_identifier for a in analyses})
     by_model = [
@@ -972,9 +903,9 @@ def _zero_validation_payload(analyses, model_filter=None):
     ]
     payload = {
         'total_validations': 0,
-        'message': 'Belum ada data validasi — metrik grounding tetap dihitung dari analisis; '
-                   'metrik kesesuaian tersedia setelah dosen memvalidasi analisis.',
-        **_grounding_metrics(analyses),
+        'message': 'Belum ada data validasi — answer similarity tetap dihitung dari analisis; '
+                   'metrik kesesuaian dengan dosen tersedia setelah dosen memvalidasi analisis.',
+        **_analysis_metrics(analyses),
         'by_model': by_model,
         'note': METRICS_NOTE,
     }
@@ -991,13 +922,13 @@ class ModelMetricsView(APIView):
     - MAE/RMSE on percentage
     - calibration: agreement rate per confidence bin (+ ECE)
     - rejection rate over ALL validations
-    - grounding (citation fidelity): mean/median similarity, citation coverage,
-      citation validity / hallucinated rate, per-category and per-prompt-version
-      breakdowns. Grounding is a property of the ANALYSIS and needs no lecturer
-      validation; it is source-alignment, NOT accuracy. It is computed over all
-      current analyses in scope — not only the ones that have a validation — so
-      the number is available as a pre-validation signal and never changes just
-      because a validation appears.
+    - answer similarity (alignment with the lecturer's reference answer), the
+      shadow-vs-LLM verdict agreement and the reading-material status counts.
+      These are properties of the ANALYSIS and need no lecturer validation; they
+      are source-alignment, NOT accuracy. They are computed over all current
+      analyses in scope — not only the ones that have a validation — so the
+      numbers are available as a pre-validation signal and never change just
+      because a validation appears. The superseded grounding block left in C8.
 
     Query params:
     - ?subject_id=   restrict to one subject
@@ -1023,8 +954,9 @@ class ModelMetricsView(APIView):
 
         all_validations = list(qs)
 
-        # Grounding source: all current analyses in scope (no validation needed),
-        # narrowed by ?subject_id= and ?model= so the filter restricts the block.
+        # Analysis-metric source: all current analyses in scope (no validation
+        # needed), narrowed by ?subject_id= and ?model= so the filter restricts
+        # the block.
         analyses = _filter_analyses_by_model(
             list(_scope_analyses(request.user, subject_id, model_filter)), model_filter
         )
@@ -1037,7 +969,7 @@ class ModelMetricsView(APIView):
             [v for v in all_validations if v.status in ('ACCEPTED', 'EDITED')],
             all_validations,
         )
-        payload.update(_grounding_metrics(analyses))
+        payload.update(_analysis_metrics(analyses))
 
         # by_model: the validation-derived model set is unchanged; the grounding
         # keys of each row come from that model's analyses in scope.
