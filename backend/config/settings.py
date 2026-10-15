@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -158,6 +159,11 @@ LLM_API_KEY = os.environ.get('LLM_API_KEY', 'local-llama-cpp')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:3b-instruct')
 LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '120'))
 LLM_MAX_RUNS = int(os.environ.get('LLM_MAX_RUNS', '3'))
+# Optional extra HTTP headers for the LLM endpoint, as a JSON object. Empty by
+# default, so deployments needing none are unaffected. A provider that requires the
+# client to identify itself (e.g. OpenCode Go's `x-opencode-session` plus its own
+# User-Agent) is configured here rather than hard-coding provider quirks in the client.
+LLM_EXTRA_HEADERS = json.loads(os.environ.get('LLM_EXTRA_HEADERS_JSON') or '{}')
 
 # Embeddings (OpenRouter — dims MUST match the knowledge_chunks vector(1536) column)
 EMBEDDINGS_BASE_URL = os.environ.get('EMBEDDINGS_BASE_URL', 'https://openrouter.ai/api/v1')
