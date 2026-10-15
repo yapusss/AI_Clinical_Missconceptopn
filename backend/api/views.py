@@ -27,6 +27,7 @@ from openpyxl.utils import get_column_letter
 from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissionSerializer
 
 from .authentication import TokenAuthentication
+from .reading_materials import lecturer_category
 from .models import (
     AuthToken,
     AiModelChange,
@@ -3644,6 +3645,16 @@ def _build_submission_package_groups(user):
                     # the removed grounding metric and no surface read it.
                     final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
 
+                    # S2 (brief S-D2/S-D3/S-D4): the material the student is served is keyed by the
+                    # LECTURER's verdict, never the LLM's category. A Benar verdict serves nothing,
+                    # so flipping Salah -> Benar hides it on the next request. `_student_reading_material`
+                    # already returns None for SC, for an absent row, and for any non-READY status.
+                    reading_material = None
+                    if final_score < 99.9:
+                        category = lecturer_category(analysis, validation.final_tier_level_snapshot)
+                        if category:
+                            reading_material = _student_reading_material(version.id, category)
+
                     evaluation_payload = {
                         'percentage_correct': final_score,
                         'is_score_modified': validation.is_score_modified,
@@ -3658,6 +3669,7 @@ def _build_submission_package_groups(user):
                         'suggested_materials': analysis.suggested_materials_json or [],
                         'validator_name': validation.lecturer.full_name,
                         'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
+                        'reading_material': reading_material,
                     }
 
                 attempts.append({
