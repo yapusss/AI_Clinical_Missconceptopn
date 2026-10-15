@@ -137,6 +137,7 @@ def sync_reference_embeddings(*, dry_run=False, limit=None, question_version_id=
         'rows_to_embed': 0,
         'rows_embedded': 0,
         'rows_skipped': 0,
+        'rows_skipped_empty': 0,
         'approx_tokens': 0,
     }
 
@@ -196,6 +197,17 @@ def sync_reference_embeddings(*, dry_run=False, limit=None, question_version_id=
             text = _effective_text(
                 answer_key, version.short_answer, version.model_answer, fallback_text,
             )
+            if not text:
+                # Nothing to embed: an imported question version with no reference
+                # answer leaves this mirror row empty. Sending '' makes the provider
+                # reject the WHOLE batch (`input[7]: expected string to have >=1
+                # characters`), so one empty row used to block every other row in the
+                # run — observed live: 104 rows left unembedded and the sweep failing
+                # on every drainer tick, forever. Leaving it unembedded is the honest
+                # state: `answer_similarity` reports None when there is no reference
+                # vector, which is exactly right for a question with no reference.
+                counts['rows_skipped_empty'] += 1
+                continue
             digest = _answer_hash(text)
 
             needs_embed = (
@@ -315,5 +327,6 @@ class Command(BaseCommand):
             f'rows_to_embed={counts["rows_to_embed"]} '
             f'rows_embedded={counts["rows_embedded"]} '
             f'rows_skipped={counts["rows_skipped"]} '
+            f'rows_skipped_empty={counts["rows_skipped_empty"]} '
             f'approx_tokens={counts["approx_tokens"]}'
         )
