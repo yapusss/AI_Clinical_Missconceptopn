@@ -784,7 +784,7 @@ class ExamPackageDuplicateTests(TransactionTestCase):
         token = AuthToken.generate(self.lecturer)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token.key}')
 
-    def test_duplicate_copies_settings_and_selected_versions_as_draft(self):
+    def test_duplicate_resets_timing_and_copies_selected_versions_as_draft(self):
         response = self.client.post(reverse('exam-package-duplicate', kwargs={'pk': self.package.id}))
 
         self.assertEqual(response.status_code, 201)
@@ -796,9 +796,9 @@ class ExamPackageDuplicateTests(TransactionTestCase):
         self.assertEqual(ExamPackage.objects.filter(code__iexact=duplicate.code).count(), 1)
         self.assertEqual(duplicate.title, self.package.title)
         self.assertEqual(duplicate.description, self.package.description)
-        self.assertEqual(duplicate.opens_at, self.package.opens_at)
-        self.assertEqual(duplicate.closes_at, self.package.closes_at)
-        self.assertEqual(duplicate.duration_minutes, self.package.duration_minutes)
+        self.assertIsNone(duplicate.opens_at)
+        self.assertIsNone(duplicate.closes_at)
+        self.assertIsNone(duplicate.duration_minutes)
         self.assertEqual(duplicate.max_attempts, self.package.max_attempts)
         self.assertEqual(duplicate.score_policy, self.package.score_policy)
         self.assertEqual(duplicate.password_hash, self.package.password_hash)
