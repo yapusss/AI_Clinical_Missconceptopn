@@ -386,10 +386,6 @@ export default function StudentPackageReviewPage({
   const isAlreadyValidated = Boolean(currentAttempt?.analysis?.validation);
   const isLocked = isAlreadyValidated && !isUnlocked;
 
-  const currentDraft: ValidationDraft | undefined = currentAttempt?.analysis
-    ? drafts[currentAttempt.analysis.id]
-    : undefined;
-
   const updateDraft = (
     patch: Partial<{
       isCorrect: boolean;
@@ -753,14 +749,6 @@ export default function StudentPackageReviewPage({
     }
   };
 
-  const resetToAiValues = () => {
-    if (!currentAttempt?.analysis) return;
-    updateDraft({
-      isCorrect: Number(currentAttempt.analysis.percentage_correct) >= 99.9,
-      finalCategory: currentAttempt.analysis.four_tier_category ?? "LK",
-    });
-  };
-
   const handleCancelUnlock = () => {
     if (!currentAttempt?.analysis) return;
     const a = currentAttempt.analysis;
@@ -782,14 +770,7 @@ export default function StudentPackageReviewPage({
     setIsUnlocked(false);
   };
 
-  const categoryMeta = currentAttempt?.analysis?.four_tier_category
-    ? (CATEGORY_STYLES[currentAttempt.analysis.four_tier_category] ??
-      CATEGORY_STYLES.LK)
-    : null;
-
   const summary = data?.summary;
-  const isAiPredictedCorrect =
-    Number(currentAttempt?.analysis?.percentage_correct || 0) >= 99.9;
 
   if (loading || !user) return null;
 
@@ -1026,120 +1007,64 @@ export default function StudentPackageReviewPage({
                   />
                 </div>
 
-                {/* REFERENSI vs JAWABAN MAHASISWA — berdampingan di bawah soal */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 flex flex-col justify-between space-y-3">
-                    <div>
+                {/* Bandingkan setiap jawaban mahasiswa dengan referensi yang setara. */}
+                <div className="space-y-3.5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
+                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
                         Jawaban Singkat (Referensi)
                       </span>
                       <RichTextContent
-                        html={
-                          activeQuestion.reference?.short_answer ??
-                          activeQuestion.short_answer ??
-                          ""
-                        }
+                        html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ""}
                         className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
                       />
                     </div>
-
-                    <div className="border-t border-outline-variant/20 pt-2.5">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
-                        Alasan Referensi
-                      </span>
-                      <RichTextContent
-                        html={
-                          activeQuestion.reference?.reason ??
-                          activeQuestion.model_answer ??
-                          ""
-                        }
-                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5 space-y-2.5 flex flex-col justify-between">
-                    <div>
+                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs font-bold uppercase tracking-wider text-primary">
-                          Jawaban Mahasiswa
-                        </span>
-                        {currentAttempt && (
-                          <span className="text-xs text-on-surface-variant font-mono-ui">
-                            {fmtDate(currentAttempt.submitted_at)}
-                          </span>
-                        )}
+                        <span className="text-xs font-bold uppercase tracking-wider text-primary">Jawaban Singkat Mahasiswa</span>
+                        {currentAttempt && <span className="text-xs text-on-surface-variant font-mono-ui">{fmtDate(currentAttempt.submitted_at)}</span>}
                       </div>
-
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold uppercase tracking-wide text-primary">
-                            1. Jawaban Singkat
-                          </span>
-                          <span className="font-mono-ui text-xs font-bold text-primary">
-                            {currentAttempt?.tier2_confidence ?? 1}/6 ·{" "}
-                            {(currentAttempt?.tier2_confidence ?? 1) >= 4
-                              ? "Yakin"
-                              : "Ragu"}
-                          </span>
+                          <span className="text-xs font-bold uppercase tracking-wide text-primary">Jawaban Singkat</span>
+                          <span className="font-mono-ui text-xs font-bold text-primary">{currentAttempt?.tier2_confidence ?? 1}/6 · {(currentAttempt?.tier2_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}</span>
                         </div>
-                        <p className="text-base font-medium text-on-surface leading-normal mt-0.5">
-                          {currentAttempt?.tier1_answer ||
-                            currentAttempt?.answer_text ||
-                            "Belum ada jawaban"}
-                        </p>
-                        {currentAttempt?.heuristic_flags?.includes(
-                          "t1_berisi_alasan",
-                        ) && (
+                        <p className="text-base font-medium text-on-surface leading-normal mt-0.5">{currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}</p>
+                        {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
                           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
                             <AlertTriangle size={12} className="shrink-0" />
-                            <span>
-                              Jawaban singkat memuat alasan — uraikan alasan
-                              ilmiah pada kolom Alasan.
-                            </span>
+                            <span>Jawaban singkat memuat alasan — uraikan alasan ilmiah pada kolom Alasan.</span>
                           </div>
                         )}
                       </div>
                     </div>
+                  </div>
 
-                    <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase tracking-wide text-primary">
-                          2. Alasan Ilmiah
-                        </span>
-                        <span className="font-mono-ui text-xs font-bold text-primary">
-                          {currentAttempt?.tier4_confidence ?? 1}/6 ·{" "}
-                          {(currentAttempt?.tier4_confidence ?? 1) >= 4
-                            ? "Yakin"
-                            : "Ragu"}
-                        </span>
-                      </div>
-                      <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">
-                        {currentAttempt?.tier3_reason ||
-                          currentAttempt?.answer_text ||
-                          "Belum ada alasan"}
-                      </p>
-                      {(currentAttempt?.heuristic_flags ?? []).some(
-                        (f) =>
-                          f === "t3_kosong" ||
-                          f === "t3_redundan" ||
-                          f === "t3_hafalan",
-                      ) && (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
-                          <AlertTriangle size={12} className="shrink-0" />
-                          {currentAttempt?.heuristic_flags?.includes(
-                            "t3_kosong",
-                          ) && <span>Alasan terlalu singkat.</span>}
-                          {currentAttempt?.heuristic_flags?.includes(
-                            "t3_redundan",
-                          ) && <span>Alasan mengulang jawaban.</span>}
-                          {currentAttempt?.heuristic_flags?.includes(
-                            "t3_hafalan",
-                          ) && (
-                            <span>Alasan hafalan rumus tanpa penerapan.</span>
-                          )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
+                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">Alasan Referensi</span>
+                      <RichTextContent
+                        html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ""}
+                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
+                      />
+                    </div>
+                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
+                      <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Alasan Mahasiswa</span>
+                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold uppercase tracking-wide text-primary">Alasan Ilmiah</span>
+                          <span className="font-mono-ui text-xs font-bold text-primary">{currentAttempt?.tier4_confidence ?? 1}/6 · {(currentAttempt?.tier4_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}</span>
                         </div>
-                      )}
+                        <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">{currentAttempt?.tier3_reason || currentAttempt?.answer_text || "Belum ada alasan"}</p>
+                        {(currentAttempt?.heuristic_flags ?? []).some((flag) => flag === "t3_kosong" || flag === "t3_redundan" || flag === "t3_hafalan") && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+                            <AlertTriangle size={12} className="shrink-0" />
+                            {currentAttempt?.heuristic_flags?.includes("t3_kosong") && <span>Alasan terlalu singkat.</span>}
+                            {currentAttempt?.heuristic_flags?.includes("t3_redundan") && <span>Alasan mengulang jawaban.</span>}
+                            {currentAttempt?.heuristic_flags?.includes("t3_hafalan") && <span>Alasan hafalan rumus tanpa penerapan.</span>}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1154,19 +1079,6 @@ export default function StudentPackageReviewPage({
                           REKOMENDASI AI:
                         </span>
 
-                        <span
-                          className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
-                            CATEGORY_STYLES[
-                              currentAttempt.analysis.four_tier_category ?? "LK"
-                            ]?.badgeCls
-                          }`}
-                          title={categoryMeta?.detailExpl}
-                        >
-                          [{currentAttempt.analysis.four_tier_category}]{" "}
-                          {categoryMeta?.label}
-                          <Info size={11} className="opacity-70" />
-                        </span>
-
                         {currentAttempt.analysis.run_number > 1 && (
                           <span
                             className="font-mono-ui text-xs font-bold inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400"
@@ -1178,28 +1090,6 @@ export default function StudentPackageReviewPage({
                           </span>
                         )}
 
-                        <span
-                          className={`font-mono-ui font-bold text-xs px-2.5 py-0.5 rounded border inline-flex items-center gap-1 ${
-                            isAiPredictedCorrect
-                              ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                              : "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                          }`}
-                        >
-                          {isAiPredictedCorrect
-                            ? "Prediksi: Benar"
-                            : "Prediksi: Salah"}
-                        </span>
-
-                        <span className="text-xs text-on-surface-variant">
-                          Jawaban:{" "}
-                          <strong className="text-on-surface">
-                            {currentAttempt.analysis.module_a_score}
-                          </strong>{" "}
-                          · Alasan:{" "}
-                          <strong className="text-on-surface">
-                            {currentAttempt.analysis.module_b_score}
-                          </strong>
-                        </span>
                       </div>
 
                       <button
@@ -1234,19 +1124,6 @@ export default function StudentPackageReviewPage({
                       <div className="pt-2 mt-1.5 border-t border-outline-variant/20 text-xs space-y-1.5 text-on-surface-variant animate-fade-in">
                         <div className="bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/25 whitespace-pre-wrap leading-relaxed">
                           {currentAttempt.analysis.explanation}
-                        </div>
-                        <div className="flex items-center justify-between text-xs font-mono-ui text-on-surface-variant/80">
-                          <span>
-                            Tingkat Keyakinan Model AI:{" "}
-                            {Number(currentAttempt.analysis.confidence).toFixed(
-                              2,
-                            )}
-                          </span>
-                          <span>
-                            Waktu Analisis:{" "}
-                            {currentAttempt.analysis.execution_time_ms ?? "-"}{" "}
-                            ms
-                          </span>
                         </div>
                       </div>
                     )}
@@ -1290,10 +1167,6 @@ export default function StudentPackageReviewPage({
                               ]
                             }
                             )
-                          </span>
-                        ) : currentDraft ? (
-                          <span className="text-xs font-semibold text-primary bg-primary-fixed px-2.5 py-0.5 rounded-full border border-primary/30 inline-flex items-center gap-1">
-                            ● Draft tersimpan
                           </span>
                         ) : (
                           <span className="text-xs font-semibold text-on-surface-variant bg-surface-container px-2.5 py-0.5 rounded-full border border-outline-variant/30">
@@ -1437,23 +1310,6 @@ export default function StudentPackageReviewPage({
                                 🔴 Salah
                               </button>
                             </div>
-                            <div className="mt-1.5 text-xs text-on-surface-variant flex items-center gap-1.5">
-                              <span>
-                                Rekomendasi AI:{" "}
-                                <strong className="text-on-surface font-mono-ui">
-                                  {isAiPredictedCorrect ? "Benar" : "Salah"}
-                                </strong>
-                              </span>
-                              <span className="text-outline-variant">·</span>
-                              <button
-                                type="button"
-                                onClick={resetToAiValues}
-                                className="text-primary hover:underline font-semibold cursor-pointer inline-flex items-center gap-0.5"
-                                title="Gunakan nilai rekomendasi AI"
-                              >
-                                <RotateCcw size={10} /> Reset ke AI
-                              </button>
-                            </div>
                           </div>
 
                           {/* Diagnosis Akhir Dosen */}
@@ -1482,20 +1338,6 @@ export default function StudentPackageReviewPage({
                                 { value: "FN", label: "[FN] False Negative" },
                               ]}
                             />
-                            <span className="text-xs text-on-surface-variant mt-1.5 flex items-center gap-1.5">
-                              AI merekomendasikan:{" "}
-                              <strong
-                                className={`font-mono-ui text-xs font-bold px-2 py-0.5 rounded-md ${
-                                  CATEGORY_STYLES[
-                                    currentAttempt.analysis
-                                      .four_tier_category ?? "LK"
-                                  ]?.badgeCls
-                                }`}
-                              >
-                                [{currentAttempt.analysis.four_tier_category}]{" "}
-                                {categoryMeta?.label}
-                              </strong>
-                            </span>
                           </div>
 
                           {/* Referensi & Materi — In Development */}
@@ -1596,11 +1438,6 @@ export default function StudentPackageReviewPage({
                                 Batal Koreksi
                               </button>
                             )}
-                            <span className="text-xs text-on-surface-variant">
-                              {currentDraft
-                                ? "Draft tersimpan otomatis — dikirim lewat “Selesai Evaluasi”."
-                                : "Draft dibuat otomatis saat soal dibuka."}
-                            </span>
                           </div>
                         </div>
                       </div>
@@ -1669,8 +1506,6 @@ export default function StudentPackageReviewPage({
                 {data.questions.map((q, idx) => {
                   const isCurrent = idx === activeQuestionIdx;
                   const isAnswered = q.attempts.length > 0;
-                  const draftAid = latestAttemptOf(q)?.analysis?.id;
-                  const hasDraft = draftAid ? Boolean(drafts[draftAid]) : false;
                   const hasPendingValidation = q.attempts.some(
                     (a) => a.status === "PENDING_VALIDATION",
                   );
@@ -1733,9 +1568,6 @@ export default function StudentPackageReviewPage({
                       <span
                         className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
                       />
-                      {hasDraft && (
-                        <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest bg-primary" />
-                      )}
                     </button>
                   );
                 })}
@@ -1753,10 +1585,6 @@ export default function StudentPackageReviewPage({
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
                   <span>Menunggu Validasi</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
-                  <span>Draft tersimpan</span>
                 </div>
               </div>
             </div>
