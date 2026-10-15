@@ -524,7 +524,6 @@ function SubmissionPackageDetailPageContent() {
                 <div className="flex flex-wrap items-center gap-2 py-3">
                   {group.questions.map((q, idx) => {
                     const isCurrent = idx === activeQuestionIdx;
-                    const isAnswered = q.attempts.length > 0;
                     const isValidated = q.attempts.some(
                       (a) => a.status === "VALIDATED",
                     );
@@ -536,8 +535,8 @@ function SubmissionPackageDetailPageContent() {
 
                     let boxBorderCls =
                       "border-outline-variant/50 bg-surface-container text-on-surface-variant";
-                    let dotColor = "bg-slate-400";
-                    let statusTitle = "Belum Dijawab";
+                    let dotColor: string | null = null;
+                    let statusTitle = "Hasil belum tersedia";
 
                     if (isValidated) {
                       if (isCorrect) {
@@ -551,11 +550,6 @@ function SubmissionPackageDetailPageContent() {
                         dotColor = "bg-rose-400";
                         statusTitle = "Jawaban Salah";
                       }
-                    } else if (isAnswered) {
-                      boxBorderCls =
-                        "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
-                      dotColor = "bg-amber-400";
-                      statusTitle = "Menunggu Validasi";
                     }
 
                     return (
@@ -571,9 +565,11 @@ function SubmissionPackageDetailPageContent() {
                         title={`Soal ${idx + 1}: ${statusTitle}`}
                       >
                         {idx + 1}
-                        <span
-                          className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
-                        />
+                        {dotColor && (
+                          <span
+                            className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
+                          />
+                        )}
                       </button>
                     );
                   })}
@@ -587,10 +583,6 @@ function SubmissionPackageDetailPageContent() {
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-rose-400 shrink-0" />
                     <span>Jawaban Salah</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                    <span>Menunggu Validasi</span>
                   </div>
                 </div>
               </div>

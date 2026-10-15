@@ -418,7 +418,7 @@ function AnswerSetContent() {
             </h3>
             <ul className="list-disc pl-5 space-y-2 text-xs text-on-surface-variant leading-relaxed">
               <li>
-                <strong>1. Kesimpulan / Jawaban Singkat:</strong> Tuliskan
+                <strong>1. Jawaban Singkat:</strong> Tuliskan
                 kesimpulan langsung atas pertanyaan, tanpa penjelasan panjang
                 (maksimal 120 karakter).
               </li>
@@ -428,7 +428,7 @@ function AnswerSetContent() {
                 4–6: Yakin).
               </li>
               <li>
-                <strong>3. Alasan / Penalaran Ilmiah:</strong> Uraikan dasar
+                <strong>3. Alasan:</strong> Uraikan dasar
                 logika dan penjelasan konsep ilmiah mengapa Anda memilih
                 kesimpulan tersebut.
               </li>
@@ -522,12 +522,12 @@ function AnswerSetContent() {
                 />
               </section>
 
-              {/* 1. Kesimpulan / Jawaban Singkat */}
+              {/* 1. Jawaban Singkat */}
               <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                      1. Kesimpulan / Jawaban Singkat
+                      1. Jawaban Singkat
                     </h3>
                     <p className="text-xs text-on-surface-variant mt-0.5">
                       Maksimal 120 karakter.
@@ -573,13 +573,13 @@ function AnswerSetContent() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
+                <div className="grid grid-cols-3 gap-2 pt-1 sm:w-fit sm:grid-cols-6">
                   {CONFIDENCE_LEVELS.map((lvl) => {
                     const isSelected = currentAnswer.t2_confidence === lvl.val;
                     return (
                       <label
                         key={lvl.val}
-                        className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
+                        className={`flex h-11 w-full items-center justify-center rounded-lg border text-center cursor-pointer transition-colors sm:w-11 ${
                           isSelected
                             ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
                             : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
@@ -595,7 +595,7 @@ function AnswerSetContent() {
                           }
                           className="hidden"
                         />
-                        <span className="font-mono-ui text-base">
+                        <span className="font-mono-ui text-sm">
                           {lvl.val}
                         </span>
                       </label>
@@ -604,11 +604,11 @@ function AnswerSetContent() {
                 </div>
               </section>
 
-              {/* 3. Alasan / Penalaran Ilmiah */}
+              {/* 3. Alasan */}
               <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
                 <div>
                   <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                    3. Alasan / Penalaran Ilmiah
+                      3. Alasan
                   </h3>
                 </div>
 
@@ -632,13 +632,13 @@ function AnswerSetContent() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
+                <div className="grid grid-cols-3 gap-2 pt-1 sm:w-fit sm:grid-cols-6">
                   {CONFIDENCE_LEVELS.map((lvl) => {
                     const isSelected = currentAnswer.t4_confidence === lvl.val;
                     return (
                       <label
                         key={lvl.val}
-                        className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
+                        className={`flex h-11 w-full items-center justify-center rounded-lg border text-center cursor-pointer transition-colors sm:w-11 ${
                           isSelected
                             ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
                             : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
@@ -654,7 +654,7 @@ function AnswerSetContent() {
                           }
                           className="hidden"
                         />
-                        <span className="font-mono-ui text-base">
+                        <span className="font-mono-ui text-sm">
                           {lvl.val}
                         </span>
                       </label>
