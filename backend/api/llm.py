@@ -110,6 +110,9 @@ def get_llm_client() -> OpenAI:
         base_url=settings.LLM_BASE_URL,
         api_key=settings.LLM_API_KEY,
         timeout=getattr(settings, 'LLM_TIMEOUT', 120.0),
+        # Provider-required headers (LLM_EXTRA_HEADERS_JSON). None when unset, so
+        # existing deployments send exactly what they did before.
+        default_headers=getattr(settings, 'LLM_EXTRA_HEADERS', None) or None,
     )
 
 
