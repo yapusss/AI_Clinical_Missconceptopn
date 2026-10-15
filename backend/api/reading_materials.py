@@ -30,6 +30,7 @@ from django.db import connection
 
 from api.llm import (
     FourTierContext,
+    LlmTransientError,
     _call_llm_json,
     build_reference_block,
     get_active_model_identifier,
@@ -331,6 +332,17 @@ def generate_reading_material(ctx, category) -> dict:
             'ungrounded_source_count': ungrounded,
             'chunks_retrieved': len(chunks),
         }
+    except LlmTransientError as e:
+        # Provider-side and temporary (429/5xx/timeout): leave the row PENDING and spend
+        # NO attempt, so the next drain picks it up. Marking it FAILED here is what made
+        # a few minutes of exhausted quota permanently kill a reading material — FAILED
+        # is terminal (`_select_work` only ever selects PENDING/STALE).
+        logger.warning(
+            'Reading-material generation deferred for %s/%s: %s',
+            question_version_id, category, e,
+        )
+        return {'status': 'DEFERRED', 'error': str(e)}
+
     except Exception as e:  # noqa: BLE001 — generation must never raise
         logger.warning(
             'Reading-material generation failed for %s/%s (non-fatal): %s',

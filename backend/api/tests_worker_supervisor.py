@@ -20,6 +20,7 @@ import os
 from django.test import SimpleTestCase, override_settings
 
 from api import worker_health, worker_supervisor
+from api import llm
 
 
 class ShouldSuperviseTests(SimpleTestCase):
@@ -154,6 +155,36 @@ class SupervisorGoneTests(SimpleTestCase):
         with self._env('1234'):
             with mock.patch.object(worker_health, 'worker_status', return_value=[row]):
                 self.assertFalse(worker_health.supervisor_gone())
+
+
+class TransientErrorTests(SimpleTestCase):
+    """A provider rate limit must never be treated as a permanent failure."""
+
+    def _exc(self, name, status_code=None):
+        exc = type(name, (Exception,), {})('boom')
+        if status_code is not None:
+            exc.status_code = status_code
+        return exc
+
+    def test_rate_limits_and_5xx_are_transient(self):
+        for code in (408, 429, 500, 502, 503, 504):
+            self.assertTrue(llm.is_transient_error(self._exc('SomeError', code)), code)
+
+    def test_sdk_timeout_and_connection_errors_are_transient(self):
+        for name in ('RateLimitError', 'APITimeoutError', 'APIConnectionError',
+                     'InternalServerError'):
+            self.assertTrue(llm.is_transient_error(self._exc(name)), name)
+
+    def test_permanent_errors_are_not_transient(self):
+        for code in (400, 401, 403, 404, 422):
+            self.assertFalse(llm.is_transient_error(self._exc('SomeError', code)), code)
+        self.assertFalse(llm.is_transient_error(ValueError('LLM output is not valid JSON')))
+        self.assertFalse(llm.is_transient_error(None))
+
+    def test_transient_error_is_still_an_analysis_error(self):
+        # A caller that only catches LlmAnalysisError must not silently start treating a
+        # rate limit as a hard failure — subclassing keeps the old behaviour a superset.
+        self.assertTrue(issubclass(llm.LlmTransientError, llm.LlmAnalysisError))
 
 
 class ReferenceEmbeddingEmptyTextTests(SimpleTestCase):
