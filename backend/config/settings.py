@@ -187,3 +187,12 @@ ANSWER_SIM_T3_THRESHOLD = float(os.environ.get('ANSWER_SIM_T3_THRESHOLD', '0.75'
 READING_MATERIAL_TEMPERATURE = float(os.environ.get('READING_MATERIAL_TEMPERATURE', '0.0'))
 READING_MATERIAL_MAX_RUNS = int(os.environ.get('READING_MATERIAL_MAX_RUNS', '3'))
 READING_MATERIAL_DRAIN_BATCH = int(os.environ.get('READING_MATERIAL_DRAIN_BATCH', '10'))
+
+# Background LLM workers. The API records work (a submission, a PENDING reading
+# material) but only `analyze_submissions` / `drain_reading_materials` perform it, and
+# nothing coupled those processes to the backend — so a running backend with no worker
+# accepted work it never processed, silently (see migration 0029). With AUTO_WORKER on,
+# a `runserver` process supervises both as children and restarts them if they die
+# (api/worker_supervisor.py); set AUTO_WORKER=0 to keep launching them by hand.
+AUTO_WORKER = os.environ.get('AUTO_WORKER', '1').lower() in ('1', 'true', 'yes')
+WORKER_SUPERVISOR_INTERVAL = float(os.environ.get('WORKER_SUPERVISOR_INTERVAL', '10'))
