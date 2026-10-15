@@ -11,7 +11,6 @@ import {
   ChevronLeft,
   ChevronRight,
   GraduationCap,
-  Info,
   Lightbulb,
   MessageSquare,
   PenLine,
@@ -22,6 +21,7 @@ import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
+import ReadingMaterial from "../../components/ReadingMaterial";
 import RichTextContent from "../../components/RichTextContent";
 import FeedbackModal from "../../components/FeedbackModal";
 import { apiFetch } from "../../lib/api";
@@ -425,22 +425,9 @@ function SubmissionPackageDetailPageContent() {
                           </div>
                         </div>
 
-                        {/* REFERENSI & MATERI — IN DEVELOPMENT (umpan balik mahasiswa dipindah ke rencana berikutnya) */}
-                        <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-lowest/60 p-4 space-y-1">
-                          <div className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-wider text-on-surface-variant">
-                            <Info size={15} className="text-primary" />
-                            Referensi &amp; Materi Pembelajaran
-                            <span className="rounded-full border border-primary/30 bg-primary-fixed px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-primary">
-                              In Development
-                            </span>
-                          </div>
-                          <p className="text-xs text-on-surface-variant leading-relaxed">
-                            Area ini nantinya berisi daftar buku, referensi, dan
-                            sumber materi pilihan AI untuk membantu Anda
-                            memperbaiki miskonsepsi. Fitur sedang dalam
-                            pengembangan.
-                          </p>
-                        </div>
+                        <ReadingMaterial
+                          material={currentAttempt.evaluation?.reading_material}
+                        />
 
                         {currentAttempt.evaluation.validator_name && (
                           <p className="text-xs text-on-surface-variant">
