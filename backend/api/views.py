@@ -3640,25 +3640,8 @@ def _build_submission_package_groups(user):
                 evaluation_payload = None
 
                 if s.status == 'VALIDATED' and validation:
-                    breakdown = analysis.concept_breakdown_json or {}
-                    raw_student_fb = breakdown.get('student_feedback') or {}
-
-                    # Target 7: Umpan balik terstruktur 3 kartu
-                    student_feedback_payload = {
-                        'poin_tepat': raw_student_fb.get('poin_tepat') or (
-                            'Kesimpulan dan penalaran fisis yang disampaikan sudah tepat.'
-                            if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
-                            else 'Telah menyampaikan kesimpulan dan alasan.'
-                        ),
-                        'letak_kekeliruan': raw_student_fb.get('letak_kekeliruan') or (
-                            '-' if float(validation.final_percentage or analysis.percentage_correct) >= 99.9
-                            else (analysis.module_b_score if analysis else 'Terdapat ketidaksinkronan konsep atau penalaran.')
-                        ),
-                        'konsep_seharusnya': raw_student_fb.get('konsep_seharusnya') or (
-                            version.model_answer
-                        ),
-                    }
-
+                    # C8 (D17): `student_feedback` is gone. It was the input to
+                    # the removed grounding metric and no surface read it.
                     final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
 
                     evaluation_payload = {
@@ -3668,7 +3651,6 @@ def _build_submission_package_groups(user):
                         'tier_level': validation.final_tier_level_snapshot or analysis.tier_level_snapshot,
                         'tier_label': validation.final_tier_label_snapshot or analysis.tier_label_snapshot,
                         'clinical_feedback': validation.final_feedback or analysis.explanation,
-                        'student_feedback': student_feedback_payload,
                         'misconception_info': {
                             'code': analysis.module_c_code,
                             'category': analysis.four_tier_category,

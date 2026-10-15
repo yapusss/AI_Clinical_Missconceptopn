@@ -9,7 +9,7 @@
 2. Direct Modular AI Grading (Bebas Rubrik 40/30/30):
    - Module A: Menilai kesimpulan Tier 1 (maks 120 karakter) -> BENAR / BENAR_SEBAGIAN / SALAH
    - Module B: Menilai alasan Tier 3 langsung terhadap Jawaban Model -> BENAR / SALAH
-               sekaligus menyusun umpan balik terstruktur mahasiswa (student_feedback).
+               (C8/D17: verdict-only; citation provenance via referensi/what_should_be_learned).
    - Module C: Klasifikasi tipe miskonsepsi jika Modul B bernilai SALAH.
 
 3. Deterministic Decision Matrix (16 Rules):
@@ -619,49 +619,37 @@ def run_module_a(ctx: FourTierContext, model_identifier: str) -> tuple[str, str]
     return score, str(data.get('reasoning', ''))
 
 
-def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, dict, list, list]:
-    """Modul B — Penilai Alasan Ilmiah (Tier 3) langsung terhadap Model Answer & Penghasil Umpan Balik Mahasiswa."""
+def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list, list]:
+    """Modul B — Penilai Alasan Ilmiah (Tier 3) langsung terhadap Model Answer.
+
+    C8 (D17): Modul B is verdict-only. It no longer produces `student_feedback`
+    or a lecturer `reasoning` string — the retained legacy `grounding_similarity`
+    was built from `student_feedback['konsep_seharusnya']`, so the metric and its
+    input leave in the same commit. The only extra output is the citation
+    provenance (`referensi` / `what_should_be_learned`) when reference chunks
+    were supplied.
+    """
     sys_prompt = (
-        "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3) serta Asisten Pedagogis Fisika/Sains.\n"
-        "Tugas utama Anda:\n"
-        "1. Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
+        "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3).\n"
+        "Tugas: Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
         "   - BENAR: Penalaran fisis valid, tepat secara konsep, atau penurunan matematis/aljabar langkah-demi-langkah valid dan membuktikan kesimpulan.\n"
         "   - SALAH: Terdapat miskonsepsi, prinsip fisis salah, rumus keliru, penalaran tidak logis, atau bertentangan dengan sains.\n"
         "   PANDUAN EVALUASI ILMIAH:\n"
         "   - Mahasiswa DIPERBOLEHKAN menyajikan alasan dalam bentuk penurunan rumus matematis ringkas jika langkah fisisnya benar.\n"
         "   - Tidak wajib menuliskan paragraf narasi panjang jika penurunan aljabar sudah tepat membuktikan kesimpulan.\n"
         "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah yang tidak ada di teks mahasiswa.\n\n"
-        "2. Susun 'student_feedback' berupa umpan balik terstruktur dalam Bahasa Indonesia yang ramah, mendidik, dan jelas bagi mahasiswa:\n"
-        "   - 'poin_tepat': Bagian pemikiran/konsep mahasiswa yang sudah benar atau relevan (bila salah semua, sebutkan apresiasi atau variabel yang benar).\n"
-        "   - 'letak_kekeliruan': Di mana letak salah konsep, kesalahan logika, atau penurunan yang keliru (tulis '-' jika benar sepenuhnya).\n"
-        "   - 'konsep_seharusnya': Penjelasan konsep dan penalaran ilmiah yang sebenarnya sesuai Jawaban Model.\n\n"
         "Kembalikan HANYA format JSON valid:\n"
         "{\n"
-        '  "score": "BENAR" | "SALAH",\n'
-        '  "reasoning": "penjelasan analisis klinis untuk dosen dalam 1-2 kalimat Bahasa Indonesia formal",\n'
-        '  "student_feedback": {\n'
-        '    "poin_tepat": "...",\n'
-        '    "letak_kekeliruan": "...",\n'
-        '    "konsep_seharusnya": "..."\n'
-        "  }\n"
+        '  "score": "BENAR" | "SALAH"\n'
         "}"
     )
     reference_block = build_reference_block(ctx.reference_chunks)
     if reference_block:
         # Only when references exist do the schema and rules change; with no
-        # references the prompt stays byte-identical to the pre-RAG pipeline.
+        # references the prompt stays minimal.
         sys_prompt = sys_prompt.replace(
-            '  "student_feedback": {\n'
-            '    "poin_tepat": "...",\n'
-            '    "letak_kekeliruan": "...",\n'
-            '    "konsep_seharusnya": "..."\n'
-            "  }\n"
-            "}",
-            '  "student_feedback": {\n'
-            '    "poin_tepat": "...",\n'
-            '    "letak_kekeliruan": "...",\n'
-            '    "konsep_seharusnya": "..."\n'
-            "  },\n"
+            '  "score": "BENAR" | "SALAH"\n}',
+            '  "score": "BENAR" | "SALAH",\n'
             + REFERENSI_SCHEMA_LINE + ',\n'
             '  "what_should_be_learned": [{"topik": "...", "sumber_chunk_ids": ["<uuid>"]}]\n'
             "}",
@@ -684,25 +672,10 @@ def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
     if score not in ('BENAR', 'SALAH'):
         score = 'SALAH'
 
-    reasoning = str(data.get('reasoning', ''))
-    raw_fb = data.get('student_feedback')
-    if isinstance(raw_fb, dict):
-        student_feedback = {
-            'poin_tepat': str(raw_fb.get('poin_tepat', '')).strip(),
-            'letak_kekeliruan': str(raw_fb.get('letak_kekeliruan', '')).strip(),
-            'konsep_seharusnya': str(raw_fb.get('konsep_seharusnya', '')).strip(),
-        }
-    else:
-        student_feedback = {
-            'poin_tepat': 'Telah menyajikan kesimpulan dan alasan.' if score == 'SALAH' else 'Kesimpulan dan alasan sudah selaras.',
-            'letak_kekeliruan': reasoning if score == 'SALAH' else '-',
-            'konsep_seharusnya': ctx.reference_reason or ctx.model_answer,
-        }
-
     referensi = _parse_referensi(data.get('referensi'))
     what_should_be_learned = _parse_what_should_be_learned(data.get('what_should_be_learned'))
 
-    return score, reasoning, student_feedback, referensi, what_should_be_learned
+    return score, referensi, what_should_be_learned
 
 
 def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, float, str, list]:
@@ -907,12 +880,6 @@ def analyze_submission(submission_id: str) -> str:
         if 't3_kosong' in flags:
             mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
             mod_b_score = 'SALAH'
-            mod_b_exp = 'Alasan tidak diisi atau kurang dari 5 kata (t3_kosong). Diarahkan ke LK untuk penguatan materi dasar.'
-            student_feedback = {
-                'poin_tepat': 'Kesimpulan jawaban telah disampaikan.' if mod_a_score == 'BENAR' else 'Belum ada poin jawaban yang lengkap.',
-                'letak_kekeliruan': 'Kolom alasan (Tier 3) belum diisi atau terlalu singkat (kurang dari 5 kata) sehingga dasar pemikiran belum dapat dinilai.',
-                'konsep_seharusnya': f'Penalaran konseptual yang diharapkan: {ctx.reference_reason or ctx.model_answer}',
-            }
             mod_c_code = None
             mod_c_label = None
             mod_c_conf = 0.0
@@ -935,7 +902,7 @@ def analyze_submission(submission_id: str) -> str:
                 eval_b_ctx = ctx
 
             mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
-            mod_b_score, mod_b_exp, student_feedback, referensi, what_should_be_learned = run_module_b(eval_b_ctx, model_identifier)
+            mod_b_score, referensi, what_should_be_learned = run_module_b(eval_b_ctx, model_identifier)
 
             # Safeguard C: Validasi di Python
             t3_words = [w for w in ctx.tier3_reason.strip().split() if w]
@@ -943,8 +910,6 @@ def analyze_submission(submission_id: str) -> str:
 
             if mod_b_score == 'BENAR' and len(t3_words) <= 3 and not has_math_derivation:
                 mod_b_score = 'SALAH'
-                mod_b_exp = 'Teks alasan terlalu singkat untuk memuat penurunan konsep ilmiah yang valid.'
-                student_feedback['letak_kekeliruan'] = 'Alasan terlalu singkat dan belum memuat penurunan rumus atau prinsip fisis yang lengkap.'
 
             # C3: the LLM verdict is always recorded, before source selection
             # (Safeguard C above already applies to the LLM verdict).
@@ -982,23 +947,6 @@ def analyze_submission(submission_id: str) -> str:
             seen_citation_ids.add(cid)
             combined_referensi.append(ref)
         references = validate_citations(combined_referensi, retrieved_by_id)
-        advisory_text = (
-            student_feedback.get('konsep_seharusnya', '') + ' '
-            + ' | '.join(t['topik'] for t in what_should_be_learned)
-        ).strip()
-        (
-            grounding_similarity_mean,
-            grounding_similarity_max,
-            grounding_citation_count,
-        ) = grounded_similarity(references, retrieved_by_id, advisory_text)
-        grounding_payload = {
-            'references': references,
-            'grounding': {
-                'similarity_mean': grounding_similarity_mean,
-                'similarity_max': grounding_similarity_max,
-                'citation_count': grounding_citation_count,
-            },
-        }
 
         # 3. Perhitungan Skor Biner All-or-Nothing (Target 3 & Target 4)
         if mod_a_score == 'BENAR' and mod_b_score == 'BENAR':
@@ -1034,7 +982,7 @@ def analyze_submission(submission_id: str) -> str:
         explanation_lines = [
             f"Kategori: [{category}] {meaning}.",
             f"Jawaban (Tier 1): {mod_a_score} ({mod_a_exp}).",
-            f"Alasan (Tier 3): {mod_b_score} ({mod_b_exp}).",
+            f"Alasan (Tier 3): {mod_b_score}.",
         ]
         if mod_c_code and misc_role_label:
             display_text = mod_c_label if mod_c_label else mod_c_code
@@ -1045,7 +993,7 @@ def analyze_submission(submission_id: str) -> str:
 
         concept_breakdown = {
             'module_a': {'score': mod_a_score, 'reasoning': mod_a_exp},
-            'module_b': {'score': mod_b_score, 'reasoning': mod_b_exp},
+            'module_b': {'score': mod_b_score},
             'module_c': {
                 'code': mod_c_code,
                 'label': mod_c_label,
@@ -1059,17 +1007,11 @@ def analyze_submission(submission_id: str) -> str:
                 't3': mod_b_score, 't4_yakin': ctx.tier4_confidence >= 4,
                 'category': category, 'meaning': meaning, 'risk': risk,
             },
-            'student_feedback': student_feedback,
             'heuristic_flags': flags,
             'percentage_correct': float(percentage_correct),
             'intervention': intervention_text,
             'references': references,
             'what_should_be_learned': what_should_be_learned,
-            'grounding': {
-                'similarity_mean': grounding_similarity_mean,
-                'similarity_max': grounding_similarity_max,
-                'citation_count': grounding_citation_count,
-            },
         }
 
         # 6. Simpan Hasil Analisis via Stored Procedure
@@ -1104,10 +1046,12 @@ def analyze_submission(submission_id: str) -> str:
                     mod_c_code,
                     category,
                     risk,
-                    grounding_similarity_mean,
-                    grounding_similarity_max,
-                    grounding_citation_count,
-                    json.dumps(grounding_payload, ensure_ascii=False),
+                    # C8/D17: the grounding metric and its input left together.
+                    # The columns stay (history), but no new row produces them.
+                    None,
+                    None,
+                    None,
+                    json.dumps({}, ensure_ascii=False),
                     sim_t1,
                     sim_t3,
                     llm_t1_score,

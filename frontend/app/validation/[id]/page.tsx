@@ -25,7 +25,6 @@ import RichTextContent from "../../components/RichTextContent";
 import { apiFetch } from "../../lib/api";
 import FeedbackModal from "../../components/FeedbackModal";
 import type {
-  GroundingPayload,
   GroundingReference,
   LearnedTopic,
   ReadingMaterial,
@@ -94,8 +93,6 @@ type Detail = {
     references?: GroundingReference[];
     what_should_be_learned?: LearnedTopic[];
     suggested_materials?: LearnedTopic[];
-    grounding_similarity?: number | null;
-    grounding_payload?: GroundingPayload | null;
     answer_similarity_t1?: number | null;
     answer_similarity_t3?: number | null;
     llm_t1_score?: string | null;
@@ -382,10 +379,6 @@ export default function ValidationDetailPage() {
 
   const learnedTopics =
     data?.llm.what_should_be_learned ?? data?.llm.suggested_materials ?? [];
-  const groundingSimilarity =
-    data?.llm.grounding_similarity ??
-    data?.llm.grounding_payload?.grounding?.similarity_mean ??
-    null;
   const readingMaterial = data?.llm.reading_material ?? null;
   const shadowVerdict = data?.llm.verdict_shadow ?? {};
   const materialStatusMeta = readingMaterial
@@ -898,21 +891,13 @@ export default function ValidationDetailPage() {
                 </div>
               </section>
 
-              {/* Yang Perlu Dipelajari + grounding score */}
+              {/* Yang Perlu Dipelajari (C8: the grounding score is gone) */}
               <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
-                <header className="flex items-center justify-between border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
+                <header className="border-b border-outline-variant/40 bg-surface-container-low px-5 py-3">
                   <div className="flex items-center gap-2">
                     <GraduationCap size={17} className="text-primary" />
                     <span className="text-xs font-bold tracking-wider text-on-surface">
                       Yang Perlu Dipelajari
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="block text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
-                      Keselarasan dengan Sumber
-                    </span>
-                    <span className="font-mono-ui text-sm font-extrabold text-primary">
-                      {groundingSimilarity !== null ? groundingSimilarity.toFixed(4) : "—"}
                     </span>
                   </div>
                 </header>
