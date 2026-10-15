@@ -216,6 +216,7 @@ type ValidationDraft = {
   finalCategory: string;
   mode: "new" | "correction";
   touched: boolean;
+  decisionTouched?: boolean;
   updatedAt: string;
 };
 
@@ -449,6 +450,9 @@ export default function StudentPackageReviewPage({
 
   const isAlreadyValidated = Boolean(currentAttempt?.analysis?.validation);
   const isLocked = isAlreadyValidated && !isUnlocked;
+  const isDecisionTouched = Boolean(
+    currentAttempt?.analysis && drafts[currentAttempt.analysis.id]?.decisionTouched,
+  );
 
   const updateDraft = (
     patch: Partial<{
@@ -474,6 +478,10 @@ export default function StudentPackageReviewPage({
           finalCategory: nextCategory,
           mode: isAlreadyValidated ? "correction" : "new",
           touched: true,
+          // AI seeds the draft, but only an explicit Benar/Salah click counts
+          // as a lecturer decision for the question-list status.
+          decisionTouched:
+            prev[analysisId]?.decisionTouched || patch.isCorrect !== undefined,
           updatedAt: new Date().toISOString(),
         },
       };
@@ -538,7 +546,7 @@ export default function StudentPackageReviewPage({
 
   const decidedPendingCount = awaitingDecisionQuestions.filter((q) => {
     const aid = latestAttemptOf(q)?.analysis?.id;
-    return aid ? Boolean(drafts[aid]) : false;
+    return aid ? Boolean(drafts[aid]?.decisionTouched) : false;
   }).length;
 
   const rejectedUndecidedCount = awaitingDecisionQuestions.filter((q) => {
@@ -585,6 +593,7 @@ export default function StudentPackageReviewPage({
             finalCategory: an.four_tier_category ?? "LK",
             mode: "new",
             touched: false,
+            decisionTouched: false,
             updatedAt: new Date().toISOString(),
           };
           changed = true;
@@ -1340,7 +1349,7 @@ export default function StudentPackageReviewPage({
                                 type="button"
                                 onClick={() => updateDraft({ isCorrect: true })}
                                 className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
-                                  isCorrect
+                                  isDecisionTouched && isCorrect
                                     ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50 font-bold ring-1 ring-emerald-500/25 shadow-sm"
                                     : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
                                 }`}
@@ -1353,7 +1362,7 @@ export default function StudentPackageReviewPage({
                                   updateDraft({ isCorrect: false })
                                 }
                                 className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
-                                  !isCorrect
+                                  isDecisionTouched && !isCorrect
                                     ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50 font-bold ring-1 ring-rose-500/25 shadow-sm"
                                     : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
                                 }`}
@@ -1542,18 +1551,18 @@ export default function StudentPackageReviewPage({
               <div className="flex flex-wrap items-center gap-2 py-3">
                 {data.questions.map((q, idx) => {
                   const isCurrent = idx === activeQuestionIdx;
-                  const isAnswered = q.attempts.length > 0;
-                  const hasPendingValidation = q.attempts.some(
-                    (a) => a.status === "PENDING_VALIDATION",
-                  );
-                  const isValidated =
-                    q.attempts.length > 0 &&
-                    q.attempts[0].status === "VALIDATED";
+                  const latestAttempt = latestAttemptOf(q);
+                  const isAnswered = Boolean(latestAttempt);
+                  const isValidated = latestAttempt?.status === "VALIDATED";
+                  const draft = latestAttempt?.analysis
+                    ? drafts[latestAttempt.analysis.id]
+                    : undefined;
+                  const hasLecturerDecision = Boolean(draft?.decisionTouched);
                   const isCorrectItem =
                     isValidated &&
                     Number(
-                      q.attempts[0]?.analysis?.validation?.final_percentage ??
-                        q.attempts[0]?.analysis?.percentage_correct ??
+                      latestAttempt?.analysis?.validation?.final_percentage ??
+                        latestAttempt?.analysis?.percentage_correct ??
                         0,
                     ) >= 99.9;
 
@@ -1574,11 +1583,23 @@ export default function StudentPackageReviewPage({
                       dotColor = "bg-rose-400";
                       statusTitle = "Jawaban Salah";
                     }
-                  } else if (hasPendingValidation) {
+                  } else if (hasLecturerDecision) {
+                    if (draft?.isCorrect) {
+                      boxBorderCls =
+                        "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
+                      dotColor = "bg-emerald-400";
+                      statusTitle = "Keputusan dosen: Benar";
+                    } else {
+                      boxBorderCls =
+                        "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
+                      dotColor = "bg-rose-400";
+                      statusTitle = "Keputusan dosen: Salah";
+                    }
+                  } else if (latestAttempt?.status === "PENDING_VALIDATION") {
                     boxBorderCls =
                       "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
                     dotColor = "bg-amber-400";
-                    statusTitle = "Menunggu Validasi";
+                    statusTitle = "Belum diputuskan";
                   } else if (isAnswered) {
                     boxBorderCls =
                       "border-blue-500/60 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold";
@@ -1621,7 +1642,7 @@ export default function StudentPackageReviewPage({
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                  <span>Menunggu Validasi</span>
+                  <span>Belum diputuskan</span>
                 </div>
               </div>
             </div>
