@@ -1,5 +1,10 @@
 from django.urls import path
 
+from .materials_views import (
+    MaterialDetailView,
+    MaterialListCreateView,
+    ReadingMaterialFlagView,
+)
 from .validation_views import (
     ModelMetricsView,
     ValidationDetailView,
@@ -61,6 +66,9 @@ urlpatterns = [
     path('auth/login', LoginView.as_view(), name='auth-login'),
     path('auth/me', MeView.as_view(), name='auth-me'),
     path('uploads', MediaUploadView.as_view(), name='media-upload'),
+    path('materials', MaterialListCreateView.as_view(), name='material-list-create'),
+    path('materials/<uuid:pk>', MaterialDetailView.as_view(), name='material-detail'),
+    path('materials/reading/<uuid:pk>/flag', ReadingMaterialFlagView.as_view(), name='reading-material-flag'),
     path('dashboard/summary', DashboardView.as_view(), name='dashboard-summary'),
     path('admin/users/<str:role>', AdminManagedUserListView.as_view(), name='admin-managed-user-list'),
     path('admin/users/<str:role>/<uuid:pk>', AdminManagedUserDetailView.as_view(), name='admin-managed-user-detail'),

@@ -15,9 +15,10 @@
 # agreement-with-expert metrics; there is no other ground truth in this system.
 
 import json
+import logging
 
 from django.db import connection, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -25,6 +26,7 @@ from rest_framework.views import APIView
 
 from .authentication import TokenAuthentication
 from .models import (
+    GeneratedReadingMaterial,
     LlmAnalysis,
     Question,
     QuestionSet,
@@ -32,8 +34,11 @@ from .models import (
     UserSubjectRole,
     Validation,
 )
+from .reading_materials import input_fingerprint, load_question_version_context
 from .serializers import ValidationSubmitSerializer
 from .views import is_lecturer_for_subject, plain_text_preview
+
+logger = logging.getLogger(__name__)
 
 
 def _lecturer_subject_ids(user):
@@ -50,6 +55,152 @@ def _scope_filter(user):
         return Q()
     ids = _lecturer_subject_ids(user)
     return Q(subject_id__in=ids) if ids else Q(pk__in=[])
+
+
+def _reference_document_ids(references) -> list[str]:
+    ids = set()
+    for ref in references or []:
+        if isinstance(ref, dict) and ref.get('document_id'):
+            ids.add(str(ref['document_id']))
+    return sorted(ids)
+
+
+def _document_titles(document_ids) -> dict:
+    """Resolve document ids → titles in one query (never per citation)."""
+    if not document_ids:
+        return {}
+    with connection.cursor() as cur:
+        cur.execute(
+            'SELECT id::text, title FROM knowledge_documents WHERE id::text = ANY(%s)',
+            [list(document_ids)],
+        )
+        return {str(row[0]): row[1] for row in cur.fetchall()}
+
+
+def _attach_document_titles(references) -> list:
+    """Add `document_title` to every reference entry (brief §10.2).
+
+    One query for the whole list (none when it is empty). A malformed/missing or
+    unknown `document_id` yields `document_title: None`; the key is present on
+    every entry so the UI never has to join `/api/materials` or guess.
+    """
+    refs = list(references or [])
+    titles = _document_titles(_reference_document_ids(refs))
+    out = []
+    for ref in refs:
+        if isinstance(ref, dict):
+            entry = dict(ref)
+            doc_id = entry.get('document_id')
+            entry['document_title'] = titles.get(str(doc_id)) if doc_id else None
+        else:
+            entry = {'document_title': None}
+        out.append(entry)
+    return out
+
+
+def _reading_material_staleness(row, question_version_id):
+    """`(stale, stale_reason)` recomputed at read time (C6, D18).
+
+    A local sha256 over the current question text and reference answers compared
+    against the value stored when the artifact was generated — **no network call
+    and no embedding**. This is the only detector of an edited reference when no
+    drain daemon is running, so it is not optional. `False` when the row has no
+    stored fingerprint (a `PENDING`/`FAILED` row that never completed a
+    generation) — there is nothing to call stale yet.
+    """
+    stored = getattr(row, 'input_fingerprint', None)
+    if not stored:
+        return False, None
+    try:
+        ctx = load_question_version_context(question_version_id)
+    except Exception:  # noqa: BLE001 — a missing version must not 500 the detail
+        return False, None
+    recomputed = input_fingerprint(
+        getattr(row, 'prompt_version', None),
+        getattr(row, 'model_identifier', None),
+        question_version_id,
+        getattr(row, 'category', None),
+        ctx.question_prompt,
+        ctx.reference_short_answer,
+        ctx.reference_reason,
+    )
+    if recomputed == stored:
+        return False, None
+    return (
+        True,
+        'Referensi jawaban dosen atau teks pertanyaan berubah sejak materi ini dibuat.',
+    )
+
+
+def _reading_material_detail(analysis):
+    """The C6 reading-material block for one analysis, or `None`.
+
+    Looked up by `(question_version_id, category)`. `None` is a legitimate answer:
+    an `SC` analysis has no material by design (D6) and an analysis enqueued
+    before the drain ran has a `PENDING`-era absence. `stale` is computed at read
+    time (see `_reading_material_staleness`).
+    """
+    submission = getattr(analysis, 'submission', None)
+    question_version_id = getattr(submission, 'question_version_id', None)
+    category = getattr(analysis, 'four_tier_category', None)
+    if question_version_id is None or category is None:
+        return None
+    row = GeneratedReadingMaterial.objects.filter(
+        question_version_id=question_version_id, category=category
+    ).first()
+    if row is None:
+        return None
+    stale, stale_reason = _reading_material_staleness(row, question_version_id)
+    return {
+        # `id` is what the flag endpoint addresses; the rest is the review surface.
+        'id': str(row.id),
+        'status': row.status,
+        'content_md': row.content_md,
+        'sources': row.sources_json or [],
+        'grounded': row.grounded,
+        'ungrounded_source_count': row.ungrounded_source_count,
+        'stale': stale,
+        'stale_reason': stale_reason,
+        'review_status': row.review_status,
+        'flag_note': row.flag_note,
+        'prompt_version': row.prompt_version,
+        'model_identifier': row.model_identifier,
+        'attempts': row.attempts,
+    }
+
+
+def _grounding_detail(analysis, breakdown: dict) -> dict:
+    """Assemble the reference/material block exposed to the lecturer UI.
+
+    Stable shape across prompt versions. `references` is the provenance of the
+    generated reading material (D10) and is kept in C8 — it is not a verdict's
+    citation list. C8 removed the superseded grounding keys
+    (`grounding_similarity`, `grounding_payload` and the nested `grounding`
+    block); their DB columns stay so historical rows remain interpretable. C6
+    adds the generated `reading_material` block (or `None`).
+    """
+    return {
+        'concept_breakdown_json': breakdown,
+        'references': _attach_document_titles(breakdown.get('references') or []),
+        'what_should_be_learned': breakdown.get('what_should_be_learned') or [],
+        'suggested_materials': analysis.suggested_materials_json or [],
+        # C5: answer-similarity + shadow verdict. Pre-C5 rows have NULLs; the
+        # keys stay present (as `null`/`{}`) so the frontend never has to guess.
+        'answer_similarity_t1': (
+            float(analysis.answer_similarity_t1)
+            if getattr(analysis, 'answer_similarity_t1', None) is not None else None
+        ),
+        'answer_similarity_t3': (
+            float(analysis.answer_similarity_t3)
+            if getattr(analysis, 'answer_similarity_t3', None) is not None else None
+        ),
+        'llm_t1_score': getattr(analysis, 'llm_t1_score', None),
+        'llm_t3_score': getattr(analysis, 'llm_t3_score', None),
+        'verdict_shadow': getattr(analysis, 'verdict_shadow_json', None) or {},
+        # C6: the generated reading material for this (question_version, category),
+        # or `None` when none exists (SC, or a pre-drain analysis).
+        'reading_material': _reading_material_detail(analysis),
+    }
 
 
 def _misconception_confirmations(breakdown: dict, confirmations: list) -> dict:
@@ -239,6 +390,7 @@ class ValidationDetailView(APIView):
                 'proposed_new_misconception': breakdown.get('proposed_new_misconception'),
                 'execution_time_ms': a.execution_time_ms,
                 'created_at': a.created_at,
+                **_grounding_detail(a, breakdown),
             },
             'validatable': sub.status == 'PENDING_VALIDATION',
             'existing_validation': existing_payload,
@@ -399,11 +551,170 @@ class ValidationSubmitView(APIView):
 # MODEL PERFORMANCE METRICS (agreement with expert validations)
 # ============================================================================
 
+def _median(values):
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def _analysis_question_version_ids(analyses):
+    """Distinct question-version ids behind the scoped analyses (C5).
+
+    Used to restrict `reading_material_counts` to the question versions in
+    scope. Returns an empty set when the materialised rows carry no submission
+    relation (the pure-helper tests build lightweight stand-ins), which keeps
+    those tests DB-free.
+    """
+    ids = set()
+    for a in analyses:
+        submission = getattr(a, 'submission', None)
+        question_version_id = getattr(submission, 'question_version_id', None)
+        if question_version_id is not None:
+            ids.add(question_version_id)
+    return ids
+
+
+def _reading_material_counts(question_version_ids):
+    """Status histogram of `generated_reading_materials` (C5).
+
+    Filtered to the analyses' question versions in scope. Every status key is
+    always present (zero when absent) so the payload shape is stable, and
+    `total` is their sum.
+    """
+    counts = {'READY': 0, 'PENDING': 0, 'STALE': 0, 'FAILED': 0}
+    if question_version_ids:
+        rows = (
+            GeneratedReadingMaterial.objects
+            .filter(question_version_id__in=question_version_ids)
+            .values('status')
+            .annotate(count=Count('id'))
+        )
+        for row in rows:
+            if row['status'] in counts:
+                counts[row['status']] = row['count']
+    counts['total'] = sum(counts[k] for k in ('READY', 'PENDING', 'STALE', 'FAILED'))
+    return counts
+
+
+def _bucket_similarities(analyses, key):
+    """Group non-NULL similarities by `key` for the per-bucket breakdowns.
+
+    A row contributes when at least one tier similarity is non-NULL. Each
+    bucket carries its own `count` plus the mean of whichever tier values are
+    present, so a NULL tier drops out of that tier's mean without removing the
+    row from the bucket count.
+    """
+    buckets = {}
+    for a in analyses:
+        s1 = getattr(a, 'answer_similarity_t1', None)
+        s3 = getattr(a, 'answer_similarity_t3', None)
+        if s1 is None and s3 is None:
+            continue
+        label = key(a) or 'UNKNOWN'
+        entry = buckets.setdefault(label, {'count': 0, 't1': [], 't3': []})
+        entry['count'] += 1
+        if s1 is not None:
+            entry['t1'].append(float(s1))
+        if s3 is not None:
+            entry['t3'].append(float(s3))
+    return {
+        label: {
+            'count': v['count'],
+            't1_mean': round(sum(v['t1']) / len(v['t1']), 4) if v['t1'] else None,
+            't3_mean': round(sum(v['t3']) / len(v['t3']), 4) if v['t3'] else None,
+        }
+        for label, v in buckets.items()
+    }
+
+
+def _answer_similarity_metrics(analyses):
+    """Answer-similarity + shadow-agreement aggregates (C5).
+
+    Similarity measures alignment with the LECTURER's reference answer; it needs
+    no lecturer validation and is NOT accuracy. The verdict is driven by the
+    LLM, with the θ-based rule recorded in shadow, so `verdict_agreement_rate`
+    is a diagnostic (how often the two disagree), not a quality score.
+    """
+    total = len(analyses)
+    sim1 = [
+        float(a.answer_similarity_t1) for a in analyses
+        if getattr(a, 'answer_similarity_t1', None) is not None
+    ]
+    sim3 = [
+        float(a.answer_similarity_t3) for a in analyses
+        if getattr(a, 'answer_similarity_t3', None) is not None
+    ]
+
+    comparable = 0
+    agree = 0
+    for a in analyses:
+        shadow = getattr(a, 'verdict_shadow_json', None) or {}
+        rule_t1 = shadow.get('rule_t1')
+        rule_t3 = shadow.get('rule_t3')
+        llm_t1 = getattr(a, 'llm_t1_score', None)
+        llm_t3 = getattr(a, 'llm_t3_score', None)
+        if rule_t1 is None or rule_t3 is None or llm_t1 is None or llm_t3 is None:
+            continue
+        comparable += 1
+        if llm_t1 == rule_t1 and llm_t3 == rule_t3:
+            agree += 1
+
+    similarity_count = len(sim1)
+    return {
+        'answer_similarity_t1_mean': round(sum(sim1) / len(sim1), 4) if sim1 else None,
+        'answer_similarity_t1_median': round(_median(sim1), 4) if sim1 else None,
+        'answer_similarity_t3_mean': round(sum(sim3) / len(sim3), 4) if sim3 else None,
+        'answer_similarity_t3_median': round(_median(sim3), 4) if sim3 else None,
+        'answer_similarity_coverage': (
+            round(similarity_count / total, 4) if total else None
+        ),
+        'no_similarity_count': total - similarity_count,
+        'answer_similarity_by_category': _bucket_similarities(
+            analyses, lambda a: getattr(a, 'four_tier_category', None)
+        ),
+        'answer_similarity_by_prompt_version': _bucket_similarities(
+            analyses, lambda a: getattr(a, 'prompt_version', None)
+        ),
+        'verdict_agreement_rate': round(agree / comparable, 4) if comparable else None,
+        'verdict_disagreement_count': comparable - agree,
+        'verdict_comparable_count': comparable,
+    }
+
+
+def _analysis_metrics(analyses):
+    """Analysis-property aggregates (C5; the grounding block left in C8).
+
+    Answer similarity measures alignment with the **lecturer's reference
+    answer**; it needs no lecturer validation and is NOT accuracy. The verdict
+    is driven by the LLM, with the θ-based rule recorded in shadow, so
+    `verdict_agreement_rate` is a diagnostic (how often the two disagree), not a
+    quality score. `reading_material_counts` is the drain backlog.
+
+    C8 (D17) removed the superseded grounding (citation-fidelity) block: its
+    input (`student_feedback`) left in the same commit, so a mean recomputed
+    from the residue would silently redefine the retained metric. The
+    `llm_analyses.grounding_*` columns stay for history; only the API surface
+    goes. All aggregates are computed over **all current analyses in scope**,
+    model-filter-aware.
+    """
+    question_version_ids = _analysis_question_version_ids(analyses)
+    return {
+        **_answer_similarity_metrics(analyses),
+        'reading_material_counts': _reading_material_counts(question_version_ids),
+    }
+
+
 def _compute_metrics(scored, all_validations):
     """Agreement metrics over scored (ACCEPTED/EDITED) validations.
 
-    Returns the full payload dict; `all_validations` only feeds the
-    rejection-rate denominator.
+    Returns the validation-derived payload only; `all_validations` feeds the
+    rejection-rate denominator. Grounding keys are NOT merged here — they are
+    computed from all current analyses in scope (see `_analysis_metrics` /
+    `_scope_analyses`) so they never depend on a validation existing.
     """
     total = len(all_validations)
     rejected = sum(1 for v in all_validations if v.status == 'REJECTED')
@@ -479,7 +790,7 @@ def _compute_metrics(scored, all_validations):
             'avg_confidence': round(avg_conf, 4),
         })
 
-    return {
+    payload = {
         'total_validations': total,
         'rejection_rate': round(rejected / total, 4) if total else None,
         'scored_validations': len(scored),
@@ -492,6 +803,115 @@ def _compute_metrics(scored, all_validations):
         'calibration': calibration,
         'expected_calibration_error': round(ece, 4) if scored_n else None,
     }
+    return payload
+
+
+METRICS_NOTE = (
+    'Metrik kesesuaian = perbandingan dengan validasi dosen (satu-satunya ground truth di sistem). '
+    'Answer similarity = cosine(jawaban siswa, jawaban referensi dosen), diukur terhadap jawaban '
+    'referensi dosen, tidak memerlukan validasi dosen, dan BUKAN akurasi. '
+    'Verdict digerakkan oleh LLM; aturan berbasis θ (theta) dicatat sebagai shadow dan tidak '
+    'menggerakkan kategori mana pun. verdict_agreement_rate mengukur seberapa sering kedua verdict '
+    'berbeda — ini diagnostik, bukan skor kualitas, dan kalibrasi dilakukan terhadap dosen, '
+    'bukan terhadap LLM.'
+)
+
+
+def _scope_analyses(user, subject_id=None, model_filter=None):
+    """All CURRENT analyses in the caller's subject scope (analysis-metric source).
+
+    Answer similarity is a property of the analysis and needs no lecturer
+    validation, so it is computed over every current analysis in scope — not
+    only the ones that happen to have a validation. A number that only appears
+    (or changes) after a validation would be useless as a pre-validation signal.
+
+    Scope = lecturer subject scope (superuser: all) + optional `?subject_id=` +
+    optional `?model=`. The model filter must narrow the block too, or
+    `?model=` would leak pooled numbers from other providers.
+    """
+    qs = LlmAnalysis.objects.filter(_scope_filter(user), is_current=True).select_related('submission')
+    if subject_id:
+        qs = qs.filter(subject_id=subject_id)
+    if model_filter:
+        qs = qs.filter(model_identifier=model_filter)
+    return qs
+
+
+def _filter_analyses_by_model(analyses, model_filter):
+    """Pure post-condition for the `?model=` scope (DB-free testable).
+
+    `_scope_analyses` narrows the query in the ORM; this enforces the same
+    invariant on the materialised list so no unfiltered row can slip into the
+    grounding block.
+    """
+    if not model_filter:
+        return list(analyses)
+    return [a for a in analyses if a.model_identifier == model_filter]
+
+
+def _by_model_row(identifier, validation_rows, analysis_rows):
+    """One compact per-model comparison row.
+
+    Validation-derived fields come from `validation_rows`; the answer-similarity
+    and shadow-agreement keys come from `analysis_rows` (that model's current
+    analyses in scope), so a model with analyses but no validations still
+    reports them. C8 removed the superseded grounding keys from this row — the
+    DB columns stay, but the API no longer exposes them.
+
+    C5F (D16 — calibrate per model): the answer-similarity keys and the
+    shadow-vs-LLM agreement keys are computed from the SAME `analysis_rows`
+    list, not read from a fresh query — the R5F bug was a second query that
+    bypassed the model filter. "A θ fitted on one model does not transfer to
+    another", so every number the per-model calibration reads has to live on
+    the row.
+    """
+    scored = [v for v in validation_rows if v.status in ('ACCEPTED', 'EDITED')]
+    m = _compute_metrics(scored, validation_rows)
+    s = _answer_similarity_metrics(analysis_rows)
+    return {
+        'model_identifier': identifier,
+        'total_validations': m['total_validations'],
+        'scored_validations': m['scored_validations'],
+        'rejection_rate': m['rejection_rate'],
+        'tier_agreement_accuracy': m['tier_agreement_accuracy'],
+        'macro_f1': m['macro_f1'],
+        'percentage_mae': m['percentage_mae'],
+        'expected_calibration_error': m['expected_calibration_error'],
+        # --- C5F: per-model similarity + shadow agreement (D16) ---
+        # Same definitions as the top-level C5 block, but evaluated over this
+        # model's own analyses so the per-model calibration is readable.
+        'answer_similarity_t1_mean': s['answer_similarity_t1_mean'],
+        'answer_similarity_t3_mean': s['answer_similarity_t3_mean'],
+        'answer_similarity_coverage': s['answer_similarity_coverage'],
+        'verdict_agreement_rate': s['verdict_agreement_rate'],
+        'verdict_comparable_count': s['verdict_comparable_count'],
+    }
+
+
+def _zero_validation_payload(analyses, model_filter=None):
+    """Payload when no validations exist yet: analysis metrics are still reported.
+
+    Validation-derived metrics stay absent (no invented zeros); the C5
+    answer-similarity/agreement/reading-material keys and one `by_model` row per
+    model present in scope are always returned. The superseded grounding keys
+    left the payload in C8.
+    """
+    identifiers = sorted({a.model_identifier for a in analyses})
+    by_model = [
+        _by_model_row(identifier, [], [a for a in analyses if a.model_identifier == identifier])
+        for identifier in identifiers
+    ]
+    payload = {
+        'total_validations': 0,
+        'message': 'Belum ada data validasi — answer similarity tetap dihitung dari analisis; '
+                   'metrik kesesuaian dengan dosen tersedia setelah dosen memvalidasi analisis.',
+        **_analysis_metrics(analyses),
+        'by_model': by_model,
+        'note': METRICS_NOTE,
+    }
+    if model_filter:
+        payload['model_filter'] = model_filter
+    return payload
 
 
 class ModelMetricsView(APIView):
@@ -502,6 +922,13 @@ class ModelMetricsView(APIView):
     - MAE/RMSE on percentage
     - calibration: agreement rate per confidence bin (+ ECE)
     - rejection rate over ALL validations
+    - answer similarity (alignment with the lecturer's reference answer), the
+      shadow-vs-LLM verdict agreement and the reading-material status counts.
+      These are properties of the ANALYSIS and need no lecturer validation; they
+      are source-alignment, NOT accuracy. They are computed over all current
+      analyses in scope — not only the ones that have a validation — so the
+      numbers are available as a pre-validation signal and never change just
+      because a validation appears. The superseded grounding block left in C8.
 
     Query params:
     - ?subject_id=   restrict to one subject
@@ -526,39 +953,34 @@ class ModelMetricsView(APIView):
         qs = qs.select_related('analysis')
 
         all_validations = list(qs)
+
+        # Analysis-metric source: all current analyses in scope (no validation
+        # needed), narrowed by ?subject_id= and ?model= so the filter restricts
+        # the block.
+        analyses = _filter_analyses_by_model(
+            list(_scope_analyses(request.user, subject_id, model_filter)), model_filter
+        )
+
         total = len(all_validations)
         if total == 0:
-            return Response({
-                'total_validations': 0,
-                'by_model': [],
-                'message': 'Belum ada data validasi — metrik tersedia setelah dosen memvalidasi analisis.',
-            })
+            return Response(_zero_validation_payload(analyses, model_filter))
 
         payload = _compute_metrics(
             [v for v in all_validations if v.status in ('ACCEPTED', 'EDITED')],
             all_validations,
         )
+        payload.update(_analysis_metrics(analyses))
 
-        # Compact per-model comparison rows (computed from unfiltered-by-model set)
+        # by_model: the validation-derived model set is unchanged; the grounding
+        # keys of each row come from that model's analyses in scope.
         by_model = []
         for identifier in sorted({v.analysis.model_identifier for v in all_validations}):
             rows = [v for v in all_validations if v.analysis.model_identifier == identifier]
-            m = _compute_metrics(
-                [v for v in rows if v.status in ('ACCEPTED', 'EDITED')], rows
-            )
-            by_model.append({
-                'model_identifier': identifier,
-                'total_validations': m['total_validations'],
-                'scored_validations': m['scored_validations'],
-                'rejection_rate': m['rejection_rate'],
-                'tier_agreement_accuracy': m['tier_agreement_accuracy'],
-                'macro_f1': m['macro_f1'],
-                'percentage_mae': m['percentage_mae'],
-                'expected_calibration_error': m['expected_calibration_error'],
-            })
+            model_analyses = [a for a in analyses if a.model_identifier == identifier]
+            by_model.append(_by_model_row(identifier, rows, model_analyses))
 
         payload['by_model'] = by_model
         if model_filter:
             payload['model_filter'] = model_filter
-        payload['note'] = 'Metrik = kesesuaian dengan validasi dosen (satu-satunya ground truth di sistem).'
+        payload['note'] = METRICS_NOTE
         return Response(payload)

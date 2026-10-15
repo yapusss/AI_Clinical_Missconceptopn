@@ -158,3 +158,26 @@ LLM_API_KEY = os.environ.get('LLM_API_KEY', 'local-llama-cpp')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:3b-instruct')
 LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '120'))
 LLM_MAX_RUNS = int(os.environ.get('LLM_MAX_RUNS', '3'))
+
+# Embeddings (OpenRouter — dims MUST match the knowledge_chunks vector(1536) column)
+EMBEDDINGS_BASE_URL = os.environ.get('EMBEDDINGS_BASE_URL', 'https://openrouter.ai/api/v1')
+EMBEDDINGS_API_KEY  = os.environ.get('EMBEDDINGS_API_KEY', '')
+EMBEDDINGS_MODEL    = os.environ.get('EMBEDDINGS_MODEL', 'openai/text-embedding-3-small')
+EMBEDDINGS_DIMENSIONS = int(os.environ.get('EMBEDDINGS_DIMENSIONS', '1536'))
+
+# Retrieval
+RETRIEVAL_TOP_K = int(os.environ.get('RETRIEVAL_TOP_K', '5'))
+RETRIEVAL_SIMILARITY_THRESHOLD = float(os.environ.get('RETRIEVAL_SIMILARITY_THRESHOLD', '0.22'))
+
+# Answer similarity / shadow rule verdict / reading material (C1 declares; C3-C4 read).
+# TIER_VERDICT_SOURCE is 'llm', NOT 'rule': the LLM verdict drives the matrix so the
+# diagnosis is preserved exactly. An uncalibrated theta must never drive SC/MSC flips.
+# Flip to 'rule' only after theta is calibrated offline over lecturer-validated rows
+# (brief D16; >=50 validated analyses). Never tune theta against the LLM verdict.
+TIER_VERDICT_SOURCE = os.environ.get('TIER_VERDICT_SOURCE', 'llm')
+SHADOW_RULE_VERDICT = os.environ.get('SHADOW_RULE_VERDICT', 'True').lower() in ('1', 'true', 'yes')
+ANSWER_SIM_T1_THRESHOLD = float(os.environ.get('ANSWER_SIM_T1_THRESHOLD', '0.75'))
+ANSWER_SIM_T3_THRESHOLD = float(os.environ.get('ANSWER_SIM_T3_THRESHOLD', '0.75'))
+READING_MATERIAL_TEMPERATURE = float(os.environ.get('READING_MATERIAL_TEMPERATURE', '0.0'))
+READING_MATERIAL_MAX_RUNS = int(os.environ.get('READING_MATERIAL_MAX_RUNS', '3'))
+READING_MATERIAL_DRAIN_BATCH = int(os.environ.get('READING_MATERIAL_DRAIN_BATCH', '10'))
