@@ -1774,3 +1774,61 @@ class StudentPackageReadingMaterialTests(SimpleTestCase):
         self.assertEqual(set(material), {'content_md', 'sources'})
         for key in ('review_status', 'flagged_by', 'error', 'attempts', 'input_fingerprint'):
             self.assertNotIn(key, material)
+
+
+class AnalysisRetryCapTests(SimpleTestCase):
+    """Migration 0028 — a submission that keeps failing must not starve the queue.
+
+    `_claim_next` accepts `status IN ('SUBMITTED','ANALYSIS_FAILED')`, but a failure
+    at the LLM level writes NO `llm_analyses` row (sp_mark_submission_failed only
+    flips the status and appends an audit row), so capping that branch by the
+    analysis count left the cap inert: the row stayed claimable, and being the
+    oldest it was re-claimed on every pass while later submissions were never
+    touched.
+    """
+
+    def test_claim_caps_the_retry_branch_by_the_counter(self):
+        import inspect
+
+        from api.management.commands.analyze_submissions import Command
+        src = inspect.getsource(Command._claim_next)
+        self.assertIn('s.analysis_attempts < %s', src,
+                      'the SUBMITTED/ANALYSIS_FAILED branch must be capped by the '
+                      'retry counter, not by the analysis count')
+
+    def test_fresh_work_sorts_before_retries(self):
+        import inspect
+
+        from api.management.commands.analyze_submissions import Command
+        src = inspect.getsource(Command._claim_next)
+        self.assertIn("ORDER BY (s.status = 'ANALYSIS_FAILED'), s.submitted_at", src,
+                      'a failing row must not be the permanent head of the queue')
+
+    def test_both_branches_bind_the_cap(self):
+        import inspect
+
+        from api.management.commands.analyze_submissions import Command
+        src = inspect.getsource(Command._claim_next)
+        self.assertIn('llm_analyses', src, 'the REJECTED branch still caps by analyses')
+        self.assertEqual(src.count('%s'), 2,
+                         'each capped branch binds max_runs')
+
+    def test_failure_procedure_increments_the_counter(self):
+        from pathlib import Path
+        mig = (Path(__file__).resolve().parent / 'migrations'
+               / '0028_submission_analysis_attempts.py')
+        src = mig.read_text(encoding='utf-8')
+        self.assertIn('analysis_attempts = analysis_attempts + 1', src,
+                      'every failure path must count, including the zombie reaper')
+        self.assertIn('ANALYSIS_FAILED', src,
+                      'the queue index predicate must cover the retry status')
+        self.assertIn('DROP COLUMN IF EXISTS analysis_attempts', src,
+                      'the reverse must drop the column')
+        self.assertIn('CREATE OR REPLACE PROCEDURE', src,
+                      'the procedure is replaced in both directions')
+
+    def test_submission_model_exposes_the_counter(self):
+        from api.models import Submission
+        field = Submission._meta.get_field('analysis_attempts')
+        self.assertEqual(field.default, 0)
+        self.assertFalse(field.null)
