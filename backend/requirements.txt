@@ -4,4 +4,7 @@ django-cors-headers==4.9.0
 psycopg[binary]==3.2.9
 openai>=1.50.0
 openpyxl>=3.1.5
+# openpyxl needs Pillow to read/write embedded images. Without it the question-import
+# image path silently drops every figure in an uploaded workbook (`ws._images` is empty).
+Pillow>=10
 pymupdf>=1.28.2
