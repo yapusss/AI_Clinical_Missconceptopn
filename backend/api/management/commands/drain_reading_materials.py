@@ -151,11 +151,20 @@ class Command(BaseCommand):
             self._tick(options)
             if not options['loop']:
                 break
-            time.sleep(POLL_INTERVAL_SECONDS)
+            if self.deferred:
+                backoff = getattr(settings, 'TRANSIENT_BACKOFF_SECONDS', 60.0)
+                self.stderr.write(
+                    f'[material] transient provider failure; backing off {backoff:.0f}s '
+                    '(no attempt spent).'
+                )
+                time.sleep(backoff)
+            else:
+                time.sleep(POLL_INTERVAL_SECONDS)
 
     # -- one tick -------------------------------------------------------------
 
     def _tick(self, options):
+        self.deferred = False
         self._run_c2_sync(options['question_version'])
 
         if options['refresh']:
@@ -254,4 +263,9 @@ class Command(BaseCommand):
             result = generate_reading_material(ctx, category)
             generated += 1
             self.stdout.write(f'[material] {qv_id}/{category}: {result}')
+            if result.get('status') == 'DEFERRED':
+                # Provider-side outage: stop the batch and let the next tick retry. No
+                # attempt was spent — generate_reading_material leaves the row PENDING.
+                self.deferred = True
+                break
         return generated

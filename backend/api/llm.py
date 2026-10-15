@@ -105,6 +105,41 @@ class LlmAnalysisError(Exception):
     pass
 
 
+class LlmTransientError(LlmAnalysisError):
+    """A provider failure that says nothing about the submission (429/5xx/timeout).
+
+    Callers must NOT spend a retry attempt on one of these. A rate limit is temporary
+    by definition, so the work stays claimable and the worker backs off instead —
+    otherwise a quota blip permanently kills a student's submission (observed: four of
+    five submissions burned to ANALYSIS_FAILED while Groq's daily token cap was merely
+    exhausted for a few minutes).
+    """
+
+
+# HTTP statuses that mean "try again later" rather than "this work is bad".
+_TRANSIENT_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 522, 524})
+
+
+def is_transient_error(exc: BaseException | None) -> bool:
+    """True when `exc` is a provider-side, retryable failure.
+
+    Checked structurally (status_code attribute, then the SDK class name) because the
+    client is a generic OpenAI-compatible one: Groq, OpenCode Go and a local llama.cpp
+    all surface their rate limits through the same SDK types, but not necessarily the
+    same subclass.
+    """
+    if exc is None:
+        return False
+    status_code = getattr(exc, 'status_code', None)
+    if isinstance(status_code, int) and status_code in _TRANSIENT_STATUSES:
+        return True
+    # The openai SDK raises APITimeoutError / APIConnectionError without a status code.
+    name = type(exc).__name__
+    return name in ('RateLimitError', 'APITimeoutError', 'APIConnectionError',
+                    'InternalServerError', 'APIError', 'ConnectError', 'ReadTimeout',
+                    'ConnectTimeout', 'RemoteProtocolError')
+
+
 def get_llm_client() -> OpenAI:
     return OpenAI(
         base_url=settings.LLM_BASE_URL,
@@ -363,6 +398,9 @@ def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str,
             if attempt < LLM_MAX_RETRIES:
                 time.sleep(1.5 * (attempt + 1))
                 continue
+    if is_transient_error(last_error):
+        # Provider-side and temporary: let the caller defer instead of failing the work.
+        raise LlmTransientError(f'LLM call failed after retries: {last_error}')
     raise LlmAnalysisError(f'LLM call failed after retries: {last_error}')
 
 
@@ -1082,6 +1120,21 @@ def analyze_submission(submission_id: str) -> str:
                     submission_id, e,
                 )
         return 'PENDING_VALIDATION'
+
+    except LlmTransientError as e:
+        # Provider-side and temporary (429/5xx/timeout): defer, do NOT fail. The row goes
+        # back to SUBMITTED via sp_defer_submission WITHOUT spending an analysis attempt
+        # (migration 0030), so the work survives the outage; the worker then backs off.
+        logger.warning('Analisis Four-Tier ditunda untuk %s (transient): %s', submission_id, e)
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    'CALL sp_defer_submission(%s, %s);',
+                    [submission_id, str(e)[:2000]],
+                )
+        except Exception as defer_err:
+            logger.error('Gagal menunda submission %s: %s', submission_id, defer_err)
+        return 'DEFERRED'
 
     except Exception as e:
         logger.error('Analisis Four-Tier gagal untuk %s: %s', submission_id, e)

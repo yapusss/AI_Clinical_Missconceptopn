@@ -66,12 +66,20 @@ class Command(BaseCommand):
             if not options['loop']:
                 self.stdout.write(f'Pass complete: {processed} submission(s) processed.')
                 return
-            if processed == 0:
+            if self.deferred:
+                backoff = getattr(settings, 'TRANSIENT_BACKOFF_SECONDS', 60.0)
+                self.stderr.write(
+                    f'Transient provider failure; backing off {backoff:.0f}s '
+                    '(no analysis attempt spent).'
+                )
+                time.sleep(backoff)
+            elif processed == 0:
                 time.sleep(options['interval'])
 
     def _pass(self, limit: int) -> int:
         self._recover_zombies()
         processed = 0
+        self.deferred = False
         while processed < limit:
             submission_id = self._claim_next()
             if submission_id is None:
@@ -79,6 +87,11 @@ class Command(BaseCommand):
             result = analyze_submission(submission_id)
             processed += 1
             self.stdout.write(f'  {submission_id} -> {result}')
+            if result == 'DEFERRED':
+                # Provider-side outage: stop the pass. Nothing about the queue changed,
+                # so claiming the next row would just hit the same wall.
+                self.deferred = True
+                break
         return processed
 
     def _recover_zombies(self):

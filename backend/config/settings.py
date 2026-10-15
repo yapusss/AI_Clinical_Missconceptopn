@@ -196,3 +196,9 @@ READING_MATERIAL_DRAIN_BATCH = int(os.environ.get('READING_MATERIAL_DRAIN_BATCH'
 # (api/worker_supervisor.py); set AUTO_WORKER=0 to keep launching them by hand.
 AUTO_WORKER = os.environ.get('AUTO_WORKER', '1').lower() in ('1', 'true', 'yes')
 WORKER_SUPERVISOR_INTERVAL = float(os.environ.get('WORKER_SUPERVISOR_INTERVAL', '10'))
+
+# How long a worker waits after a TRANSIENT provider failure (429/5xx/timeout). The
+# worker normally sleeps only when its queue is empty, so without this a rate-limited
+# provider would be hammered once per pass — and every failure used to spend one of the
+# submission's LLM_MAX_RUNS attempts.
+TRANSIENT_BACKOFF_SECONDS = float(os.environ.get('TRANSIENT_BACKOFF_SECONDS', '60'))
