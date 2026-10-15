@@ -9,6 +9,7 @@ the pipeline test monkeypatches `load_context`, retrieval, the three modules and
 
 import json
 from contextlib import ExitStack
+from datetime import datetime
 from decimal import Decimal
 from io import StringIO
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, override_settings
 
 from api import llm
+from api.models import ExamPackage
 from api.embeddings import answer_similarity, cosine
 from api.llm import (
     FourTierContext,
@@ -57,6 +59,7 @@ from api.validation_views import (
 )
 from api.views import (
     _STUDENT_HIDDEN_ANALYSIS_KEYS,
+    _build_submission_package_groups,
     _student_analysis_detail,
     _student_reading_material,
     is_lecturer_for_subject,
@@ -1605,3 +1608,169 @@ class LecturerVerdictEnqueueTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 400)
         enqueue.assert_not_called()
+
+
+class _FakeMaterialTable:
+    """A stand-in `GeneratedReadingMaterial` exposing only the READY-filtered read
+    `_student_reading_material` performs."""
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+        self.objects = self
+
+    def filter(self, **kwargs):
+        rows = self._rows
+        for key, value in kwargs.items():
+            rows = [row for row in rows if getattr(row, key) == value]
+        return _FakeMaterialQuery(rows)
+
+
+class _FakeMaterialQuery:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class StudentPackageReadingMaterialTests(SimpleTestCase):
+    """S2: `_build_submission_package_groups` serves the material keyed by the
+    LECTURER's verdict.
+
+    The domain managers are stubbed (the models are `managed=False`), so the real
+    branch and the real `_student_reading_material` run; the only fake with any
+    behaviour is the material table, which honours the `status='READY'` filter.
+    """
+
+    SOURCES = [{'chunk_id': 'c1', 'document_id': 'd1', 'document_title': 'Doc', 'page': 3}]
+
+    def _ready_row(self, **over):
+        base = dict(
+            question_version_id='qv-1', category='MSC', status='READY',
+            content_md='# Materi', sources_json=self.SOURCES,
+            review_status='UNREVIEWED', flagged_by=None, error=None,
+            attempts=1, input_fingerprint='f' * 64,
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _version(self):
+        return SimpleNamespace(id='qv-1', version_number=1, prompt='P?',
+                               short_answer='SA', model_answer='MA')
+
+    def _package(self):
+        return SimpleNamespace(
+            id='pkg-1', code='PKG', title='Paket', subject_id='subj-1',
+            subject=SimpleNamespace(name='Subject'),
+            score_policy=ExamPackage.ScorePolicy.HIGHEST,
+        )
+
+    def _submission(self, status='VALIDATED'):
+        return SimpleNamespace(
+            id='sub-1', attempt_no=1, status=status,
+            answer_text='jawaban', submitted_at=datetime(2026, 1, 1),
+            exam_package_id='pkg-1', question_version_id='qv-1',
+            tier1_answer='t1', tier2_confidence=5, tier3_reason='t3',
+            tier4_confidence=5, heuristic_flags=[],
+        )
+
+    def _analysis(self, tier_level=2, category='MSC'):
+        return SimpleNamespace(
+            id='ana-1', submission_id='sub-1',
+            percentage_correct=Decimal('0.00'),
+            tier_level_snapshot=tier_level, tier_label_snapshot='Miskonsepsi',
+            explanation='llm', module_c_code=None, four_tier_category=category,
+            suggested_materials_json=[], module_a_score=1, module_b_score=0,
+            risk_level='high',
+        )
+
+    def _validation(self, final_pct='0.00', final_tier=2):
+        return SimpleNamespace(
+            analysis_id='ana-1', final_percentage=Decimal(final_pct),
+            is_score_modified=False, original_percentage=Decimal('0.00'),
+            final_tier_level_snapshot=final_tier,
+            final_tier_label_snapshot='Miskonsepsi', final_feedback='fb',
+            lecturer=SimpleNamespace(full_name='Dosen'), validated_at=None,
+        )
+
+    def _run(self, submission, analysis, validation, material_rows=()):
+        version = self._version()
+        package = self._package()
+        item = SimpleNamespace(
+            exam_package_id='pkg-1', question_version_id='qv-1', question_id='q-1',
+            order_index=0, question_version=version, exam_package=package,
+        )
+        sub_mgr = MagicMock()
+        sub_mgr.objects.filter.return_value.order_by.return_value = [submission]
+        item_mgr = MagicMock()
+        item_mgr.objects.filter.return_value.select_related.return_value.order_by.return_value = [item]
+        llm_mgr = MagicMock()
+        llm_mgr.objects.filter.return_value = [analysis] if analysis else []
+        val_mgr = MagicMock()
+        val_mgr.objects.filter.return_value.select_related.return_value = (
+            [validation] if validation else []
+        )
+        user = SimpleNamespace(id='stu-1')
+        with patch('api.views.Submission', sub_mgr), \
+                patch('api.views.ExamPackageQuestion', item_mgr), \
+                patch('api.views.LlmAnalysis', llm_mgr), \
+                patch('api.views.Validation', val_mgr), \
+                patch('api.views.GeneratedReadingMaterial', _FakeMaterialTable(material_rows)):
+            groups = _build_submission_package_groups(user)
+        return groups
+
+    def _evaluation(self, groups):
+        return groups[0]['questions'][0]['attempts'][0]['evaluation']
+
+    def test_validated_salah_serves_ready_material(self):
+        groups = self._run(
+            self._submission(), self._analysis(category='MSC'),
+            self._validation(final_pct='0.00', final_tier=2), [self._ready_row()],
+        )
+        material = self._evaluation(groups)['reading_material']
+        self.assertEqual(material['content_md'], '# Materi')
+        self.assertEqual(material['sources'], self.SOURCES)
+
+    def test_validated_benar_serves_nothing(self):
+        groups = self._run(
+            self._submission(), self._analysis(tier_level=4, category='SC'),
+            self._validation(final_pct='100.00', final_tier=4),
+            [self._ready_row(category='MSC')],
+        )
+        self.assertIsNone(self._evaluation(groups)['reading_material'])
+
+    def test_validated_salah_non_ready_row_serves_nothing(self):
+        groups = self._run(
+            self._submission(), self._analysis(category='MSC'),
+            self._validation(final_pct='0.00', final_tier=2),
+            [self._ready_row(status='PENDING')],
+        )
+        self.assertIsNone(self._evaluation(groups)['reading_material'])
+
+    def test_validated_salah_level4_category_sc_serves_nothing(self):
+        # Contradictory draft: score 0 yet the lecturer set level 4 -> SC, which
+        # `_student_reading_material` refuses even though an MSC row is READY.
+        groups = self._run(
+            self._submission(), self._analysis(tier_level=2, category='MSC'),
+            self._validation(final_pct='0.00', final_tier=4), [self._ready_row()],
+        )
+        self.assertIsNone(self._evaluation(groups)['reading_material'])
+
+    def test_not_validated_has_no_evaluation_block(self):
+        groups = self._run(
+            self._submission(status='PENDING_VALIDATION'), self._analysis(),
+            None, [self._ready_row()],
+        )
+        attempt = groups[0]['questions'][0]['attempts'][0]
+        self.assertIsNone(attempt['evaluation'])
+        self.assertNotIn('reading_material', attempt)
+
+    def test_no_lecturer_only_field_leaks_into_the_material(self):
+        groups = self._run(
+            self._submission(), self._analysis(category='MSC'),
+            self._validation(final_pct='0.00', final_tier=2), [self._ready_row()],
+        )
+        material = self._evaluation(groups)['reading_material']
+        self.assertEqual(set(material), {'content_md', 'sources'})
+        for key in ('review_status', 'flagged_by', 'error', 'attempts', 'input_fingerprint'):
+            self.assertNotIn(key, material)
