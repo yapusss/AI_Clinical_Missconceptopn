@@ -1345,7 +1345,12 @@ class ReadingMaterialFlagTests(SimpleTestCase):
 
 
 class StudentReadingMaterialTests(SimpleTestCase):
-    """C7: the student surface gets the material only when it is READY."""
+    """C7: the student surface gets material content only when it is READY.
+
+    Extended: a row that EXISTS but is not READY yet reports its status, so the student
+    can distinguish "being generated" from "no material by design" (SC / Benar / never
+    enqueued), which all stay silent.
+    """
 
     SOURCES = [{'chunk_id': 'c1', 'document_id': 'd1', 'document_title': 'Doc', 'page': 3}]
 
@@ -1355,35 +1360,51 @@ class StudentReadingMaterialTests(SimpleTestCase):
         return fake
 
     def _ready_row(self):
-        return SimpleNamespace(content_md='# Materi', sources_json=self.SOURCES)
+        return SimpleNamespace(status='READY', content_md='# Materi',
+                               sources_json=self.SOURCES)
 
     def test_ready_returns_content_and_sources_only(self):
         fake = self._fake(self._ready_row())
         with patch('api.views.GeneratedReadingMaterial', fake):
             detail = _student_reading_material('qv-1', 'MSC')
         self.assertEqual(
-            detail, {'content_md': '# Materi', 'sources': self.SOURCES},
+            detail, {'status': 'READY', 'content_md': '# Materi', 'sources': self.SOURCES},
         )
         # No lecturer-only field leaks into the student block.
-        self.assertEqual(set(detail), {'content_md', 'sources'})
-        # The status is constrained in the query, so non-READY rows cannot match.
+        self.assertEqual(set(detail), {'status', 'content_md', 'sources'})
+        # The row is fetched by bucket and branched on in Python: filtering on
+        # status='READY' in SQL is what made PENDING indistinguishable from absent.
         fake.objects.filter.assert_called_once_with(
-            question_version_id='qv-1', category='MSC', status='READY',
+            question_version_id='qv-1', category='MSC',
         )
 
-    def test_pending_returns_none(self):
+    def test_pending_returns_a_status_stub_and_no_content(self):
+        fake = self._fake(SimpleNamespace(status='PENDING', content_md=None,
+                                          sources_json=[]))
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            detail = _student_reading_material('qv-1', 'FN')
+        self.assertEqual(detail, {'status': 'PENDING'})
+
+    def test_stale_returns_a_status_stub(self):
+        # A STALE row still holds its old text; the student is told it is being
+        # refreshed rather than being served outdated remediation.
+        fake = self._fake(SimpleNamespace(status='STALE', content_md='# lama',
+                                          sources_json=self.SOURCES))
+        with patch('api.views.GeneratedReadingMaterial', fake):
+            self.assertEqual(_student_reading_material('qv-1', 'FN'), {'status': 'STALE'})
+
+    def test_absent_row_returns_none(self):
         fake = self._fake(None)
         with patch('api.views.GeneratedReadingMaterial', fake):
             self.assertIsNone(_student_reading_material('qv-1', 'FN'))
-        self.assertEqual(fake.objects.filter.call_args.kwargs['status'], 'READY')
 
     def test_failed_returns_none_not_a_placeholder(self):
-        # A FAILED row is excluded by the READY filter; the helper returns None
-        # rather than a status/attempts placeholder.
-        fake = self._fake(None)
+        # FAILED is terminal, the student cannot act on it, and the lecturer queue
+        # already shows it — so it stays silent rather than becoming a dead-end notice.
+        fake = self._fake(SimpleNamespace(status='FAILED', content_md=None,
+                                          sources_json=[]))
         with patch('api.views.GeneratedReadingMaterial', fake):
             self.assertIsNone(_student_reading_material('qv-1', 'FN'))
-        self.assertEqual(fake.objects.filter.call_args.kwargs['status'], 'READY')
 
     def test_sc_returns_none_without_querying(self):
         fake = MagicMock()
@@ -1852,13 +1873,18 @@ class StudentPackageReadingMaterialTests(SimpleTestCase):
         )
         self.assertIsNone(self._evaluation(groups)['reading_material'])
 
-    def test_validated_salah_non_ready_row_serves_nothing(self):
+    def test_validated_salah_non_ready_row_reports_it_is_generating(self):
+        # The row exists but is not READY: the student is told it is on the way rather
+        # than seeing nothing, which would be indistinguishable from "no material by
+        # design" (SC / Benar / never enqueued).
         groups = self._run(
             self._submission(), self._analysis(category='MSC'),
             self._validation(final_pct='0.00', final_tier=2),
             [self._ready_row(status='PENDING')],
         )
-        self.assertIsNone(self._evaluation(groups)['reading_material'])
+        self.assertEqual(
+            self._evaluation(groups)['reading_material'], {'status': 'PENDING'},
+        )
 
     def test_validated_salah_level4_category_sc_serves_nothing(self):
         # Contradictory draft: score 0 yet the lecturer set level 4 -> SC, which
@@ -1884,8 +1910,11 @@ class StudentPackageReadingMaterialTests(SimpleTestCase):
             self._validation(final_pct='0.00', final_tier=2), [self._ready_row()],
         )
         material = self._evaluation(groups)['reading_material']
-        self.assertEqual(set(material), {'content_md', 'sources'})
-        for key in ('review_status', 'flagged_by', 'error', 'attempts', 'input_fingerprint'):
+        # `status` is student-facing (it is how "generating" is expressed); everything
+        # lecturer-only stays out.
+        self.assertEqual(set(material), {'status', 'content_md', 'sources'})
+        for key in ('review_status', 'flagged_by', 'error', 'attempts', 'input_fingerprint',
+                    'stale_reason', 'grounded', 'ungrounded_source_count'):
             self.assertNotIn(key, material)
 
 

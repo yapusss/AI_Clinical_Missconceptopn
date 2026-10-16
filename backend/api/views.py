@@ -2336,22 +2336,32 @@ _STUDENT_HIDDEN_ANALYSIS_KEYS = (
 
 
 def _student_reading_material(question_version_id, category):
-    """The material the LLM wrote for one question, or `None` (C7).
+    """The material the LLM wrote for one question, or a status stub while it is being
+    generated, or `None` (C7, extended).
 
-    Served only for a `(question_version_id, category)` row with
-    `status='READY'`. A `PENDING`/`STALE`/`FAILED` row, an absent row, or the
-    `SC` category (D6 — a fully-correct confident student gets no remediation)
-    all return `None`: the student sees the material, or nothing. Never a
-    placeholder, and never the lecturer-only review/flag/staleness fields.
+    `content_md` is served only for a `(question_version_id, category)` row with
+    `status='READY'`. A `PENDING`/`STALE` row returns `{'status': ...}` and no content:
+    the student must be able to tell "still being written" from "never coming", and a
+    bare `None` cannot express that difference — `SC` and a Benar verdict (D6) get no
+    material at all by design, and an absent row means it was never enqueued.
+
+    `FAILED` also returns `None`: it is terminal, the student cannot act on it, and it
+    surfaces in the lecturer's queue instead. Never a placeholder, and never the
+    lecturer-only review/flag/staleness fields.
     """
     if not question_version_id or not category or category == 'SC':
         return None
     row = GeneratedReadingMaterial.objects.filter(
-        question_version_id=question_version_id, category=category, status='READY'
+        question_version_id=question_version_id, category=category
     ).first()
     if row is None:
         return None
+    if row.status in ('PENDING', 'STALE'):
+        return {'status': row.status}
+    if row.status != 'READY':
+        return None
     return {
+        'status': 'READY',
         'content_md': row.content_md,
         'sources': row.sources_json or [],
     }

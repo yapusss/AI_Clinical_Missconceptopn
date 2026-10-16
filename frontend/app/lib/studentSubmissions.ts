@@ -181,6 +181,9 @@ export type ReadingMaterial = {
 // flag_note, staleness, cosine) are deliberately not part of this shape — the
 // student payload never carries them.
 export type StudentReadingMaterial = {
+  // 'READY' | 'PENDING' | 'STALE'. A non-READY row arrives with no content and exists
+  // only so the student can be told the material is still being written.
+  status?: string | null;
   content_md: string | null;
   sources: ReadingMaterialSource[];
 };
