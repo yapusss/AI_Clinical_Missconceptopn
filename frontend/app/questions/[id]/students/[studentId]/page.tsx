@@ -70,6 +70,9 @@ type AttemptItem = {
       status: string;
       final_percentage: string | null;
       final_tier_level: number | null;
+      // Migration 0031: the diagnosis itself. The level above cannot distinguish FP from
+      // MSC (both are level 2), so this is the field the lecturer's choice lives in.
+      final_category: string | null;
       final_feedback: string | null;
       lecturer_name: string;
       validated_at: string | null;
@@ -714,6 +717,10 @@ export default function StudentPackageReviewPage({
         source = "Dosen";
         const code =
           draft?.finalCategory ??
+          // Migration 0031 rows carry the lecturer's diagnosis verbatim. The level
+          // fallback below survives for validations written before it, and for the
+          // /validation/[id] surface, which still edits a bare tier level.
+          validation.final_category ??
           (validation.final_tier_level === (an?.tier_level ?? null)
             ? (an?.four_tier_category ?? null)
             : (levelToCode[validation.final_tier_level ?? 0] ?? null));
@@ -772,6 +779,9 @@ export default function StudentPackageReviewPage({
       final_percentage: targetScore,
       final_tier_level:
         CATEGORY_TO_LEVEL[draft.finalCategory] ?? a?.tier_level ?? 1,
+      // Sent separately from the level: FP and MSC both map to level 2, so without this
+      // the server stores the lecturer's FP correction as an unchanged tier.
+      final_category: draft.finalCategory ?? a?.four_tier_category ?? null,
     };
     return body;
   };
