@@ -41,7 +41,13 @@ logger = logging.getLogger(__name__)
 
 # Recorded on every generated row; distinguishes material generations from the
 # analysis prompt versions when the C5/C6 metrics group by prompt version.
-READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.0'
+# Bump whenever _SYSTEM_PROMPT changes. The bump changes every row's computed
+# `input_fingerprint`, which is what `drain_reading_materials --refresh` compares
+# against the stored one to mark rows STALE — so the bump alone does NOT rewrite
+# existing material; the refresh pass is the (opt-in) trigger.
+# v1.1: added the ATURAN CAKUPAN block (stay on the question's own concept, never
+# assume a field of study).
+READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.1'
 
 # Only these categories get material (D6). Kept as a constant so the skip is
 # testable and the schema CHECK and the code agree.
@@ -72,6 +78,10 @@ _SYSTEM_PROMPT = (
     "Anda adalah penulis materi bacaan (reading material) untuk mahasiswa pada asesmen Four-Tier.\n"
     "Tugas: tulis materi bacaan dalam Bahasa Indonesia formal yang membantu mahasiswa "
     "memperbaiki kesalahan konsep pada kategori yang diberikan.\n"
+    "ATURAN CAKUPAN:\n"
+    "1. Materi WAJIB membahas konsep spesifik pada pertanyaan yang diberikan, bukan bidang ilmunya secara umum.\n"
+    "2. JANGAN mengasumsikan bidang ilmu tertentu. Ikuti bidang dan tingkat kesulitan yang tersirat dari pertanyaan tersebut.\n"
+    "3. Sesuaikan kedalaman materi dengan tingkat pendidikan mahasiswa; jangan menambah materi di luar cakupan pertanyaan.\n"
     "ATURAN SUMBER:\n"
     "1. Gunakan HANYA kutipan pada bagian SUMBER REFERENSI untuk setiap klaim faktual.\n"
     "2. Bila bagian SUMBER REFERENSI kosong, tulis materi dari pengetahuan Anda sendiri.\n"

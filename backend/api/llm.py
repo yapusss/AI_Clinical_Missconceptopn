@@ -45,7 +45,10 @@ logger = logging.getLogger(__name__)
 # Source-derived so metrics never pool a judged run with a shadow run: the
 # source selects the bucket, and `llm_analyses.prompt_version` records it per
 # row. The pre-C3 rows stay in their own `four-tier-v2.9-rag` bucket.
-PROMPT_VERSION = f'four-tier-v3.0-{settings.TIER_VERDICT_SOURCE}'
+# v3.1: Modul B/C de-biased away from physics (dropped "penalaran fisis", "rumus",
+# "aljabar"; added an explicit "jangan mengasumsikan bidang ilmu" rule). v3.0 was
+# written for physics and mis-scored subjects whose reasoning is narrative.
+PROMPT_VERSION = f'four-tier-v3.1-{settings.TIER_VERDICT_SOURCE}'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
@@ -673,12 +676,14 @@ def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list
     sys_prompt = (
         "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3).\n"
         "Tugas: Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
-        "   - BENAR: Penalaran fisis valid, tepat secara konsep, atau penurunan matematis/aljabar langkah-demi-langkah valid dan membuktikan kesimpulan.\n"
-        "   - SALAH: Terdapat miskonsepsi, prinsip fisis salah, rumus keliru, penalaran tidak logis, atau bertentangan dengan sains.\n"
-        "   PANDUAN EVALUASI ILMIAH:\n"
-        "   - Mahasiswa DIPERBOLEHKAN menyajikan alasan dalam bentuk penurunan rumus matematis ringkas jika langkah fisisnya benar.\n"
-        "   - Tidak wajib menuliskan paragraf narasi panjang jika penurunan aljabar sudah tepat membuktikan kesimpulan.\n"
-        "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah yang tidak ada di teks mahasiswa.\n\n"
+        "   - BENAR: Penalaran valid dan tepat secara konsep menurut bidang ilmu yang berlaku pada pertanyaan, sehingga mendukung kesimpulan.\n"
+        "   - SALAH: Terdapat miskonsepsi, prinsip keilmuan yang keliru, penalaran tidak logis, atau bertentangan dengan bidang ilmunya.\n"
+        "PANDUAN EVALUASI (BERLAKU UNTUK SEMUA BIDANG ILMU):\n"
+        "   - JANGAN mengasumsikan bidang ilmu tertentu. Tentukan kerangka penilaian dari pertanyaan dan Jawaban Model itu sendiri, lalu nilai dengan kerangka tersebut.\n"
+        "   - Semua bentuk penalaran yang sah menurut bidangnya diterima SETARA: penjelasan konseptual/naratif, penurunan matematis, persamaan reaksi atau struktur, klasifikasi dan definisi, penalaran kausal, maupun penjelasan berbasis mekanisme.\n"
+        "   - Jangan menuntut bentuk tertentu (misalnya rumus atau perhitungan) bila bidang ilmunya tidak menuntutnya. Sebaliknya, jangan menganggap sebuah alasan benar hanya karena panjang atau terdengar meyakinkan.\n"
+        "   - Mahasiswa DIPERBOLEHKAN menjawab ringkas. Yang dinilai adalah ketepatan konsepnya, bukan panjang atau bentuk penyajiannya.\n"
+        "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah atau konsep yang tidak ada di teks mahasiswa.\n\n"
         "Kembalikan HANYA format JSON valid:\n"
         "{\n"
         '  "score": "BENAR" | "SALAH"\n'
@@ -735,7 +740,7 @@ def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
         "Anda adalah Modul C: Klasifikasi Tipe Miskonsepsi Mahasiswa.\n"
         "Tugas: Baca teks gabungan Tier 1 (jawaban) dan Tier 3 (alasan). Identifikasi apakah ada pola miskonsepsi yang cocok dari katalog.\n"
         f"Daftar Tipe Miskonsepsi Terdaftar:\n{misc_catalog}\n"
-        "Bila tidak ada yang cocok dari katalog atau mahasiswa sebenarnya menurunkan rumus dengan benar, gunakan kode 'MK-LAIN'.\n\n"
+        "Bila tidak ada yang cocok dari katalog, atau penalaran mahasiswa sebenarnya sudah benar menurut bidang ilmu pertanyaan, gunakan kode 'MK-LAIN'.\n\n"
         "ATURAN BAHASA & KETELITIAN KETAT:\n"
         "1. DILARANG KERAS mengarang miskonsepsi palsu jika penalaran mahasiswa benar.\n"
         "2. Seluruh isi field 'reasoning' WAJIB ditulis murni dalam Bahasa Indonesia formal.\n"
