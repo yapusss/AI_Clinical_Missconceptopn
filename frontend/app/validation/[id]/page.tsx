@@ -22,6 +22,7 @@ import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
+import MathContent from "../../components/MathContent";
 import { apiFetch } from "../../lib/api";
 import FeedbackModal from "../../components/FeedbackModal";
 import type {
@@ -533,9 +534,10 @@ export default function ValidationDetailPage() {
                         <span className="text-[10px] font-bold uppercase text-on-surface-variant">
                           Tier 1 — Kesimpulan
                         </span>
-                        <p className="mt-1 text-sm font-semibold text-on-surface font-mono-ui">
-                          {data.answer.tier1_answer || data.answer.text || "-"}
-                        </p>
+                        <MathContent
+                          value={data.answer.tier1_answer || data.answer.text}
+                          className="mt-1 text-sm font-semibold text-on-surface font-mono-ui"
+                        />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
                         <span className="text-[10px] font-bold uppercase text-on-surface-variant">
@@ -553,9 +555,10 @@ export default function ValidationDetailPage() {
                         <span className="text-[10px] font-bold uppercase text-on-surface-variant">
                           Tier 3 — Alasan Ilmiah
                         </span>
-                        <p className="mt-1 text-sm text-on-surface whitespace-pre-wrap font-mono-ui leading-relaxed">
-                          {data.answer.tier3_reason || data.answer.text || "-"}
-                        </p>
+                        <MathContent
+                          value={data.answer.tier3_reason || data.answer.text}
+                          className="mt-1 text-sm text-on-surface font-mono-ui leading-relaxed"
+                        />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
                         <span className="text-[10px] font-bold uppercase text-on-surface-variant">

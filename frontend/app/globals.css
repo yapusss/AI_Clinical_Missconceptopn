@@ -392,6 +392,11 @@ main:not([data-scrolled]) > header {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
 }
 
+/* Multi-line answer fields can be dragged taller/shorter by the user. */
+textarea.form-input {
+  resize: vertical;
+}
+
 /* Native calendar icons do not inherit input text color. */
 .datetime-input {
   color-scheme: dark;
@@ -411,7 +416,13 @@ main:not([data-scrolled]) > header {
   border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
   background: var(--input-bg);
-  overflow: hidden;
+  /* The native resize grip only appears when overflow is not `visible`.
+     `auto` keeps long content scrollable instead of clipping it once the
+     editor has been dragged to a shorter height. */
+  overflow: auto;
+  resize: vertical;
+  min-height: 120px;
+  max-height: 800px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -600,6 +611,83 @@ main:not([data-scrolled]) > header {
   user-select: none;
 }
 
+/* Resize grip visibility (dark + light themes) */
+.rte-editor::-webkit-resizer,
+textarea.form-input::-webkit-resizer {
+  background: linear-gradient(135deg, transparent 0 55%, var(--primary) 55% 100%);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+/* Interactive MathLive field (inline formulas inside the TipTap editors) */
+.math-field-host {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+math-field.math-field-input {
+  display: inline-block;
+  width: auto;
+  min-width: 4rem;
+  min-height: 2.25rem;
+  padding: 0.15rem 0.5rem;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  font-size: 1rem;
+  vertical-align: middle;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+math-field.math-field-input:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+/* Inline math node inside the TipTap editor */
+.math-inline-node {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 2px;
+  border-radius: 0.35rem;
+}
+
+.math-inline-node.is-selected {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Read-only math inside stored content (validation / history screens) */
+.rte-content math-field,
+.math-static {
+  display: inline-block;
+  width: auto;
+  min-width: 1em;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.rte-content math-field {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  font-size: 1em;
+}
+
+/* Read-only static LaTeX rendering (legacy answers) */
+.math-static {
+  overflow-x: auto;
+}
+
+.math-static-pending {
+  font-family: var(--font-mono-ui);
+  opacity: 0.75;
+}
+
+.math-static-display {
+  display: block;
+  margin: 0.35rem 0;
+}
 
 /* App Shell */
 .app-shell {

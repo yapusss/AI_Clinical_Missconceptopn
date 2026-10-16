@@ -29,6 +29,7 @@ import AppSelect from "../../../../components/AppSelect";
 import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
 import RichTextContent from "../../../../components/RichTextContent";
+import MathContent from "../../../../components/MathContent";
 import { apiFetch } from "../../../../lib/api";
 import type {
   GroundingReference,
@@ -1093,7 +1094,11 @@ export default function StudentPackageReviewPage({
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Jawaban Singkat Mahasiswa</span>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                        <p className="text-base font-medium text-on-surface leading-normal mt-0.5">{currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}</p>
+                        <MathContent
+                          value={currentAttempt?.tier1_answer || currentAttempt?.answer_text}
+                          fallback="Belum ada jawaban"
+                          className="text-base font-medium text-on-surface leading-normal mt-0.5"
+                        />
                         {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
                           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
                             <AlertTriangle size={12} className="shrink-0" />
@@ -1117,7 +1122,11 @@ export default function StudentPackageReviewPage({
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Alasan Mahasiswa</span>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                        <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">{currentAttempt?.tier3_reason || currentAttempt?.answer_text || "Belum ada alasan"}</p>
+                        <MathContent
+                          value={currentAttempt?.tier3_reason || currentAttempt?.answer_text}
+                          fallback="Belum ada alasan"
+                          className="text-sm leading-relaxed text-on-surface mt-0.5 max-h-32 overflow-y-auto"
+                        />
                         {(currentAttempt?.heuristic_flags ?? []).some((flag) => flag === "t3_kosong" || flag === "t3_redundan" || flag === "t3_hafalan") && (
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
                             <AlertTriangle size={12} className="shrink-0" />
