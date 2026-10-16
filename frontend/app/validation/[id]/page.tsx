@@ -105,6 +105,7 @@ type Detail = {
     status: string;
     final_percentage: string | null;
     final_tier_level: number | null;
+    final_category: string | null;
     final_feedback: string | null;
     lecturer_name: string;
     validated_at: string;
@@ -142,6 +143,22 @@ const CATEGORY_META: Record<
   },
 };
 
+// The tier level is a derived projection of the category, not a separate judgement:
+// FP and MSC both map to level 2, so the level can never be the lecturer's answer.
+// It is still sent because the procedure stores it (and NOT NULL legacy columns need it),
+// but it is always computed from the chosen category.
+const CATEGORY_TO_LEVEL: Record<string, number> = {
+  SC: 4,
+  FN: 3,
+  FP: 2,
+  MSC: 2,
+  LK: 1,
+};
+
+// Display order for the diagnosis selector: sound understanding first, then the three
+// ways a student can be wrong, then "does not know".
+const CATEGORY_ORDER = ["SC", "FP", "FN", "MSC", "LK"];
+
 const shortId = (value?: string | null) => (value ? value.slice(0, 8) : "—");
 
 const MATERIAL_STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -161,11 +178,10 @@ export default function ValidationDetailPage() {
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [tiers, setTiers] = useState<{ level: number; label: string }[]>([]);
 
   // Validation Form State
   const [finalPct, setFinalPct] = useState("");
-  const [finalTier, setFinalTier] = useState<number | "">("");
+  const [finalCategory, setFinalCategory] = useState<string>("");
   const [feedback, setFeedback] = useState("");
   const [notes, setNotes] = useState("");
   const [confirms, setConfirms] = useState<Record<string, boolean>>({});
@@ -187,7 +203,9 @@ export default function ValidationDetailPage() {
 
       const existing = det.existing_validation;
       setFinalPct(existing?.final_percentage ?? det.llm.percentage_correct);
-      setFinalTier(existing?.final_tier_level ?? det.llm.tier_level);
+      setFinalCategory(
+        existing?.final_category ?? det.llm.four_tier_category ?? "",
+      );
       setFeedback(existing?.final_feedback ?? det.llm.explanation);
 
       const initialConfirms: Record<string, boolean> = {};
@@ -198,17 +216,6 @@ export default function ValidationDetailPage() {
           m.lecturer_confirmed !== undefined ? m.lecturer_confirmed : m.matched;
       });
       setConfirms(initialConfirms);
-
-      try {
-        const t = await apiFetch<{ level: number; label: string }[]>(
-          `/validations/tiers?subject_id=${det.subject.id}`,
-        );
-        setTiers(t);
-      } catch {
-        setTiers(
-          [1, 2, 3, 4].map((level) => ({ level, label: `Tier ${level}` })),
-        );
-      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Gagal memuat detail analisis.",
@@ -233,9 +240,9 @@ export default function ValidationDetailPage() {
     setNotice("");
 
     if (forcedStatus !== "REJECTED") {
-      if (finalTier === "" || finalTier === null) {
+      if (!finalCategory) {
         setError(
-          "Peringatan: Silakan pilih Tier Akhir sebelum menyimpan validasi.",
+          "Peringatan: Silakan pilih Diagnosis Akhir sebelum menyimpan validasi.",
         );
         return;
       }
@@ -269,10 +276,11 @@ export default function ValidationDetailPage() {
       } else {
         const isScoreChanged =
           Number(finalPct) !== Number(data.llm.percentage_correct);
-        const isTierChanged = Number(finalTier) !== Number(data.llm.tier_level);
+        const isCategoryChanged =
+          finalCategory !== (data.llm.four_tier_category ?? "");
         const isFeedbackChanged =
           feedback.trim() !== data.llm.explanation.trim();
-        if (isScoreChanged || isTierChanged || isFeedbackChanged) {
+        if (isScoreChanged || isCategoryChanged || isFeedbackChanged) {
           decisionStatus = "EDITED";
         }
       }
@@ -280,7 +288,11 @@ export default function ValidationDetailPage() {
       const body: Record<string, unknown> = { status: decisionStatus };
       if (decisionStatus !== "REJECTED") {
         body.final_percentage = Number(finalPct);
-        body.final_tier_level = Number(finalTier);
+        body.final_category = finalCategory;
+        // Derived, never chosen: the legacy NOT NULL columns need a level and the
+        // procedure stores it, but the category above is the lecturer's actual answer.
+        body.final_tier_level =
+          CATEGORY_TO_LEVEL[finalCategory] ?? data.llm.tier_level ?? 1;
         body.final_feedback = feedback.trim();
       }
       if (notes.trim()) {
@@ -364,7 +376,7 @@ export default function ValidationDetailPage() {
   const resetToAiValues = () => {
     if (!data) return;
     setFinalPct(data.llm.percentage_correct);
-    setFinalTier(data.llm.tier_level);
+    setFinalCategory(data.llm.four_tier_category ?? "");
     setFeedback(data.llm.explanation);
   };
 
@@ -996,7 +1008,12 @@ export default function ValidationDetailPage() {
                           {Number(data.llm.percentage_correct).toFixed(1)}%
                         </span>
                         <span className="text-xs font-semibold text-on-surface-variant">
-                          Tier {data.llm.tier_level} ({data.llm.tier_label})
+                          {data.llm.four_tier_category
+                            ? `[${data.llm.four_tier_category}] ${
+                                CATEGORY_META[data.llm.four_tier_category]?.label ??
+                                data.llm.four_tier_category
+                              }`
+                            : data.llm.tier_label}
                         </span>
                       </div>
                     </div>
@@ -1033,16 +1050,16 @@ export default function ValidationDetailPage() {
 
                     <div>
                       <span className="block text-[11px] font-bold uppercase text-on-surface-variant">
-                        Tier Akhir
+                        Diagnosis Akhir
                       </span>
                       <AppSelect
-                        value={String(finalTier)}
-                        onValueChange={(val) => setFinalTier(Number(val))}
+                        value={finalCategory}
+                        onValueChange={(val) => setFinalCategory(val)}
                         className="mt-1 w-full text-xs"
-                        ariaLabel="Pilih Tier Akhir"
-                        options={tiers.map((t) => ({
-                          value: String(t.level),
-                          label: `Tier ${t.level} - ${t.label}`,
+                        ariaLabel="Pilih Diagnosis Akhir"
+                        options={CATEGORY_ORDER.map((code) => ({
+                          value: code,
+                          label: `[${code}] ${CATEGORY_META[code].label}`,
                         }))}
                       />
                     </div>
