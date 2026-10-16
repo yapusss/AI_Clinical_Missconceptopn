@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, override_settings
 
 from api import llm
+from api import reading_materials
 from api.models import ExamPackage
 from api.embeddings import answer_similarity, cosine
 from api.llm import (
@@ -88,6 +89,60 @@ def make_ctx(**overrides) -> FourTierContext:
     )
     base.update(overrides)
     return FourTierContext(**base)
+
+
+class PromptNeutralityTests(SimpleTestCase):
+    """The module prompts must not assume a field of study.
+
+    v3.0 was written for physics — "penalaran fisis", "penurunan matematis/aljabar",
+    "rumus keliru" — so a chemistry answer that is conceptually right but contains no
+    formula was judged against a framework that does not apply to it, and the prompt
+    actively invited formula-derivation while deprioritising narrative reasoning. The
+    prompts are local variables inside `run_module_b/c`, so this captures them exactly
+    as the provider sees them by stubbing only the transport.
+    """
+
+    def _capture(self, module_callable, **ctx_over):
+        captured = {}
+
+        def fake(sys_prompt, user_prompt, model_identifier):
+            captured['sys'] = sys_prompt
+            return {'score': 'BENAR', 'misconception_code': 'MK-LAIN'}
+
+        with patch('api.llm._call_llm_json', side_effect=fake):
+            module_callable(make_ctx(**ctx_over), 'test-model')
+        return captured['sys']
+
+    def test_module_b_prompt_is_subject_agnostic(self):
+        low = self._capture(run_module_b).lower()
+        # Ban only physics-EXCLUSIVE framing. Do not ban bare nouns/phrases that the
+        # rewrite legitimately names as equally acceptable ("penurunan matematis" and
+        # "rumus" both appear inside inclusive clauses — banning them asserted the
+        # opposite of what the prompt now says).
+        for banned in ('fisis', 'prinsip fisis', 'aljabar', 'penurunan rumus'):
+            self.assertNotIn(
+                banned, low, f'Modul B assumes a physics framing again: {banned!r}')
+        # The de-bias signals: no assumed field, all valid reasoning forms equal, and
+        # the anti-hallucination rule surviving the rewrite.
+        self.assertIn('jangan mengasumsikan bidang ilmu', low)
+        self.assertIn('diterima setara', low)
+        self.assertIn('anti-halusinasi', low)
+
+    def test_module_c_prompt_is_subject_agnostic(self):
+        low = self._capture(run_module_c).lower()
+        self.assertNotIn('menurunkan rumus', low)
+        self.assertIn('mk-lain', low)
+
+    def test_reading_material_prompt_is_subject_agnostic(self):
+        self.assertIn('jangan mengasumsikan bidang ilmu',
+                      reading_materials._SYSTEM_PROMPT.lower())
+
+    def test_prompt_versions_carry_the_de_bias(self):
+        # A prompt edit without a version bump pools two different prompts into one
+        # metrics bucket, and for materials it means the old rows never regenerate.
+        self.assertIn('v3.1', llm.PROMPT_VERSION)
+        self.assertEqual(reading_materials.READING_MATERIAL_PROMPT_VERSION,
+                         'reading-material-v1.1')
 
 
 class CosineTests(SimpleTestCase):
