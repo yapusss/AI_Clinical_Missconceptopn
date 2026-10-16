@@ -57,10 +57,11 @@ services:
       valkey:
         condition: service_healthy
 
-  # P4 analysis worker (same image, polling queue). Profile-gated so it only
-  # starts when explicitly enabled (deploy.sh does this once a real
-  # LLM_API_KEY exists in .env); without a key it would fail every analysis
-  # to ANALYSIS_FAILED in a bounded retry loop.
+  # Analysis worker (same image, polling queue). NOT used by deploy.sh any more: the
+  # backend supervises `analyze_submissions` and `drain_reading_materials` itself
+  # (api/worker_supervisor.py, migration 0029), so starting this too would duplicate the
+  # analysis loop. Kept profile-gated as the manual escape hatch for when AUTO_WORKER=0:
+  #   docker compose --profile worker up -d worker
   worker:
     profiles: ["worker"]
     build: ./backend

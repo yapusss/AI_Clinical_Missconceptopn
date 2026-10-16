@@ -55,12 +55,40 @@ if ! docker compose exec -T frontend wget -q -O - --timeout=5 http://127.0.0.1:3
   exit 1
 fi
 
-# P4 worker: start only if an LLM key is configured; otherwise skip cleanly.
-if [ -n "${LLM_API_KEY:-}" ] && [ "${LLM_API_KEY:-local-llama-cpp}" != "local-llama-cpp" ]; then
-  docker compose --profile worker up -d worker && echo "worker: started (model=${LLM_MODEL:-?})" \
-    || { echo "worker: FAILED to start"; exit 1; }
-else
-  echo "worker: SKIPPED - LLM_API_KEY not set (no .env on VPS?)"
+# Workers: NO LONGER started here. Since migration 0029 the backend supervises both
+# loops itself (api/worker_supervisor.py, spawned from ApiConfig.ready()), so the
+# `worker` container this step used to start would be a SECOND analysis worker polling
+# the same queue. Claims are idempotent (FOR UPDATE SKIP LOCKED) so it was safe, just
+# duplicated — and it only ever ran `analyze_submissions`, so the materials drain ran
+# nowhere on the VPS. The LLM-key guard this block implemented now lives in
+# should_supervise(), which refuses to spawn without a real key.
+#
+# Consequence to keep in mind: with AUTO_WORKER=0 (or no LLM key in .env) there are no
+# workers at all. The manual escape hatch is still available and profile-gated:
+#   docker compose --profile worker up -d worker
+echo "worker: supervised by the backend (no separate container)"
+
+# Prove the workers are actually beating. A fresh heartbeat row per worker is the only
+# evidence that the loops are alive — "backend healthy, worker dead" was the silent
+# state that parked submissions at TERSIMPAN for 19 hours before migration 0029, and
+# nothing in this script looked for it. Non-fatal: the deploy log shows the state.
+worker_rows=0
+for i in $(seq 1 24); do
+  worker_rows=$(docker compose exec -T postgres psql -U appuser -d appdb -tAc \
+    "SELECT count(*) FROM worker_heartbeats WHERE last_seen_at > now() - interval '60 seconds'" </dev/null 2>/dev/null || echo 0)
+  worker_rows=$(echo "${worker_rows:-0}" | tr -d '[:space:]')
+  if [ "${worker_rows:-0}" -ge 3 ]; then
+    echo "workers: ${worker_rows} fresh heartbeats"
+    break
+  fi
+  echo "waiting for worker heartbeats ($i/24)..."
+  sleep 5
+done
+if [ "${worker_rows:-0}" -lt 3 ]; then
+  echo "workers: WARNING - fewer than 3 fresh heartbeats (expected analysis, materials, supervisor)"
+  echo "         check AUTO_WORKER / the LLM key, and: docker compose logs backend"
+  docker compose exec -T postgres psql -U appuser -d appdb -c \
+    "SELECT worker_name, pid, loop_count, now() - last_seen_at AS age, detail_json->>'last_error' AS err FROM worker_heartbeats ORDER BY worker_name" </dev/null 2>/dev/null || true
 fi
 
 docker image prune -f || true
