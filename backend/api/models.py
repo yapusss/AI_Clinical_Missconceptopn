@@ -464,6 +464,11 @@ class Validation(models.Model):
     final_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     final_tier_id = models.UUIDField(null=True, blank=True)
     final_tier_level_snapshot = models.IntegerField(null=True, blank=True)
+    # Added by migration 0031. The five-category diagnosis, which the tier level cannot
+    # represent: FP and MSC both map to level 2, so a lecturer's FP correction used to be
+    # stored as an unchanged level and vanished from the audit trail.
+    original_category = models.TextField(null=True, blank=True)
+    final_category = models.TextField(null=True, blank=True)
     final_tier_label_snapshot = models.CharField(max_length=100, null=True, blank=True)
     final_feedback = models.TextField(null=True, blank=True)
     is_score_modified = models.BooleanField(default=False)

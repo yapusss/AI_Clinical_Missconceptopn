@@ -2483,6 +2483,7 @@ class QuestionSetStudentReviewView(APIView):
                             'status': validation.status,
                             'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
                             'final_tier_level': validation.final_tier_level_snapshot,
+                            'final_category': validation.final_category,
                             'final_feedback': validation.final_feedback,
                             'lecturer_name': validation.lecturer.full_name,
                             'validated_at': validation.validated_at,
@@ -3078,7 +3079,7 @@ class ExamPackageStudentReviewView(APIView):
                         'risk_level': analysis.risk_level,
                         **_grounding_detail(analysis, analysis.concept_breakdown_json or {}),
                         'validation': {'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
-                            'final_tier_level': validation.final_tier_level_snapshot, 'final_feedback': validation.final_feedback,
+                            'final_tier_level': validation.final_tier_level_snapshot, 'final_category': validation.final_category, 'final_feedback': validation.final_feedback,
                             'lecturer_name': validation.lecturer.full_name, 'validated_at': validation.validated_at} if validation else None,
                     } if analysis else None,
                 })

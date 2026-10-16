@@ -53,8 +53,15 @@ MATERIAL_CATEGORIES = ('LK', 'FP', 'FN', 'MSC')
 LEVEL_TO_CATEGORY = {4: 'SC', 3: 'FN', 2: 'MSC', 1: 'LK'}
 
 
-def lecturer_category(analysis, final_tier_level):
-    """The category code implied by the lecturer's final tier level, or None."""
+def lecturer_category(analysis, final_tier_level, final_category=None):
+    """The lecturer's diagnosis, preferring the category migration 0031 stored.
+
+    `final_category` is authoritative — it is the only field that can distinguish FP from
+    MSC. The level->code fallback below is for validations written before 0031, and for
+    the one surface that still edits a bare level (`/validation/[id]`).
+    """
+    if final_category:
+        return final_category
     if final_tier_level is None:
         return None
     if final_tier_level == analysis.tier_level_snapshot:

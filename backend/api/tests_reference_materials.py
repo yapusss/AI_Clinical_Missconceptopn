@@ -307,13 +307,14 @@ def make_analysis(similarity=None, citation_count=None, category=None,
 
 
 def make_validation(analysis, status='ACCEPTED', orig_tier=2, final_tier=2,
-                    orig_pct='50.00', final_pct='50.00'):
+                    orig_pct='50.00', final_pct='50.00', final_category=None):
     return SimpleNamespace(
         status=status,
         original_tier_level_snapshot=orig_tier,
         final_tier_level_snapshot=final_tier,
         original_percentage=orig_pct,
         final_percentage=final_pct,
+        final_category=final_category,
         analysis=analysis,
     )
 
@@ -1476,6 +1477,9 @@ def _hook_validation(**over):
         original_percentage=Decimal('40.00'),
         original_tier_level_snapshot=3,
         original_tier_id='tier-3',
+        # Migration 0031. NULL means "written before 0031" (or by a surface that only
+        # edits a level), which is what the level->category fallback below still serves.
+        final_category=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -1491,7 +1495,8 @@ class LecturerVerdictEnqueueTests(SimpleTestCase):
     `test_saving_the_same_salah_verdict_twice_leaves_one_row`.
     """
 
-    def _run_post(self, data, analysis, validations, store=None, sql_error=None):
+    def _run_post(self, data, analysis, validations, store=None, sql_error=None,
+                  execute_side_effect=None):
         serializer = MagicMock()
         serializer.is_valid.return_value = True
         serializer.validated_data = data
@@ -1502,6 +1507,8 @@ class LecturerVerdictEnqueueTests(SimpleTestCase):
         fake_conn = MagicMock()
         cursor = fake_conn.cursor.return_value.__enter__.return_value
         cursor.fetchone.return_value = None
+        if execute_side_effect is not None:
+            cursor.execute.side_effect = execute_side_effect
         if sql_error is not None:
             fake_conn.cursor.side_effect = RuntimeError(sql_error)
 
@@ -1554,6 +1561,57 @@ class LecturerVerdictEnqueueTests(SimpleTestCase):
         response, enqueue, _ = self._run_post(data, analysis, [None, row])
         self.assertEqual(response.status_code, 201)
         enqueue.assert_called_once_with('qv-1', 'MSC')
+
+    def test_stored_final_category_wins_over_the_level(self):
+        # Migration 0031. The AI said MSC and the lecturer corrected it to FP: both are
+        # level 2, so final_tier_level is untouched and the level cannot tell them apart.
+        # If the stored category did not decide, the correction would silently key an MSC
+        # reading material for a student whose misconception is the opposite kind.
+        analysis = _hook_analysis(tier_level=2, category='MSC')
+        row = _hook_validation(final_tier_level_snapshot=2, final_category='FP')
+        data = self._salah_data(final_tier_level=2, final_category='FP')
+        response, enqueue, _ = self._run_post(data, analysis, [None, row])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_called_once_with('qv-1', 'FP')
+
+    def test_legacy_row_without_a_category_still_falls_back_to_the_level(self):
+        # A validation written before 0031 has final_category NULL; the level->category
+        # fallback must keep working for it, or every historical row would stop keying
+        # a material at all.
+        analysis = _hook_analysis(tier_level=2, category='MSC')
+        row = _hook_validation(final_tier_level_snapshot=2, final_category=None)
+        data = self._salah_data(final_tier_level=2)
+        response, enqueue, _ = self._run_post(data, analysis, [None, row])
+        self.assertEqual(response.status_code, 201)
+        enqueue.assert_called_once_with('qv-1', 'MSC')
+
+    def test_missing_category_procedure_falls_back_to_the_legacy_call(self):
+        # The deploy window. deploy.sh runs `up -d --build` BEFORE `manage.py migrate`,
+        # so for a few seconds the new code is serving against a database where the
+        # 9-argument procedure does not exist yet. A lecturer's submit must degrade to
+        # the 7-argument call instead of failing with a 500.
+        from django.db import ProgrammingError
+
+        analysis = _hook_analysis(tier_level=2, category='MSC')
+        row = _hook_validation(final_tier_level_snapshot=2, final_category='FP')
+        data = self._salah_data(final_tier_level=2, final_category='FP')
+
+        calls = []
+
+        def execute(sql, params=None):
+            calls.append(sql)
+            if len(calls) == 1:
+                raise ProgrammingError(
+                    'procedure sp_validate_analysis(...) does not exist')
+            return None
+
+        response, enqueue, _ = self._run_post(
+            data, analysis, [None, row], execute_side_effect=execute)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(calls), 2, 'the fallback call must have been attempted')
+        self.assertEqual(calls[0].count('%s'), 8, 'first attempt passes the category')
+        self.assertEqual(calls[1].count('%s'), 7, 'fallback omits it')
 
     def test_benar_does_not_enqueue(self):
         analysis = _hook_analysis(tier_level=4, category='SC')
