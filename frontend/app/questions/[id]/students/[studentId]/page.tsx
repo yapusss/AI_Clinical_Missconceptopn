@@ -450,9 +450,6 @@ export default function StudentPackageReviewPage({
 
   const isAlreadyValidated = Boolean(currentAttempt?.analysis?.validation);
   const isLocked = isAlreadyValidated && !isUnlocked;
-  const isDecisionTouched = Boolean(
-    currentAttempt?.analysis && drafts[currentAttempt.analysis.id]?.decisionTouched,
-  );
 
   const updateDraft = (
     patch: Partial<{
@@ -1082,6 +1079,7 @@ export default function StudentPackageReviewPage({
 
                 {/* Bandingkan setiap jawaban mahasiswa dengan referensi yang setara. */}
                 <div className="space-y-3.5">
+                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/40 p-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
@@ -1093,15 +1091,8 @@ export default function StudentPackageReviewPage({
                       />
                     </div>
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs font-bold uppercase tracking-wider text-primary">Jawaban Singkat Mahasiswa</span>
-                        {currentAttempt && <span className="text-xs text-on-surface-variant font-mono-ui">{fmtDate(currentAttempt.submitted_at)}</span>}
-                      </div>
+                      <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Jawaban Singkat Mahasiswa</span>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold uppercase tracking-wide text-primary">Jawaban Singkat</span>
-                          <span className="font-mono-ui text-xs font-bold text-primary">{currentAttempt?.tier2_confidence ?? 1}/6 · {(currentAttempt?.tier2_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}</span>
-                        </div>
                         <p className="text-base font-medium text-on-surface leading-normal mt-0.5">{currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}</p>
                         {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
                           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
@@ -1112,7 +1103,9 @@ export default function StudentPackageReviewPage({
                       </div>
                     </div>
                   </div>
+                  </div>
 
+                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/40 p-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">Alasan Referensi</span>
@@ -1124,10 +1117,6 @@ export default function StudentPackageReviewPage({
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Alasan Mahasiswa</span>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold uppercase tracking-wide text-primary">Alasan Ilmiah</span>
-                          <span className="font-mono-ui text-xs font-bold text-primary">{currentAttempt?.tier4_confidence ?? 1}/6 · {(currentAttempt?.tier4_confidence ?? 1) >= 4 ? "Yakin" : "Ragu"}</span>
-                        </div>
                         <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap mt-0.5 max-h-32 overflow-y-auto">{currentAttempt?.tier3_reason || currentAttempt?.answer_text || "Belum ada alasan"}</p>
                         {(currentAttempt?.heuristic_flags ?? []).some((flag) => flag === "t3_kosong" || flag === "t3_redundan" || flag === "t3_hafalan") && (
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
@@ -1139,6 +1128,7 @@ export default function StudentPackageReviewPage({
                         )}
                       </div>
                     </div>
+                  </div>
                   </div>
                 </div>
 
@@ -1349,7 +1339,7 @@ export default function StudentPackageReviewPage({
                                 type="button"
                                 onClick={() => updateDraft({ isCorrect: true })}
                                 className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
-                                  isDecisionTouched && isCorrect
+                                  isCorrect
                                     ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50 font-bold ring-1 ring-emerald-500/25 shadow-sm"
                                     : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
                                 }`}
@@ -1362,7 +1352,7 @@ export default function StudentPackageReviewPage({
                                   updateDraft({ isCorrect: false })
                                 }
                                 className={`flex-1 py-2 px-3 rounded-lg border text-xs font-mono-ui cursor-pointer transition-all ${
-                                  isDecisionTouched && !isCorrect
+                                  !isCorrect
                                     ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50 font-bold ring-1 ring-rose-500/25 shadow-sm"
                                     : "bg-surface-container text-on-surface-variant border-outline-variant/40 hover:bg-surface-container-high hover:text-on-surface"
                                 }`}
