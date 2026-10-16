@@ -394,7 +394,7 @@ class Submission(models.Model):
     )
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
     answer_text = models.TextField()
-    tier1_answer = models.CharField(max_length=255, null=True, blank=True)
+    tier1_answer = models.TextField(null=True, blank=True)
     tier2_confidence = models.SmallIntegerField(null=True, blank=True)
     tier3_reason = models.TextField(null=True, blank=True)
     tier4_confidence = models.SmallIntegerField(null=True, blank=True)
