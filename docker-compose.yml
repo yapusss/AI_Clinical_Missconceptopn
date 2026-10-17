@@ -1,3 +1,20 @@
+# Shared by every service that talks to the database or the LLM. Defined once so
+# `migrate`, `backend` and `worker` cannot drift apart.
+x-backend-env: &backend-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: appdb
+  DB_USER: appuser
+  DB_PASSWORD: apppassword
+  REDIS_URL: redis://valkey:6379
+  # LLM provider — real values come from the shell/.env at deploy time
+  # (scripts/deploy.sh exports them; never commit the key itself).
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
+  LLM_API_KEY: ${LLM_API_KEY:-local-llama-cpp}
+  LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
+  LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
+  LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -27,6 +44,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot schema sync. `manage.py migrate` is a no-op when nothing is pending, so
+  # this runs on every `docker compose up` and the API can never serve against a
+  # schema the models have outgrown. backend/worker wait for it to exit 0; without
+  # that, a fresh DB (migration 0031 etc.) made every student/lecturer endpoint 500.
+  migrate:
+    build: ./backend
+    container_name: migrate
+    command: python manage.py migrate --noinput
+    volumes:
+      - ./backend:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build: ./backend
     container_name: backend
@@ -37,25 +72,14 @@ services:
       - "8000:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: appdb
-      DB_USER: appuser
-      DB_PASSWORD: apppassword
-      REDIS_URL: redis://valkey:6379
-      # LLM provider — real values come from the shell/.env at deploy time
-      # (scripts/deploy.sh exports them; never commit the key itself).
-      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
-      LLM_API_KEY: ${LLM_API_KEY:-local-llama-cpp}
-      LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
-      LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
-      LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
+    environment: *backend-env
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   # Analysis worker (same image, polling queue). NOT used by deploy.sh any more: the
   # backend supervises `analyze_submissions` and `drain_reading_materials` itself
@@ -71,20 +95,12 @@ services:
       - ./backend:/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: appdb
-      DB_USER: appuser
-      DB_PASSWORD: apppassword
-      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
-      LLM_API_KEY: ${LLM_API_KEY:-local-llama-cpp}
-      LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
-      LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
-      LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
+    environment: *backend-env
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   frontend:
