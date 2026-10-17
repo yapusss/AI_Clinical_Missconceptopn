@@ -42,6 +42,13 @@ from api.materials_views import (
     ReadingMaterialFlagView,
     validate_material_upload,
 )
+from api.misconception_catalog import (
+    build_description,
+    catalog_keys,
+    parse_review_rows,
+    plan_catalog,
+    split_misconception_cell,
+)
 from api.reading_materials import (
     _filter_sources,
     enqueue_reading_material,
@@ -2204,3 +2211,155 @@ class EvidenceSpanBackfillMergeTests(SimpleTestCase):
         merged = merge_evidence_span(breakdown, self.SPAN)
         self.assertEqual(merged['module_a'], self.BREAKDOWN['module_a'])
         self.assertEqual(merged['evidence_span']['source'], 'backfill-v3.2')
+
+
+class MisconceptionCatalogParserTests(SimpleTestCase):
+    """Phase 1 parsing of the bank's review rows (DB-free)."""
+
+    FIXTURE = (
+        'Instrumen Tes Miskonsepsi IPA untuk Mahasiswa\n'
+        'Topik:\n'
+        'Ruang antarpartikel – Gerak partikel\n'
+        '\n'
+        'Review Miskonsepsi tiap cakupan materi:\n'
+        'Hakikat partikel materi\n'
+        '\n'
+        '<<<TABLE\n'
+        'ROW||| No. ||| Cakupan konsep ||| Miskonsepsi ||| Konsep yang benar\n'
+        'ROW||| 1 ||| Ukuran partikel ||| Partikel dapat dilihat dengan mata  '
+        '⏎ Jurnal: Griffiths, A. K. (1992). Atoms and molecules. Journal of X, 29, 611–628.  '
+        '⏎ (catatan wawancara, bukan bagian katalog) ||| Partikel berukuran sangat kecil\n'
+        'ROW|||  |||  ||| Air membeku karena molekul H₂O membesar ||| Molekul H₂O tetap molekul H₂O\n'
+        'Ruang antar partikel (Fenomena: balon dikompresi)\n'
+        '\n'
+        '<<<TABLE\n'
+        'ROW||| No. ||| Cakupan konsep ||| Miskonsepsi ||| Konsep benar\n'
+        'ROW||| 2 ||| Ruang antarpartikel ||| Partikel padat menempel tanpa ruang  '
+        "⏎ Novick, S. (1978). Pupils' understanding of matter. Science Education.  "
+        '⏎ Mengungkap ruang kosong antarpartikel. ||| Tetap ada ruang antarpartikel\n'
+        '\n'
+        'INSTRUMEN TES MISKONSEPSI UNTUK MAHASISWA\n'
+        'ROW||| 1. ||| Tujuan soal ||| C3 ||| 1 ||| Soal? ||| Jawaban ||| Alasan\n'
+    )
+
+    def setUp(self):
+        self.entries = parse_review_rows(self.FIXTURE)
+
+    def test_both_header_spellings_and_the_question_table_are_handled(self):
+        # Three review rows (1, the continuation, 2); both header rows and the
+        # 8-cell question-table row are skipped, the terminator ends the parse.
+        self.assertEqual(len(self.entries), 3)
+        self.assertEqual([e['no'] for e in self.entries], ['1', '', '2'])
+
+    def test_citation_is_split_out_of_the_misconception_cell(self):
+        entry = self.entries[0]
+        self.assertEqual(entry['misconception'], 'Partikel dapat dilihat dengan mata')
+        self.assertEqual(
+            entry['citations'],
+            ['Griffiths, A. K. (1992). Atoms and molecules. Journal of X, 29, 611–628.'],
+        )
+        self.assertEqual(entry['concept'], 'Ukuran partikel')
+        self.assertEqual(entry['group'], 'Hakikat partikel materi')
+
+    def test_continuation_row_keeps_its_place_and_inherits_the_concept(self):
+        entry = self.entries[1]
+        self.assertEqual(entry['no'], '')
+        self.assertEqual(entry['concept'], 'Ukuran partikel')
+        self.assertEqual(entry['citations'], [])
+        self.assertEqual(entry['group'], 'Hakikat partikel materi')
+
+    def test_group_heading_and_a_reference_without_the_jurnal_prefix(self):
+        entry = self.entries[2]
+        self.assertEqual(entry['group'], 'Ruang antar partikel (Fenomena: balon dikompresi)')
+        self.assertEqual(entry['concept'], 'Ruang antarpartikel')
+        self.assertEqual(entry['misconception'], 'Partikel padat menempel tanpa ruang')
+        self.assertEqual(
+            entry['citations'],
+            ["Novick, S. (1978). Pupils' understanding of matter. Science Education."],
+        )
+
+    def test_an_empty_jurnal_marker_yields_no_citation(self):
+        claim, citations = split_misconception_cell(
+            'Cairan sama mudahnya dimampatkan seperti gas  ⏎ Jurnal:'
+        )
+        self.assertEqual(claim, 'Cairan sama mudahnya dimampatkan seperti gas')
+        self.assertEqual(citations, [])
+
+    def test_a_multi_segment_claim_keeps_every_segment(self):
+        claim, citations = split_misconception_cell(
+            'Difusi hanya terjadi pada gas  ⏎ Atom dalam padatan tidak dapat berpindah.  '
+            '⏎ Jurnal: Krause, S. (2010). Materials Science.  ⏎ (catatan)'
+        )
+        self.assertEqual(
+            claim, 'Difusi hanya terjadi pada gas\nAtom dalam padatan tidak dapat berpindah.'
+        )
+        self.assertEqual(citations, ['Krause, S. (2010). Materials Science.'])
+
+
+class MisconceptionCatalogPlanTests(SimpleTestCase):
+    """The merge/idempotency key: `plan_catalog` is pure and re-runnable."""
+
+    ENTRIES = [
+        {'group': 'g1', 'no': '1', 'concept': 'Ukuran partikel',
+         'misconception': 'm1', 'correct_conception': 'c1', 'citations': ['Ref A.']},
+        {'group': 'g1', 'no': '', 'concept': 'Ukuran partikel',
+         'misconception': 'm2', 'correct_conception': 'c2', 'citations': []},
+        {'group': 'g2', 'no': '2', 'concept': 'Ruang antarpartikel',
+         'misconception': 'm3', 'correct_conception': 'c3', 'citations': []},
+    ]
+
+    @staticmethod
+    def _state_after(plan):
+        """The stored state a run leaves behind: first occurrence wins per name."""
+        concepts = {}
+        misconceptions = {}
+        for row in plan['rows']:
+            concepts.setdefault(row['concept'], row['correct_conception'])
+            misconceptions[(row['concept'], row['label'])] = row['description']
+        return concepts, misconceptions
+
+    def test_fresh_plan_creates_one_concept_per_name_and_every_misconception(self):
+        plan = plan_catalog(self.ENTRIES, {}, {})
+        self.assertEqual(plan['counts'], {
+            'concepts_created': 2,
+            'misconceptions_created': 3,
+            'updated': 0,
+            'unchanged': 0,
+        })
+        self.assertEqual(
+            catalog_keys(self.ENTRIES),
+            [('Ukuran partikel', 'm1'), ('Ukuran partikel', 'm2'),
+             ('Ruang antarpartikel', 'm3')],
+        )
+
+    def test_second_run_over_the_same_input_creates_nothing(self):
+        first = plan_catalog(self.ENTRIES, {}, {})
+        concepts, misconceptions = self._state_after(first)
+        second = plan_catalog(self.ENTRIES, concepts, misconceptions)
+        self.assertEqual(second['counts'], {
+            'concepts_created': 0,
+            'misconceptions_created': 0,
+            'updated': 0,
+            'unchanged': 3,
+        })
+
+    def test_a_changed_correct_conception_updates_the_concept_and_its_misconception(self):
+        first = plan_catalog(self.ENTRIES, {}, {})
+        concepts, misconceptions = self._state_after(first)
+        edited = copy.deepcopy(self.ENTRIES)
+        edited[2]['correct_conception'] = 'c3-edited'
+        plan = plan_catalog(edited, concepts, misconceptions)
+        # The concept's own text and that row's misconception description both
+        # move; the other two rows are untouched.
+        self.assertEqual(plan['counts'], {
+            'concepts_created': 0,
+            'misconceptions_created': 0,
+            'updated': 2,
+            'unchanged': 2,
+        })
+
+    def test_citations_become_a_trailing_sumber_line(self):
+        self.assertEqual(build_description('c1', ['Ref A.']), 'c1\n\nSumber: Ref A.')
+        self.assertEqual(build_description('c1', []), 'c1')
+        plan = plan_catalog(self.ENTRIES, {}, {})
+        self.assertEqual(plan['rows'][0]['description'], 'c1\n\nSumber: Ref A.')

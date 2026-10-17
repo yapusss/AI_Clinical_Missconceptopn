@@ -368,12 +368,42 @@ class ImportRow(models.Model):
         managed = False
 
 
+# Migration 0032: the topic-scoped catalogue behind `misconceptions`. One concept
+# per `(topic_id, name)`; the bank's rows are imported as LECTURER_DEFINED and
+# verified (plan D9), hence `verified_at` set and `verified_by` NULL. Nothing in
+# the analysis pipeline reads this yet (plan Phase 3+).
+class Concept(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, db_column='topic_id')
+    name = models.CharField(max_length=255)
+    correct_conception = models.TextField()
+    source = models.CharField(max_length=30)
+    created_by = models.UUIDField(null=True, blank=True)
+    verified_by = models.UUIDField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'concepts'
+        managed = False
+        unique_together = (('topic', 'name'),)
+
+    def __str__(self):
+        return self.name
+
+
 class Misconception(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subject = models.ForeignKey(Subject, on_delete=models.RESTRICT, db_column='subject_id')
     topic_id = models.UUIDField(null=True, blank=True)
     label = models.CharField(max_length=255)
     source = models.CharField(max_length=30)
+    # Migration 0032: the catalogue concept this misconception documents. NULL for
+    # rows that pre-date the catalogue.
+    concept = models.ForeignKey(
+        Concept, on_delete=models.CASCADE, db_column='concept_id',
+        null=True, blank=True, related_name='misconceptions',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
