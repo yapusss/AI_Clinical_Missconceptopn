@@ -41,6 +41,7 @@ from api.reading_materials import (
     input_fingerprint,
     load_question_version_context,
 )
+from api.worker_health import record_heartbeat, supervisor_gone
 
 logger = logging.getLogger(__name__)
 
@@ -136,14 +137,34 @@ class Command(BaseCommand):
         options['question_version'] = question_version_id
 
         while True:
+            # Liveness (migration 0029): materials silently piling up as PENDING is
+            # how a missing drainer used to look from the outside.
+            record_heartbeat(
+                'materials',
+                {'mode': 'loop' if options['loop'] else 'once', 'limit': limit},
+            )
+            if supervisor_gone():
+                self.stderr.write(
+                    '[material] supervisor gone; exiting (a backend restart starts a fresh worker)'
+                )
+                return
             self._tick(options)
             if not options['loop']:
                 break
-            time.sleep(POLL_INTERVAL_SECONDS)
+            if self.deferred:
+                backoff = getattr(settings, 'TRANSIENT_BACKOFF_SECONDS', 60.0)
+                self.stderr.write(
+                    f'[material] transient provider failure; backing off {backoff:.0f}s '
+                    '(no attempt spent).'
+                )
+                time.sleep(backoff)
+            else:
+                time.sleep(POLL_INTERVAL_SECONDS)
 
     # -- one tick -------------------------------------------------------------
 
     def _tick(self, options):
+        self.deferred = False
         self._run_c2_sync(options['question_version'])
 
         if options['refresh']:
@@ -242,4 +263,9 @@ class Command(BaseCommand):
             result = generate_reading_material(ctx, category)
             generated += 1
             self.stdout.write(f'[material] {qv_id}/{category}: {result}')
+            if result.get('status') == 'DEFERRED':
+                # Provider-side outage: stop the batch and let the next tick retry. No
+                # attempt was spent — generate_reading_material leaves the row PENDING.
+                self.deferred = True
+                break
         return generated

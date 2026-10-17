@@ -30,6 +30,7 @@ from django.db import connection
 
 from api.llm import (
     FourTierContext,
+    LlmTransientError,
     _call_llm_json,
     build_reference_block,
     get_active_model_identifier,
@@ -40,16 +41,47 @@ logger = logging.getLogger(__name__)
 
 # Recorded on every generated row; distinguishes material generations from the
 # analysis prompt versions when the C5/C6 metrics group by prompt version.
-READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.0'
+# Bump whenever _SYSTEM_PROMPT changes. The bump changes every row's computed
+# `input_fingerprint`, which is what `drain_reading_materials --refresh` compares
+# against the stored one to mark rows STALE — so the bump alone does NOT rewrite
+# existing material; the refresh pass is the (opt-in) trigger.
+# v1.1: added the ATURAN CAKUPAN block (stay on the question's own concept, never
+# assume a field of study).
+READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.1'
 
 # Only these categories get material (D6). Kept as a constant so the skip is
 # testable and the schema CHECK and the code agree.
 MATERIAL_CATEGORIES = ('LK', 'FP', 'FN', 'MSC')
 
+# Mirror of the frontend's levelToCode convention. `FP` and `MSC` both map to
+# level 2, so a bare level->code map would silently rewrite a lecturer's FP into
+# MSC; when the lecturer left the tier alone we keep the AI's own category.
+LEVEL_TO_CATEGORY = {4: 'SC', 3: 'FN', 2: 'MSC', 1: 'LK'}
+
+
+def lecturer_category(analysis, final_tier_level, final_category=None):
+    """The lecturer's diagnosis, preferring the category migration 0031 stored.
+
+    `final_category` is authoritative — it is the only field that can distinguish FP from
+    MSC. The level->code fallback below is for validations written before 0031, and for
+    the one surface that still edits a bare level (`/validation/[id]`).
+    """
+    if final_category:
+        return final_category
+    if final_tier_level is None:
+        return None
+    if final_tier_level == analysis.tier_level_snapshot:
+        return analysis.four_tier_category
+    return LEVEL_TO_CATEGORY.get(final_tier_level)
+
 _SYSTEM_PROMPT = (
     "Anda adalah penulis materi bacaan (reading material) untuk mahasiswa pada asesmen Four-Tier.\n"
     "Tugas: tulis materi bacaan dalam Bahasa Indonesia formal yang membantu mahasiswa "
     "memperbaiki kesalahan konsep pada kategori yang diberikan.\n"
+    "ATURAN CAKUPAN:\n"
+    "1. Materi WAJIB membahas konsep spesifik pada pertanyaan yang diberikan, bukan bidang ilmunya secara umum.\n"
+    "2. JANGAN mengasumsikan bidang ilmu tertentu. Ikuti bidang dan tingkat kesulitan yang tersirat dari pertanyaan tersebut.\n"
+    "3. Sesuaikan kedalaman materi dengan tingkat pendidikan mahasiswa; jangan menambah materi di luar cakupan pertanyaan.\n"
     "ATURAN SUMBER:\n"
     "1. Gunakan HANYA kutipan pada bagian SUMBER REFERENSI untuk setiap klaim faktual.\n"
     "2. Bila bagian SUMBER REFERENSI kosong, tulis materi dari pengetahuan Anda sendiri.\n"
@@ -317,6 +349,17 @@ def generate_reading_material(ctx, category) -> dict:
             'ungrounded_source_count': ungrounded,
             'chunks_retrieved': len(chunks),
         }
+    except LlmTransientError as e:
+        # Provider-side and temporary (429/5xx/timeout): leave the row PENDING and spend
+        # NO attempt, so the next drain picks it up. Marking it FAILED here is what made
+        # a few minutes of exhausted quota permanently kill a reading material — FAILED
+        # is terminal (`_select_work` only ever selects PENDING/STALE).
+        logger.warning(
+            'Reading-material generation deferred for %s/%s: %s',
+            question_version_id, category, e,
+        )
+        return {'status': 'DEFERRED', 'error': str(e)}
+
     except Exception as e:  # noqa: BLE001 — generation must never raise
         logger.warning(
             'Reading-material generation failed for %s/%s (non-fatal): %s',

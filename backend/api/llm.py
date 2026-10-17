@@ -45,7 +45,10 @@ logger = logging.getLogger(__name__)
 # Source-derived so metrics never pool a judged run with a shadow run: the
 # source selects the bucket, and `llm_analyses.prompt_version` records it per
 # row. The pre-C3 rows stay in their own `four-tier-v2.9-rag` bucket.
-PROMPT_VERSION = f'four-tier-v3.0-{settings.TIER_VERDICT_SOURCE}'
+# v3.1: Modul B/C de-biased away from physics (dropped "penalaran fisis", "rumus",
+# "aljabar"; added an explicit "jangan mengasumsikan bidang ilmu" rule). v3.0 was
+# written for physics and mis-scored subjects whose reasoning is narrative.
+PROMPT_VERSION = f'four-tier-v3.1-{settings.TIER_VERDICT_SOURCE}'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
@@ -105,11 +108,49 @@ class LlmAnalysisError(Exception):
     pass
 
 
+class LlmTransientError(LlmAnalysisError):
+    """A provider failure that says nothing about the submission (429/5xx/timeout).
+
+    Callers must NOT spend a retry attempt on one of these. A rate limit is temporary
+    by definition, so the work stays claimable and the worker backs off instead —
+    otherwise a quota blip permanently kills a student's submission (observed: four of
+    five submissions burned to ANALYSIS_FAILED while Groq's daily token cap was merely
+    exhausted for a few minutes).
+    """
+
+
+# HTTP statuses that mean "try again later" rather than "this work is bad".
+_TRANSIENT_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 522, 524})
+
+
+def is_transient_error(exc: BaseException | None) -> bool:
+    """True when `exc` is a provider-side, retryable failure.
+
+    Checked structurally (status_code attribute, then the SDK class name) because the
+    client is a generic OpenAI-compatible one: Groq, OpenCode Go and a local llama.cpp
+    all surface their rate limits through the same SDK types, but not necessarily the
+    same subclass.
+    """
+    if exc is None:
+        return False
+    status_code = getattr(exc, 'status_code', None)
+    if isinstance(status_code, int) and status_code in _TRANSIENT_STATUSES:
+        return True
+    # The openai SDK raises APITimeoutError / APIConnectionError without a status code.
+    name = type(exc).__name__
+    return name in ('RateLimitError', 'APITimeoutError', 'APIConnectionError',
+                    'InternalServerError', 'APIError', 'ConnectError', 'ReadTimeout',
+                    'ConnectTimeout', 'RemoteProtocolError')
+
+
 def get_llm_client() -> OpenAI:
     return OpenAI(
         base_url=settings.LLM_BASE_URL,
         api_key=settings.LLM_API_KEY,
         timeout=getattr(settings, 'LLM_TIMEOUT', 120.0),
+        # Provider-required headers (LLM_EXTRA_HEADERS_JSON). None when unset, so
+        # existing deployments send exactly what they did before.
+        default_headers=getattr(settings, 'LLM_EXTRA_HEADERS', None) or None,
     )
 
 
@@ -360,6 +401,9 @@ def _call_llm_json(system_prompt: str, user_prompt: str, model_identifier: str,
             if attempt < LLM_MAX_RETRIES:
                 time.sleep(1.5 * (attempt + 1))
                 continue
+    if is_transient_error(last_error):
+        # Provider-side and temporary: let the caller defer instead of failing the work.
+        raise LlmTransientError(f'LLM call failed after retries: {last_error}')
     raise LlmAnalysisError(f'LLM call failed after retries: {last_error}')
 
 
@@ -632,12 +676,14 @@ def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list
     sys_prompt = (
         "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3).\n"
         "Tugas: Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
-        "   - BENAR: Penalaran fisis valid, tepat secara konsep, atau penurunan matematis/aljabar langkah-demi-langkah valid dan membuktikan kesimpulan.\n"
-        "   - SALAH: Terdapat miskonsepsi, prinsip fisis salah, rumus keliru, penalaran tidak logis, atau bertentangan dengan sains.\n"
-        "   PANDUAN EVALUASI ILMIAH:\n"
-        "   - Mahasiswa DIPERBOLEHKAN menyajikan alasan dalam bentuk penurunan rumus matematis ringkas jika langkah fisisnya benar.\n"
-        "   - Tidak wajib menuliskan paragraf narasi panjang jika penurunan aljabar sudah tepat membuktikan kesimpulan.\n"
-        "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah yang tidak ada di teks mahasiswa.\n\n"
+        "   - BENAR: Penalaran valid dan tepat secara konsep menurut bidang ilmu yang berlaku pada pertanyaan, sehingga mendukung kesimpulan.\n"
+        "   - SALAH: Terdapat miskonsepsi, prinsip keilmuan yang keliru, penalaran tidak logis, atau bertentangan dengan bidang ilmunya.\n"
+        "PANDUAN EVALUASI (BERLAKU UNTUK SEMUA BIDANG ILMU):\n"
+        "   - JANGAN mengasumsikan bidang ilmu tertentu. Tentukan kerangka penilaian dari pertanyaan dan Jawaban Model itu sendiri, lalu nilai dengan kerangka tersebut.\n"
+        "   - Semua bentuk penalaran yang sah menurut bidangnya diterima SETARA: penjelasan konseptual/naratif, penurunan matematis, persamaan reaksi atau struktur, klasifikasi dan definisi, penalaran kausal, maupun penjelasan berbasis mekanisme.\n"
+        "   - Jangan menuntut bentuk tertentu (misalnya rumus atau perhitungan) bila bidang ilmunya tidak menuntutnya. Sebaliknya, jangan menganggap sebuah alasan benar hanya karena panjang atau terdengar meyakinkan.\n"
+        "   - Mahasiswa DIPERBOLEHKAN menjawab ringkas. Yang dinilai adalah ketepatan konsepnya, bukan panjang atau bentuk penyajiannya.\n"
+        "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah atau konsep yang tidak ada di teks mahasiswa.\n\n"
         "Kembalikan HANYA format JSON valid:\n"
         "{\n"
         '  "score": "BENAR" | "SALAH"\n'
@@ -694,7 +740,7 @@ def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str,
         "Anda adalah Modul C: Klasifikasi Tipe Miskonsepsi Mahasiswa.\n"
         "Tugas: Baca teks gabungan Tier 1 (jawaban) dan Tier 3 (alasan). Identifikasi apakah ada pola miskonsepsi yang cocok dari katalog.\n"
         f"Daftar Tipe Miskonsepsi Terdaftar:\n{misc_catalog}\n"
-        "Bila tidak ada yang cocok dari katalog atau mahasiswa sebenarnya menurunkan rumus dengan benar, gunakan kode 'MK-LAIN'.\n\n"
+        "Bila tidak ada yang cocok dari katalog, atau penalaran mahasiswa sebenarnya sudah benar menurut bidang ilmu pertanyaan, gunakan kode 'MK-LAIN'.\n\n"
         "ATURAN BAHASA & KETELITIAN KETAT:\n"
         "1. DILARANG KERAS mengarang miskonsepsi palsu jika penalaran mahasiswa benar.\n"
         "2. Seluruh isi field 'reasoning' WAJIB ditulis murni dalam Bahasa Indonesia formal.\n"
@@ -1079,6 +1125,21 @@ def analyze_submission(submission_id: str) -> str:
                     submission_id, e,
                 )
         return 'PENDING_VALIDATION'
+
+    except LlmTransientError as e:
+        # Provider-side and temporary (429/5xx/timeout): defer, do NOT fail. The row goes
+        # back to SUBMITTED via sp_defer_submission WITHOUT spending an analysis attempt
+        # (migration 0030), so the work survives the outage; the worker then backs off.
+        logger.warning('Analisis Four-Tier ditunda untuk %s (transient): %s', submission_id, e)
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    'CALL sp_defer_submission(%s, %s);',
+                    [submission_id, str(e)[:2000]],
+                )
+        except Exception as defer_err:
+            logger.error('Gagal menunda submission %s: %s', submission_id, defer_err)
+        return 'DEFERRED'
 
     except Exception as e:
         logger.error('Analisis Four-Tier gagal untuk %s: %s', submission_id, e)

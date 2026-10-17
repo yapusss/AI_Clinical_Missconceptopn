@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -158,6 +159,11 @@ LLM_API_KEY = os.environ.get('LLM_API_KEY', 'local-llama-cpp')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:3b-instruct')
 LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '120'))
 LLM_MAX_RUNS = int(os.environ.get('LLM_MAX_RUNS', '3'))
+# Optional extra HTTP headers for the LLM endpoint, as a JSON object. Empty by
+# default, so deployments needing none are unaffected. A provider that requires the
+# client to identify itself (e.g. OpenCode Go's `x-opencode-session` plus its own
+# User-Agent) is configured here rather than hard-coding provider quirks in the client.
+LLM_EXTRA_HEADERS = json.loads(os.environ.get('LLM_EXTRA_HEADERS_JSON') or '{}')
 
 # Embeddings (OpenRouter — dims MUST match the knowledge_chunks vector(1536) column)
 EMBEDDINGS_BASE_URL = os.environ.get('EMBEDDINGS_BASE_URL', 'https://openrouter.ai/api/v1')
@@ -181,3 +187,18 @@ ANSWER_SIM_T3_THRESHOLD = float(os.environ.get('ANSWER_SIM_T3_THRESHOLD', '0.75'
 READING_MATERIAL_TEMPERATURE = float(os.environ.get('READING_MATERIAL_TEMPERATURE', '0.0'))
 READING_MATERIAL_MAX_RUNS = int(os.environ.get('READING_MATERIAL_MAX_RUNS', '3'))
 READING_MATERIAL_DRAIN_BATCH = int(os.environ.get('READING_MATERIAL_DRAIN_BATCH', '10'))
+
+# Background LLM workers. The API records work (a submission, a PENDING reading
+# material) but only `analyze_submissions` / `drain_reading_materials` perform it, and
+# nothing coupled those processes to the backend — so a running backend with no worker
+# accepted work it never processed, silently (see migration 0029). With AUTO_WORKER on,
+# a `runserver` process supervises both as children and restarts them if they die
+# (api/worker_supervisor.py); set AUTO_WORKER=0 to keep launching them by hand.
+AUTO_WORKER = os.environ.get('AUTO_WORKER', '1').lower() in ('1', 'true', 'yes')
+WORKER_SUPERVISOR_INTERVAL = float(os.environ.get('WORKER_SUPERVISOR_INTERVAL', '10'))
+
+# How long a worker waits after a TRANSIENT provider failure (429/5xx/timeout). The
+# worker normally sleeps only when its queue is empty, so without this a rate-limited
+# provider would be hammered once per pass — and every failure used to spend one of the
+# submission's LLM_MAX_RUNS attempts.
+TRANSIENT_BACKOFF_SECONDS = float(os.environ.get('TRANSIENT_BACKOFF_SECONDS', '60'))

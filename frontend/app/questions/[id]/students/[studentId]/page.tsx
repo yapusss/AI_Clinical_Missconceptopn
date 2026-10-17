@@ -5,14 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
-  BookMarked,
   BrainCircuit,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
   ClipboardCheck,
-  Info,
   Lock,
   RotateCcw,
   ShieldCheck,
@@ -20,12 +18,12 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 
 import { useAuth } from "../../../../components/AuthProvider";
 import AppSelect from "../../../../components/AppSelect";
 import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
+import ReadingMaterial from "../../../../components/ReadingMaterial";
 import RichTextContent from "../../../../components/RichTextContent";
 import MathContent from "../../../../components/MathContent";
 import { apiFetch } from "../../../../lib/api";
@@ -70,6 +68,9 @@ type AttemptItem = {
       status: string;
       final_percentage: string | null;
       final_tier_level: number | null;
+      // Migration 0031: the diagnosis itself. The level above cannot distinguish FP from
+      // MSC (both are level 2), so this is the field the lecturer's choice lives in.
+      final_category: string | null;
       final_feedback: string | null;
       lecturer_name: string;
       validated_at: string | null;
@@ -135,6 +136,30 @@ const CATEGORY_TO_LEVEL: Record<string, number> = {
   FP: 2,
   MSC: 2,
   LK: 1,
+};
+
+// Skor butir bersifat biner: 100 hanya bila Modul A dan B sama-sama BENAR,
+// yang setara dengan level 4 (SC). Karena itu hanya [SC] yang konsisten dengan
+// keputusan "Benar"; kombinasi lain menulis final_percentage yang bertentangan
+// dengan final_tier_level (0% + level 4, atau 100% + level < 4). Periksa dan
+// peringatkan dosen — JANGAN blokir, karena koreksi dosen boleh parsial.
+const isDraftContradictory = (draft: {
+  isCorrect: boolean;
+  finalCategory: string;
+}) => draft.isCorrect !== (draft.finalCategory === "SC");
+
+// Nilai awal satu percobaan: validasi yang sudah tersimpan bila ada, selain itu
+// rekomendasi AI. Satu sumber kebenaran untuk seeding draft dan untuk patch.
+const draftBaseValues = (analysis: NonNullable<AttemptItem["analysis"]>) => {
+  const v = analysis.validation;
+  const score =
+    v?.final_percentage !== null && v?.final_percentage !== undefined
+      ? Number(v.final_percentage)
+      : Number(analysis.percentage_correct);
+  return {
+    isCorrect: score >= 99.9,
+    finalCategory: analysis.four_tier_category ?? "LK",
+  };
 };
 
 // Status yang berarti "sedang/akan dianalisis (ulang) oleh AI" — validasi
@@ -208,6 +233,19 @@ const fmtPct = (num: number) => {
   return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
 };
 
+// Jam pengumpulan — dipakai hanya untuk memisahkan dua baris yang nomor soal +
+// nomor percobaannya sama (mahasiswa bisa punya percobaan di paket berbeda).
+const fmtClock = (val: string) => {
+  try {
+    return new Date(val).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return val;
+  }
+};
+
 type ValidationDraft = {
   questionId: string;
   orderIndex: number;
@@ -251,58 +289,6 @@ const persistDrafts = (
   }
 };
 
-function ReadingMaterialBlock({
-  analysis,
-}: {
-  analysis: AttemptItem["analysis"];
-}) {
-  // C7: the student sees the material the LLM wrote for them, never the verdict's
-  // citation list. A `null` material (SC, or a non-READY row) renders nothing —
-  // no placeholder, no "material unavailable" box.
-  const material = analysis?.reading_material;
-  if (!material) return null;
-
-  return (
-    <div className="sm:col-span-2">
-      <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3.5">
-        <div className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-on-surface">
-          <BookMarked size={14} className="text-primary" />
-          Materi Bacaan
-        </div>
-
-        {material.content_md && (
-          <div className="rte-content mt-2.5 text-sm leading-relaxed text-on-surface">
-            <ReactMarkdown>{material.content_md}</ReactMarkdown>
-          </div>
-        )}
-
-        {(material.sources?.length ?? 0) > 0 && (
-          <div className="mt-3 border-t border-outline-variant/20 pt-3">
-            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
-              Sumber Materi ({material.sources.length})
-            </p>
-            <ul className="space-y-1">
-              {material.sources.map((src, index) => (
-                <li
-                  key={`${src.chunk_id}-${index}`}
-                  className="flex items-center justify-between gap-2 rounded border border-outline-variant/30 bg-surface-container px-3 py-1.5 text-xs"
-                >
-                  <span className="min-w-0 truncate font-semibold text-on-surface">
-                    {src.document_title || "Sumber tidak dikenal"}
-                  </span>
-                  <span className="shrink-0 font-mono-ui text-[10px] text-on-surface-variant">
-                    {typeof src.page === "number" ? `hal. ${src.page}` : "—"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function StudentPackageReviewPage({
   examPackage = false,
 }: {
@@ -320,8 +306,11 @@ export default function StudentPackageReviewPage({
   const [notice, setNotice] = useState("");
 
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
+  // Kunci pilihan percobaan = submission_id, bukan attempt_no: nomor percobaan
+  // bisa berulang untuk satu soal (percobaan pada paket berbeda), dan dengan
+  // attempt_no sebagai kunci percobaan kedua tidak akan pernah terbuka.
   const [selectedAttemptByQuestion, setSelectedAttemptByQuestion] = useState<
-    Record<string, number>
+    Record<string, string>
   >({});
 
   // Form State
@@ -388,14 +377,41 @@ export default function StudentPackageReviewPage({
 
   const currentAttempt: AttemptItem | undefined = useMemo(() => {
     if (!activeQuestion || !attemptsDesc.length) return undefined;
-    const chosenAttemptNo =
+    const chosenSubmissionId =
       selectedAttemptByQuestion[activeQuestion.question_id];
-    if (chosenAttemptNo !== undefined) {
-      const found = attemptsDesc.find((a) => a.attempt_no === chosenAttemptNo);
+    if (chosenSubmissionId) {
+      const found = attemptsDesc.find(
+        (a) => a.submission_id === chosenSubmissionId,
+      );
       if (found) return found;
     }
     return attemptsDesc[0];
   }, [activeQuestion, attemptsDesc, selectedAttemptByQuestion]);
+
+  // Label opsi percobaan — beri jam pengumpulan bila nomor percobaannya kembar,
+  // supaya tiap opsi tetap dapat dibedakan.
+  const attemptOptionLabels = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const att of attemptsDesc)
+      counts.set(att.attempt_no, (counts.get(att.attempt_no) ?? 0) + 1);
+    return new Map(
+      attemptsDesc.map((att) => [
+        att.submission_id,
+        (counts.get(att.attempt_no) ?? 0) > 1
+          ? `Ke-${att.attempt_no} · ${fmtClock(att.submitted_at)}`
+          : `Ke-${att.attempt_no}`,
+      ]),
+    );
+  }, [attemptsDesc]);
+
+  // The draft for the attempt currently on screen. The "streamline review layouts"
+  // refactor on origin/main removed this const once nothing in its version used it, but
+  // the contradiction warning below does — so it is reinstated here rather than inlined
+  // into the JSX. (This was the one hidden conflict: git merged the deletion and the new
+  // uses textually, leaving a reference to a variable that no longer existed.)
+  const currentDraft: ValidationDraft | undefined = currentAttempt?.analysis
+    ? drafts[currentAttempt.analysis.id]
+    : undefined;
 
   useEffect(() => {
     setShowShortAnswerReference(false);
@@ -414,12 +430,10 @@ export default function StudentPackageReviewPage({
       nextIsCorrect = savedDraft.isCorrect;
       nextCategory = savedDraft.finalCategory;
     } else {
-      const initialScoreVal =
-        v?.final_percentage !== null && v?.final_percentage !== undefined
-          ? Number(v.final_percentage)
-          : Number(a.percentage_correct);
-      nextIsCorrect = initialScoreVal >= 99.9;
-      nextCategory = a.four_tier_category ?? "LK";
+      // Nilai awal percobaan INI (validasi tersimpan / rekomendasi AI).
+      const base = draftBaseValues(a);
+      nextIsCorrect = base.isCorrect;
+      nextCategory = base.finalCategory;
     }
     setIsCorrect(nextIsCorrect);
     setFinalCategory(nextCategory);
@@ -469,13 +483,24 @@ export default function StudentPackageReviewPage({
     }>,
   ) => {
     if (!currentAttempt?.analysis || !activeQuestion) return;
-    const nextIsCorrect = patch.isCorrect ?? isCorrect;
-    const nextCategory = patch.finalCategory ?? finalCategory;
+    const analysisId = currentAttempt.analysis.id;
+    // Basis patch adalah draft milik percobaan INI — bukan state bersama
+    // `isCorrect`/`finalCategory`, yang bisa masih menyimpan nilai percobaan
+    // lain dan menulis kombinasi bertentangan seperti "Salah [SC]".
+    const base = drafts[analysisId] ?? {
+      ...draftBaseValues(currentAttempt.analysis),
+      questionId: activeQuestion.question_id,
+      orderIndex: activeQuestion.order_index,
+      mode: (isAlreadyValidated ? "correction" : "new") as ValidationDraft["mode"],
+      touched: false,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextIsCorrect = patch.isCorrect ?? base.isCorrect;
+    const nextCategory = patch.finalCategory ?? base.finalCategory;
 
     setIsCorrect(nextIsCorrect);
     setFinalCategory(nextCategory);
 
-    const analysisId = currentAttempt.analysis.id;
     setDrafts((prev) => {
       const next: Record<string, ValidationDraft> = {
         ...prev,
@@ -498,10 +523,10 @@ export default function StudentPackageReviewPage({
     });
   };
 
-  const handleSelectAttempt = (questionId: string, attemptNo: number) => {
+  const handleSelectAttempt = (questionId: string, submissionId: string) => {
     setSelectedAttemptByQuestion((prev) => ({
       ...prev,
-      [questionId]: attemptNo,
+      [questionId]: submissionId,
     }));
   };
 
@@ -577,6 +602,37 @@ export default function StudentPackageReviewPage({
     }
     return s;
   }, [finalizeItems]);
+
+  // Baris finalisasi siap-render: label yang tidak pernah kembar (nomor soal +
+  // nomor percobaan, ditambah jam pengumpulan bila pasangan itu muncul dua kali)
+  // dan penanda keputusan bertentangan.
+  const finalizeRows = useMemo(() => {
+    const perQuestion = new Map<number, number>();
+    for (const it of finalizeItems)
+      perQuestion.set(it.orderIndex, (perQuestion.get(it.orderIndex) ?? 0) + 1);
+    const rows = finalizeItems.map((it) => ({
+      ...it,
+      label: `Soal ${it.orderIndex} · Ke-${it.attempt.attempt_no}`,
+      chipLabel:
+        (perQuestion.get(it.orderIndex) ?? 0) > 1
+          ? `${it.orderIndex}.${it.attempt.attempt_no}`
+          : String(it.orderIndex),
+      contradictory: isDraftContradictory(it.draft),
+    }));
+    const labelCounts = new Map<string, number>();
+    for (const r of rows)
+      labelCounts.set(r.label, (labelCounts.get(r.label) ?? 0) + 1);
+    return rows.map((r) =>
+      (labelCounts.get(r.label) ?? 0) > 1
+        ? { ...r, label: `${r.label} (${fmtClock(r.attempt.submitted_at)})` }
+        : r,
+    );
+  }, [finalizeItems]);
+
+  const contradictoryRows = useMemo(
+    () => finalizeRows.filter((r) => r.contradictory),
+    [finalizeRows],
+  );
 
   // Analisis AI dihitung sebagai draft sejak awal (touched=false) sehingga dosen
   // dapat langsung "Selesai Evaluasi" tanpa membuka/mengubah tiap soal.
@@ -682,6 +738,10 @@ export default function StudentPackageReviewPage({
         source = "Dosen";
         const code =
           draft?.finalCategory ??
+          // Migration 0031 rows carry the lecturer's diagnosis verbatim. The level
+          // fallback below survives for validations written before it, and for the
+          // /validation/[id] surface, which still edits a bare tier level.
+          validation.final_category ??
           (validation.final_tier_level === (an?.tier_level ?? null)
             ? (an?.four_tier_category ?? null)
             : (levelToCode[validation.final_tier_level ?? 0] ?? null));
@@ -740,6 +800,9 @@ export default function StudentPackageReviewPage({
       final_percentage: targetScore,
       final_tier_level:
         CATEGORY_TO_LEVEL[draft.finalCategory] ?? a?.tier_level ?? 1,
+      // Sent separately from the level: FP and MSC both map to level 2, so without this
+      // the server stores the lecturer's FP correction as an unchanged tier.
+      final_category: draft.finalCategory ?? a?.four_tier_category ?? null,
     };
     return body;
   };
@@ -1033,24 +1096,22 @@ export default function StudentPackageReviewPage({
                         </span>
                       ) : (
                         <AppSelect
-                          value={
-                            currentAttempt
-                              ? String(currentAttempt.attempt_no)
-                              : ""
-                          }
+                          value={currentAttempt?.submission_id ?? ""}
                           onValueChange={(val) => {
                             if (val)
                               handleSelectAttempt(
                                 activeQuestion.question_id,
-                                Number.parseInt(val, 10),
+                                val,
                               );
                           }}
                           ariaLabel="Pilih Percobaan"
                           placeholder={`Ke-${currentAttempt?.attempt_no ?? 1}`}
                           className="min-w-[95px] text-xs"
                           options={attemptsDesc.map((att) => ({
-                            value: String(att.attempt_no),
-                            label: `Ke-${att.attempt_no}`,
+                            value: att.submission_id,
+                            label:
+                              attemptOptionLabels.get(att.submission_id) ??
+                              `Ke-${att.attempt_no}`,
                           }))}
                         />
                       )}
@@ -1309,7 +1370,7 @@ export default function StudentPackageReviewPage({
                           </div>
                         </div>
 
-                        <ReadingMaterialBlock analysis={currentAttempt.analysis} />
+                        <ReadingMaterial material={currentAttempt.analysis?.reading_material} />
 
                         <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
                           <span className="text-xs text-on-surface-variant">
@@ -1425,8 +1486,37 @@ export default function StudentPackageReviewPage({
 
                           {/* Materi Bacaan — the material the LLM wrote for this
                               question (C7). Renders nothing when null. */}
-                          <ReadingMaterialBlock analysis={currentAttempt.analysis} />
+                          <ReadingMaterial material={currentAttempt.analysis?.reading_material} />
                         </div>
+
+                        {/* Peringatan keputusan bertentangan (tidak memblokir) */}
+                        {currentDraft && isDraftContradictory(currentDraft) && (
+                          <div className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>
+                              Keputusan{" "}
+                              <strong>
+                                {currentDraft.isCorrect ? "Benar" : "Salah"}
+                              </strong>{" "}
+                              hanya konsisten dengan diagnosis <strong>[SC]</strong>
+                              . Pilihan saat ini akan tersimpan sebagai skor{" "}
+                              <strong>
+                                {currentDraft.isCorrect ? "100%" : "0%"}
+                              </strong>{" "}
+                              dengan level{" "}
+                              <strong>
+                                {CATEGORY_TO_LEVEL[currentDraft.finalCategory] ?? 1}
+                              </strong>{" "}
+                              pada{" "}
+                              <span className="font-mono-ui">
+                                Soal {currentDraft.orderIndex} · Ke-
+                                {currentAttempt.attempt_no}
+                              </span>
+                              . Perbaiki salah satu, atau lanjutkan bila memang
+                              disengaja.
+                            </span>
+                          </div>
+                        )}
 
                         {showRejectBox && (
                           <div className="rounded-lg border border-dashed border-error/40 bg-error-container/20 p-3 space-y-2">
@@ -1750,23 +1840,50 @@ export default function StudentPackageReviewPage({
               )}
             </div>
 
+            {/* Kontradiksi Benar/Salah vs diagnosis — diperingatkan, bukan diblokir */}
+            {contradictoryRows.length > 0 && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  <strong>
+                    {contradictoryRows.length} keputusan bertentangan
+                  </strong>
+                  : keputusan Benar hanya konsisten dengan diagnosis [SC].{" "}
+                  {contradictoryRows
+                    .map(
+                      (r) =>
+                        `${r.label} = ${
+                          r.draft.isCorrect ? "Benar" : "Salah"
+                        } + [${r.draft.finalCategory}] (${
+                          r.draft.isCorrect ? "100%" : "0%"
+                        } + level ${
+                          CATEGORY_TO_LEVEL[r.draft.finalCategory] ?? 1
+                        })`,
+                    )
+                    .join("; ")}
+                  . Masih dapat dikirim, tetapi periksa dulu agar skor akhir tidak
+                  keliru.
+                </span>
+              </div>
+            )}
+
             {/* Grid nomor soal berwarna sesuai keputusan — compact untuk N besar */}
             <div className="flex flex-wrap gap-1.5">
-              {finalizeItems.map((item) => (
+              {finalizeRows.map((item) => (
                 <span
                   key={item.analysisId}
-                  title={`Soal ${item.orderIndex}: ${
+                  title={`${item.label}: ${
                     item.draft.isCorrect ? "Benar" : "Salah"
                   } [${item.draft.finalCategory}]${
-                    item.draft.mode === "correction" ? " · Koreksi" : ""
-                  }`}
-                  className={`flex h-7 w-7 items-center justify-center rounded-md border font-mono-ui text-xs font-bold ${
+                    item.contradictory ? " · BERTENTANGAN" : ""
+                  }${item.draft.mode === "correction" ? " · Koreksi" : ""}`}
+                  className={`flex h-7 min-w-7 items-center justify-center rounded-md border px-1 font-mono-ui text-xs font-bold ${
                     item.draft.isCorrect
                       ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                       : "border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-                  }`}
+                  }${item.contradictory ? " ring-2 ring-amber-500/70" : ""}`}
                 >
-                  {item.orderIndex}
+                  {item.chipLabel}
                 </span>
               ))}
             </div>
@@ -1782,13 +1899,13 @@ export default function StudentPackageReviewPage({
             </button>
             {showFinalizeDetail && (
               <div className="max-h-56 overflow-y-auto space-y-1.5">
-                {finalizeItems.map((item) => (
+                {finalizeRows.map((item) => (
                   <div
                     key={item.analysisId}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-xs"
                   >
                     <span className="font-mono-ui font-bold text-on-surface">
-                      Soal {item.orderIndex}
+                      {item.label}
                     </span>
                     <span
                       className={`font-semibold ${
@@ -1802,6 +1919,11 @@ export default function StudentPackageReviewPage({
                     <span className="font-mono-ui text-on-surface-variant">
                       [{item.draft.finalCategory}]
                     </span>
+                    {item.contradictory && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold text-amber-600 dark:text-amber-400">
+                        <AlertTriangle size={11} /> Bertentangan
+                      </span>
+                    )}
                     <span className="text-on-surface-variant">
                       {item.draft.mode === "correction"
                         ? "Koreksi"

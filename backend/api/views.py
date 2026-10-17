@@ -27,6 +27,7 @@ from openpyxl.utils import get_column_letter
 from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissionSerializer
 
 from .authentication import TokenAuthentication
+from .reading_materials import lecturer_category
 from .models import (
     AuthToken,
     AiModelChange,
@@ -2335,22 +2336,32 @@ _STUDENT_HIDDEN_ANALYSIS_KEYS = (
 
 
 def _student_reading_material(question_version_id, category):
-    """The material the LLM wrote for one question, or `None` (C7).
+    """The material the LLM wrote for one question, or a status stub while it is being
+    generated, or `None` (C7, extended).
 
-    Served only for a `(question_version_id, category)` row with
-    `status='READY'`. A `PENDING`/`STALE`/`FAILED` row, an absent row, or the
-    `SC` category (D6 — a fully-correct confident student gets no remediation)
-    all return `None`: the student sees the material, or nothing. Never a
-    placeholder, and never the lecturer-only review/flag/staleness fields.
+    `content_md` is served only for a `(question_version_id, category)` row with
+    `status='READY'`. A `PENDING`/`STALE` row returns `{'status': ...}` and no content:
+    the student must be able to tell "still being written" from "never coming", and a
+    bare `None` cannot express that difference — `SC` and a Benar verdict (D6) get no
+    material at all by design, and an absent row means it was never enqueued.
+
+    `FAILED` also returns `None`: it is terminal, the student cannot act on it, and it
+    surfaces in the lecturer's queue instead. Never a placeholder, and never the
+    lecturer-only review/flag/staleness fields.
     """
     if not question_version_id or not category or category == 'SC':
         return None
     row = GeneratedReadingMaterial.objects.filter(
-        question_version_id=question_version_id, category=category, status='READY'
+        question_version_id=question_version_id, category=category
     ).first()
     if row is None:
         return None
+    if row.status in ('PENDING', 'STALE'):
+        return {'status': row.status}
+    if row.status != 'READY':
+        return None
     return {
+        'status': 'READY',
         'content_md': row.content_md,
         'sources': row.sources_json or [],
     }
@@ -2482,6 +2493,7 @@ class QuestionSetStudentReviewView(APIView):
                             'status': validation.status,
                             'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
                             'final_tier_level': validation.final_tier_level_snapshot,
+                            'final_category': validation.final_category,
                             'final_feedback': validation.final_feedback,
                             'lecturer_name': validation.lecturer.full_name,
                             'validated_at': validation.validated_at,
@@ -3079,7 +3091,7 @@ class ExamPackageStudentReviewView(APIView):
                         'risk_level': analysis.risk_level,
                         **_grounding_detail(analysis, analysis.concept_breakdown_json or {}),
                         'validation': {'status': validation.status, 'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
-                            'final_tier_level': validation.final_tier_level_snapshot, 'final_feedback': validation.final_feedback,
+                            'final_tier_level': validation.final_tier_level_snapshot, 'final_category': validation.final_category, 'final_feedback': validation.final_feedback,
                             'lecturer_name': validation.lecturer.full_name, 'validated_at': validation.validated_at} if validation else None,
                     } if analysis else None,
                 })
@@ -3646,6 +3658,16 @@ def _build_submission_package_groups(user):
                     # the removed grounding metric and no surface read it.
                     final_score = float(validation.final_percentage) if validation.final_percentage is not None else float(analysis.percentage_correct)
 
+                    # S2 (brief S-D2/S-D3/S-D4): the material the student is served is keyed by the
+                    # LECTURER's verdict, never the LLM's category. A Benar verdict serves nothing,
+                    # so flipping Salah -> Benar hides it on the next request. `_student_reading_material`
+                    # already returns None for SC, for an absent row, and for any non-READY status.
+                    reading_material = None
+                    if final_score < 99.9:
+                        category = lecturer_category(analysis, validation.final_tier_level_snapshot)
+                        if category:
+                            reading_material = _student_reading_material(version.id, category)
+
                     evaluation_payload = {
                         'percentage_correct': final_score,
                         'is_score_modified': validation.is_score_modified,
@@ -3660,6 +3682,7 @@ def _build_submission_package_groups(user):
                         'suggested_materials': analysis.suggested_materials_json or [],
                         'validator_name': validation.lecturer.full_name,
                         'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
+                        'reading_material': reading_material,
                     }
 
                 attempts.append({

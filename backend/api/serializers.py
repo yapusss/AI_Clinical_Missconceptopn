@@ -281,6 +281,12 @@ class ValidationSubmitSerializer(serializers.Serializer):
         min_value=0, max_value=100,
     )
     final_tier_level = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=10)
+    # The diagnosis itself. Required in practice: the tier level is a lossy projection of
+    # it (FP and MSC are both level 2), so without this the lecturer's choice is not
+    # recoverable. NULL means "unchanged", which the procedure resolves to the AI's.
+    final_category = serializers.ChoiceField(
+        choices=['SC', 'LK', 'FP', 'FN', 'MSC'], required=False, allow_null=True
+    )
     final_feedback = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=5000)
     notes = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=5000)
     misconception_confirmations = MisconceptionConfirmationSerializer(

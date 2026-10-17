@@ -17,7 +17,7 @@
 import json
 import logging
 
-from django.db import connection, transaction
+from django.db import ProgrammingError, connection, transaction
 from django.db.models import Count, Q
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -34,7 +34,12 @@ from .models import (
     UserSubjectRole,
     Validation,
 )
-from .reading_materials import input_fingerprint, load_question_version_context
+from .reading_materials import (
+    enqueue_reading_material,
+    input_fingerprint,
+    lecturer_category,
+    load_question_version_context,
+)
 from .serializers import ValidationSubmitSerializer
 from .views import is_lecturer_for_subject, plain_text_preview
 
@@ -342,6 +347,8 @@ class ValidationDetailView(APIView):
                 'status': existing.status,
                 'final_percentage': str(existing.final_percentage) if existing.final_percentage is not None else None,
                 'final_tier_level': existing.final_tier_level_snapshot,
+                'original_category': existing.original_category,
+                'final_category': existing.final_category,
                 'final_feedback': existing.final_feedback,
                 'lecturer_name': existing.lecturer.full_name,
                 'validated_at': existing.validated_at,
@@ -513,19 +520,48 @@ class ValidationSubmitView(APIView):
                         )
                     else:
                         # VALIDASI PERTAMA KALI
-                        cursor.execute(
-                            'CALL sp_validate_analysis(%s, %s, %s, %s, %s, %s, %s, NULL);',
-                            [
-                                str(a.id),
-                                str(request.user.id),
-                                data['status'],
-                                data.get('final_percentage'),
-                                data.get('final_tier_level'),
-                                final_feedback,
-                                data.get('notes') or None,
-                            ],
-                        )
-                        row = cursor.fetchone()
+                        final_category = data.get('final_category') or None
+                        try:
+                            # Migration 0031: record the diagnosis itself. The tier level is
+                            # a lossy projection of it (FP and MSC are both level 2), so it
+                            # cannot be the only thing stored.
+                            with transaction.atomic():
+                                # The savepoint is load-bearing: the CALL is inside the
+                                # outer transaction, and a failed statement would otherwise
+                                # poison it and make the fallback below fail too.
+                                cursor.execute(
+                                    'CALL sp_validate_analysis(%s, %s, %s, %s, %s, %s, %s, %s, NULL);',
+                                    [
+                                        str(a.id),
+                                        str(request.user.id),
+                                        data['status'],
+                                        data.get('final_percentage'),
+                                        data.get('final_tier_level'),
+                                        final_feedback,
+                                        data.get('notes') or None,
+                                        final_category,
+                                    ],
+                                )
+                                row = cursor.fetchone()
+                        except ProgrammingError:
+                            # Deploy window: this code is serving while migration 0031 has
+                            # not been applied yet, because deploy.sh builds and starts the
+                            # new containers *before* it runs `manage.py migrate`. Degrade
+                            # to the 7-arg procedure rather than failing a lecturer's
+                            # submission; the category is then backfilled from the analysis.
+                            cursor.execute(
+                                'CALL sp_validate_analysis(%s, %s, %s, %s, %s, %s, %s, NULL);',
+                                [
+                                    str(a.id),
+                                    str(request.user.id),
+                                    data['status'],
+                                    data.get('final_percentage'),
+                                    data.get('final_tier_level'),
+                                    final_feedback,
+                                    data.get('notes') or None,
+                                ],
+                            )
+                            row = cursor.fetchone()
                         validation_id = str(row[0]) if row and row[0] else None
 
                 if confirmations:
@@ -534,6 +570,17 @@ class ValidationSubmitView(APIView):
                     LlmAnalysis.objects.filter(pk=a.pk).update(concept_breakdown_json=breakdown)
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # S1: the lecturer's verdict decides which category's material the student is
+        # served (brief S-D1/S-D2). Runs after commit, so a rolled-back validation never
+        # leaves a PENDING row. `enqueue_reading_material` is idempotent and returns
+        # False for SC, so a Salah verdict with an unchanged category is a no-op.
+        if data['status'] != 'REJECTED':
+            val = Validation.objects.filter(analysis=a).first()
+            if val and val.final_percentage is not None and float(val.final_percentage) < 99.9:
+                category = lecturer_category(a, val.final_tier_level_snapshot, val.final_category)
+                if category:
+                    enqueue_reading_material(a.submission.question_version_id, category)
 
         a.submission.refresh_from_db()
         return Response({

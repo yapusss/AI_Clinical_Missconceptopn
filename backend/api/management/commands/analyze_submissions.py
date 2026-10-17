@@ -24,6 +24,7 @@ from django.db import connection
 from django.utils import timezone
 
 from api.llm import analyze_submission
+from api.worker_health import record_heartbeat, supervisor_gone
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +51,35 @@ class Command(BaseCommand):
             format='%(asctime)s %(levelname)s %(name)s: %(message)s',
         )
         while True:
+            # Liveness: "worker down" and "worker idle" must be distinguishable from
+            # outside (migration 0029). Never fatal — see api/worker_health.
+            record_heartbeat(
+                'analysis',
+                {'mode': 'loop' if options['loop'] else 'once', 'limit': options['limit']},
+            )
+            if supervisor_gone():
+                self.stderr.write(
+                    '[analysis] supervisor gone; exiting (a backend restart starts a fresh worker)'
+                )
+                return
             processed = self._pass(options['limit'])
             if not options['loop']:
                 self.stdout.write(f'Pass complete: {processed} submission(s) processed.')
                 return
-            if processed == 0:
+            if self.deferred:
+                backoff = getattr(settings, 'TRANSIENT_BACKOFF_SECONDS', 60.0)
+                self.stderr.write(
+                    f'Transient provider failure; backing off {backoff:.0f}s '
+                    '(no analysis attempt spent).'
+                )
+                time.sleep(backoff)
+            elif processed == 0:
                 time.sleep(options['interval'])
 
     def _pass(self, limit: int) -> int:
         self._recover_zombies()
         processed = 0
+        self.deferred = False
         while processed < limit:
             submission_id = self._claim_next()
             if submission_id is None:
@@ -67,6 +87,11 @@ class Command(BaseCommand):
             result = analyze_submission(submission_id)
             processed += 1
             self.stdout.write(f'  {submission_id} -> {result}')
+            if result == 'DEFERRED':
+                # Provider-side outage: stop the pass. Nothing about the queue changed,
+                # so claiming the next row would just hit the same wall.
+                self.deferred = True
+                break
         return processed
 
     def _recover_zombies(self):
@@ -101,20 +126,29 @@ class Command(BaseCommand):
                 WHERE id = (
                     SELECT s.id FROM submissions s
                     WHERE (
-                            s.status IN ('SUBMITTED', 'ANALYSIS_FAILED')
+                            -- Migration 0028: cap by the retry counter, not by the
+                            -- analysis count. A failure at the LLM level writes no
+                            -- llm_analyses row, so counting those left the cap inert
+                            -- and the row was re-claimed forever, blocking the queue.
+                            (
+                                s.status IN ('SUBMITTED', 'ANALYSIS_FAILED')
+                                AND s.analysis_attempts < %s
+                            )
                             OR (
                                 s.status = 'REJECTED'
                                 AND (SELECT count(*) FROM llm_analyses la
                                      WHERE la.submission_id = s.id) < %s
                             )
                           )
-                    ORDER BY s.submitted_at
+                    -- Fresh work first: a row that keeps failing sorts last instead of
+                    -- being the permanent head of the queue.
+                    ORDER BY (s.status = 'ANALYSIS_FAILED'), s.submitted_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
                 RETURNING id;
                 """,
-                [max_runs],
+                [max_runs, max_runs],
             )
             row = cur.fetchone()
         return str(row[0]) if row else None
