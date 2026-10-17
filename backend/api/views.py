@@ -2945,9 +2945,11 @@ class ExamPackageDuplicateView(APIView):
                 title=package.title,
                 description=package.description,
                 is_active=False,
-                opens_at=package.opens_at,
-                closes_at=package.closes_at,
-                duration_minutes=package.duration_minutes,
+                # A duplicate is a fresh draft for another class, not a copy
+                # of an already-expired exam window.
+                opens_at=None,
+                closes_at=None,
+                duration_minutes=None,
                 max_attempts=package.max_attempts,
                 score_policy=package.score_policy,
                 expiry_behavior=package.expiry_behavior,

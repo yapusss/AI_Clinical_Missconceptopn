@@ -58,6 +58,69 @@ const CONFIDENCE_LEVELS = [
   { val: 6, label: "6", desc: "Sangat Yakin", type: "Y" },
 ];
 
+const confidenceLabel = (value: number | null) => {
+  const level = CONFIDENCE_LEVELS.find((item) => item.val === value);
+  return value && level ? `${value} / 6 · ${level.desc}` : "Belum dipilih";
+};
+
+function ConfidenceSlider({
+  value,
+  onChange,
+  inputId,
+}: {
+  value: number | null;
+  onChange: (value: number) => void;
+  inputId: string;
+}) {
+  const selectedLevel = CONFIDENCE_LEVELS.find((level) => level.val === value);
+
+  return (
+    <div className="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 space-y-2.5">
+      <input
+        id={inputId}
+        type="range"
+        min="1"
+        max="6"
+        step="1"
+        value={value ?? 3}
+        onChange={(event) => onChange(Number(event.target.value))}
+        aria-label="Pilih tingkat keyakinan dari 1 sampai 6"
+        aria-valuetext={
+          selectedLevel
+            ? `${selectedLevel.val} dari 6, ${selectedLevel.desc}`
+            : "Belum dipilih"
+        }
+        className="h-2 w-full cursor-pointer accent-primary"
+      />
+      <div className="relative mx-2 h-4 font-mono-ui text-xs font-bold text-on-surface-variant">
+        {CONFIDENCE_LEVELS.map((level) => (
+          <span
+            key={level.val}
+            className={`absolute ${
+              level.val === 1
+                ? "left-0"
+                : level.val === 6
+                  ? "right-0"
+                  : "-translate-x-1/2"
+            } ${level.val === value ? "text-primary" : ""}`}
+            style={
+              level.val === 1 || level.val === 6
+                ? undefined
+                : { left: `${((level.val - 1) / 5) * 100}%` }
+            }
+          >
+            {level.label}
+          </span>
+        ))}
+      </div>
+      <div className="flex justify-between text-[11px] font-medium text-on-surface-variant">
+        <span>Ragu</span>
+        <span>Yakin</span>
+      </div>
+    </div>
+  );
+}
+
 const REASON_KEYWORDS = [
   "karena",
   "sebab",
@@ -418,7 +481,7 @@ function AnswerSetContent() {
             </h3>
             <ul className="list-disc pl-5 space-y-2 text-xs text-on-surface-variant leading-relaxed">
               <li>
-                <strong>1. Kesimpulan / Jawaban Singkat:</strong> Tuliskan
+                <strong>1. Jawaban Singkat:</strong> Tuliskan
                 kesimpulan langsung atas pertanyaan, tanpa penjelasan panjang
                 (maksimal 120 karakter).
               </li>
@@ -428,7 +491,7 @@ function AnswerSetContent() {
                 4–6: Yakin).
               </li>
               <li>
-                <strong>3. Alasan / Penalaran Ilmiah:</strong> Uraikan dasar
+                <strong>3. Alasan:</strong> Uraikan dasar
                 logika dan penjelasan konsep ilmiah mengapa Anda memilih
                 kesimpulan tersebut.
               </li>
@@ -522,12 +585,12 @@ function AnswerSetContent() {
                 />
               </section>
 
-              {/* 1. Kesimpulan / Jawaban Singkat */}
+              {/* 1. Jawaban Singkat */}
               <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                      1. Kesimpulan / Jawaban Singkat
+                      1. Jawaban Singkat
                     </h3>
                     <p className="text-xs text-on-surface-variant mt-0.5">
                       Maksimal 120 karakter.
@@ -560,55 +623,30 @@ function AnswerSetContent() {
                     </span>
                   </div>
                 )}
-              </section>
-
               {/* 2. Tingkat Keyakinan pada Jawaban */}
-              <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-                <div>
+              <div className="border-t border-outline-variant/30 pt-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                     2. Tingkat Keyakinan pada Jawaban
                   </h3>
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    Skala 1–3: Tidak Yakin, 4–6: Yakin.
-                  </p>
+                  <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
+                    {confidenceLabel(currentAnswer.t2_confidence)}
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
-                  {CONFIDENCE_LEVELS.map((lvl) => {
-                    const isSelected = currentAnswer.t2_confidence === lvl.val;
-                    return (
-                      <label
-                        key={lvl.val}
-                        className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
-                          isSelected
-                            ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
-                            : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name={`t2_conf_${activeQuestion.question_id}`}
-                          value={lvl.val}
-                          checked={isSelected}
-                          onChange={() =>
-                            updateCurrent({ t2_confidence: lvl.val })
-                          }
-                          className="hidden"
-                        />
-                        <span className="font-mono-ui text-base">
-                          {lvl.val}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
+                <ConfidenceSlider
+                  inputId={`t2-conf_${activeQuestion.question_id}`}
+                  value={currentAnswer.t2_confidence}
+                  onChange={(value) => updateCurrent({ t2_confidence: value })}
+                />
+              </div>
               </section>
 
-              {/* 3. Alasan / Penalaran Ilmiah */}
+              {/* 3. Alasan */}
               <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
                 <div>
                   <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                    3. Alasan / Penalaran Ilmiah
+                      3. Alasan
                   </h3>
                 </div>
 
@@ -619,48 +657,23 @@ function AnswerSetContent() {
                   placeholder="Uraikan penalaran ilmiah dan dasar konsep Anda di sini..."
                   className="form-input text-sm w-full"
                 />
-              </section>
-
               {/* 4. Tingkat Keyakinan pada Alasan */}
-              <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-                <div>
+              <div className="border-t border-outline-variant/30 pt-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                     4. Tingkat Keyakinan pada Alasan
                   </h3>
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    Skala 1–3: Tidak Yakin, 4–6: Yakin.
-                  </p>
+                  <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
+                    {confidenceLabel(currentAnswer.t4_confidence)}
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
-                  {CONFIDENCE_LEVELS.map((lvl) => {
-                    const isSelected = currentAnswer.t4_confidence === lvl.val;
-                    return (
-                      <label
-                        key={lvl.val}
-                        className={`flex h-10 items-center justify-center rounded-lg border text-center cursor-pointer transition-all ${
-                          isSelected
-                            ? "border-primary bg-primary/20 text-primary font-bold shadow-sm"
-                            : "border-outline-variant/40 bg-surface-container hover:bg-surface-container-high text-on-surface"
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name={`t4_conf_${activeQuestion.question_id}`}
-                          value={lvl.val}
-                          checked={isSelected}
-                          onChange={() =>
-                            updateCurrent({ t4_confidence: lvl.val })
-                          }
-                          className="hidden"
-                        />
-                        <span className="font-mono-ui text-base">
-                          {lvl.val}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
+                <ConfidenceSlider
+                  inputId={`t4-conf_${activeQuestion.question_id}`}
+                  value={currentAnswer.t4_confidence}
+                  onChange={(value) => updateCurrent({ t4_confidence: value })}
+                />
+              </div>
               </section>
 
               {/* Navigasi Soal Bawah */}
