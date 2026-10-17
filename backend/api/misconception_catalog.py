@@ -19,6 +19,7 @@ Row shape: `ROW||| No. ||| Cakupan konsep ||| Miskonsepsi ||| Konsep yang benar`
 both accepted, and repeated header rows are skipped.
 """
 
+import hashlib
 import re
 
 ROW_PREFIX = 'ROW|||'
@@ -232,3 +233,29 @@ def plan_catalog(entries, existing_concepts, existing_misconceptions):
         })
 
     return {'counts': counts, 'rows': rows}
+
+
+# ---------------------------------------------------------------------------
+# Embedding text + change detector (plan Phase 3)
+#
+# One canonical builder per object, used by BOTH the embedder and the hash, so
+# the stored `content_hash` is always the sha256 of exactly the embedded text: a
+# text change changes the hash, and a hash change triggers a re-embed.
+# ---------------------------------------------------------------------------
+
+def concept_embedding_text(name, correct_conception):
+    """`name + "\\n" + correct_conception` — the concept's embedded text."""
+    return f'{name}\n{correct_conception}'
+
+
+def misconception_embedding_text(label):
+    """The misconception's embedded text: its `label`, nothing else."""
+    return label or ''
+
+
+def catalog_content_hash(text):
+    """sha256 hex digest — the 64-char lowercase key stored in `CHAR(64)`.
+
+    Same pattern as `reference_answers.answer_hash` (C2).
+    """
+    return hashlib.sha256((text or '').encode('utf-8')).hexdigest()

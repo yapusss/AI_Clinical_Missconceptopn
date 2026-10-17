@@ -44,7 +44,10 @@ from api.materials_views import (
 )
 from api.misconception_catalog import (
     build_description,
+    catalog_content_hash,
     catalog_keys,
+    concept_embedding_text,
+    misconception_embedding_text,
     parse_review_rows,
     plan_catalog,
     split_misconception_cell,
@@ -2363,3 +2366,36 @@ class MisconceptionCatalogPlanTests(SimpleTestCase):
         self.assertEqual(build_description('c1', []), 'c1')
         plan = plan_catalog(self.ENTRIES, {}, {})
         self.assertEqual(plan['rows'][0]['description'], 'c1\n\nSumber: Ref A.')
+
+
+class CatalogEmbeddingTextTests(SimpleTestCase):
+    """Phase 3: the text embedded and the text hashed are the same string."""
+
+    def test_concept_text_is_name_newline_correct_conception(self):
+        self.assertEqual(
+            concept_embedding_text('Materi tersusun atas partikel', 'Partikel diskrit'),
+            'Materi tersusun atas partikel\nPartikel diskrit',
+        )
+
+    def test_misconception_text_is_the_label(self):
+        self.assertEqual(misconception_embedding_text('Air tidak mengandung hidrogen'),
+                         'Air tidak mengandung hidrogen')
+        self.assertEqual(misconception_embedding_text(''), '')
+
+    def test_hash_is_sha256_of_the_embedded_text(self):
+        import hashlib
+        text = concept_embedding_text('K', 'C')
+        digest = catalog_content_hash(text)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(digest, digest.lower())
+        self.assertEqual(digest, hashlib.sha256(text.encode('utf-8')).hexdigest())
+
+    def test_changing_the_text_changes_the_hash(self):
+        before = catalog_content_hash(concept_embedding_text('K', 'C'))
+        after = catalog_content_hash(concept_embedding_text('K', 'C2'))
+        self.assertNotEqual(before, after)
+        # A misconception's hash is over its label, so a label edit moves it too.
+        self.assertNotEqual(
+            catalog_content_hash(misconception_embedding_text('label A')),
+            catalog_content_hash(misconception_embedding_text('label B')),
+        )
