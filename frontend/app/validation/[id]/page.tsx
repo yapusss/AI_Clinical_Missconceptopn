@@ -417,6 +417,8 @@ export default function ValidationDetailPage() {
 
   // v3.2: the sentence-level anchor, surfaced to the lecturer unconditionally.
   const evidenceSpan = data?.llm.evidence_span ?? null;
+  const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
+  const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
   // Phase 6: the missing-concept list, lecturer-only on this surface.
   const missingConcepts = data?.llm.missing_concepts ?? [];
   const hasEvidenceBlock =
@@ -563,6 +565,7 @@ export default function ValidationDetailPage() {
                         <MathContent
                           value={data.answer.tier1_answer || data.answer.text}
                           className="mt-1 text-sm font-semibold text-on-surface font-mono-ui"
+                          highlightQuote={tier1Highlight?.quote}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
@@ -584,6 +587,7 @@ export default function ValidationDetailPage() {
                         <MathContent
                           value={data.answer.tier3_reason || data.answer.text}
                           className="mt-1 text-sm text-on-surface font-mono-ui leading-relaxed"
+                          highlightQuote={tier3Highlight?.quote}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">

@@ -3,10 +3,9 @@
  *
  * The backend stores an `evidence_span` whose `quote` was copied from a
  * plain-text projection of the answer (tags stripped, whitespace collapsed,
- * case preserved). Locating it inside the evidence block's sentence therefore
- * needs a match that ignores case, whitespace runs and curly-vs-straight quotes,
- * then maps the match back to the original characters so the tint wraps the real
- * text. The student's own answer is never tinted.
+ * case preserved). Locating it in the rendered answer therefore needs a match
+ * that ignores case, whitespace runs and curly-vs-straight quotes, then maps the
+ * match back to the original characters so the tint wraps the real text.
  */
 
 const CURLY_QUOTES: Record<string, string> = {
