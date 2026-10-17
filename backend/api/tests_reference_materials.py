@@ -22,7 +22,11 @@ from api import llm
 from api import reading_materials
 from api.models import ExamPackage
 from api.embeddings import answer_similarity, cosine
-from api.catalog_mapping import score_catalog_match
+from api.catalog_mapping import (
+    score_catalog_match,
+    select_missing_concepts,
+    shortlist_concepts,
+)
 from api.llm import (
     FourTierContext,
     accept_evidence_span,
@@ -475,6 +479,96 @@ class ZeroChunkPipelineTests(SimpleTestCase):
         breakdown = json.loads(params[5])
         self.assertNotIn('student_feedback', breakdown)
         self.assertNotIn('grounding', breakdown)
+
+
+class CatalogPipelineIntegrationTests(SimpleTestCase):
+    """Phase 4/5 wiring: the pipeline stores both artefacts, with the SC gate."""
+
+    MATCH = {'status': 'matched', 'concept_id': 'c1', 'concept_name': 'N',
+             'misconception_id': 'm1', 'score': 0.71, 'candidates': []}
+    MISSING = [{'concept_id': 'c1', 'name': 'N', 'correct_conception': 'C',
+                'score': 0.41}]
+
+    def _run(self, *, mod_b, category, artefacts):
+        ctx = make_ctx(topic_id='topic-1', question_version_id='qv-1',
+                       reference_t1_vec=[0.1, 0.2])
+        recorded = {}
+
+        def record(sql, params=None):
+            if 'sp_record_llm_analysis' in sql:
+                recorded['params'] = params
+
+        fake_connection = MagicMock()
+        cursor = fake_connection.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = record
+
+        with patch('api.llm.connection', fake_connection), \
+                patch('api.llm.load_context', return_value=ctx), \
+                patch('api.llm.retrieve_reference_chunks', return_value=[]), \
+                patch('api.llm.answer_similarity', return_value=(None, None)), \
+                patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
+                patch('api.llm.run_module_b', return_value=mod_b), \
+                patch('api.llm.run_module_c',
+                      return_value=(None, None, 0.0, '', [])), \
+                patch('api.llm.evaluate_decision_matrix',
+                      return_value=(category, 'meaning', 'RENDAH')), \
+                patch('api.catalog_mapping.build_catalog_artefacts',
+                      return_value=artefacts) as build:
+            result = llm.analyze_submission('sub-1')
+
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        return recorded['params'], build
+
+    def test_null_span_stores_the_match_and_the_missing_list(self):
+        params, build = self._run(
+            mod_b=('SALAH', [], [], None), category='FN',
+            artefacts=(self.MATCH, self.MISSING, [0.1]),
+        )
+        breakdown = json.loads(params[5])
+        self.assertEqual(breakdown['catalog_match'], self.MATCH)
+        self.assertEqual(breakdown['missing_concepts'], self.MISSING)
+        # The missing list is requested, and the reference vector is reused.
+        self.assertTrue(build.call_args.kwargs['allow_missing'])
+        self.assertEqual(build.call_args.kwargs['reference_vec'], [0.1, 0.2])
+        self.assertEqual(build.call_args.kwargs['topic_id'], 'topic-1')
+
+    def test_sc_never_requests_a_missing_list(self):
+        params, build = self._run(
+            mod_b=('BENAR', [], [], None), category='SC',
+            artefacts=(self.MATCH, [], [0.1]),
+        )
+        self.assertFalse(build.call_args.kwargs['allow_missing'])
+        self.assertEqual(json.loads(params[5])['missing_concepts'], [])
+
+    def test_mapping_failure_degrades_without_failing_the_analysis(self):
+        ctx = make_ctx(topic_id='topic-1', question_version_id='qv-1')
+        recorded = {}
+
+        def record(sql, params=None):
+            if 'sp_record_llm_analysis' in sql:
+                recorded['params'] = params
+
+        fake_connection = MagicMock()
+        cursor = fake_connection.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = record
+
+        with patch('api.llm.connection', fake_connection), \
+                patch('api.llm.load_context', return_value=ctx), \
+                patch('api.llm.retrieve_reference_chunks', return_value=[]), \
+                patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
+                patch('api.llm.run_module_b', return_value=('SALAH', [], [], None)), \
+                patch('api.llm.run_module_c',
+                      return_value=(None, None, 0.0, '', [])), \
+                patch('api.llm.evaluate_decision_matrix',
+                      return_value=('FN', 'meaning', 'RENDAH')), \
+                patch('api.catalog_mapping.build_catalog_artefacts',
+                      side_effect=RuntimeError('embedding down')):
+            result = llm.analyze_submission('sub-1')
+
+        self.assertEqual(result, 'PENDING_VALIDATION')
+        breakdown = json.loads(recorded['params'][5])
+        self.assertIsNone(breakdown['catalog_match'])
+        self.assertEqual(breakdown['missing_concepts'], [])
 
 
 def make_analysis(similarity=None, citation_count=None, category=None,
@@ -2493,3 +2587,65 @@ class CatalogMatchScoringTests(SimpleTestCase):
     def test_matched_concept_without_misconceptions_has_null_id(self):
         result = score_catalog_match(self.TEXT, [_candidate('c1', 0)], threshold=0.62)
         self.assertIsNone(result['misconception_id'])
+
+
+def _concept(concept_id, angle, name=None):
+    return {
+        'concept_id': concept_id,
+        'name': name or concept_id,
+        'correct_conception': f'correct {concept_id}',
+        'embedding': _vec(angle),
+    }
+
+
+class MissingConceptSelectionTests(SimpleTestCase):
+    """Phase 5: shortlist cap 8, covered concepts excluded, keep-3 cap, order."""
+
+    REF = [1.0, 0.0]
+
+    def test_shortlist_caps_at_eight_by_reference_similarity(self):
+        concepts = [_concept(f'c{i:02d}', i * 5) for i in range(12)]
+        shortlisted = shortlist_concepts(concepts, self.REF, top_n=8)
+        self.assertEqual(len(shortlisted), 8)
+        # Closest to the reference first: c00 (0 deg) .. c07 (35 deg).
+        self.assertEqual([c['concept_id'] for c in shortlisted],
+                         [f'c{i:02d}' for i in range(8)])
+        self.assertEqual(shortlisted[0]['shortlist_score'], 1.0)
+
+    def test_shortlist_skips_concepts_without_an_embedding(self):
+        concepts = [_concept('c1', 0), {'concept_id': 'c2', 'name': 'n',
+                                        'correct_conception': 'x', 'embedding': None}]
+        shortlisted = shortlist_concepts(concepts, self.REF)
+        self.assertEqual([c['concept_id'] for c in shortlisted], ['c1'])
+
+    def test_shortlist_tie_breaks_by_concept_id(self):
+        concepts = [_concept('bbb', 0), _concept('aaa', 0)]
+        shortlisted = shortlist_concepts(concepts, self.REF)
+        self.assertEqual([c['concept_id'] for c in shortlisted], ['aaa', 'bbb'])
+
+    def test_covered_concept_is_excluded_and_order_is_preserved(self):
+        shortlisted = [
+            _concept('covered', 0),     # cos 1.0  -> covered
+            _concept('missing-1', 60),  # cos 0.5  -> missing
+            _concept('missing-2', 70),  # cos 0.342
+        ]
+        missing = select_missing_concepts(shortlisted, self.REF, covered_threshold=0.62)
+        self.assertEqual([c['concept_id'] for c in missing], ['missing-1', 'missing-2'])
+        self.assertEqual(missing[0]['score'], 0.5)
+        self.assertEqual(missing[0]['name'], 'missing-1')
+        self.assertEqual(missing[0]['correct_conception'], 'correct missing-1')
+
+    def test_keep_cap_is_three_ranked_by_the_shortlist_order(self):
+        shortlisted = [_concept(f'c{i}', 70 + i) for i in range(5)]
+        missing = select_missing_concepts(shortlisted, self.REF, covered_threshold=0.62)
+        self.assertEqual(len(missing), 3)
+        self.assertEqual([c['concept_id'] for c in missing], ['c0', 'c1', 'c2'])
+
+    def test_at_threshold_counts_as_covered(self):
+        # cos(51.6832) ~= 0.62 -> covered, so not missing.
+        shortlisted = [_concept('c1', 51.6832)]
+        self.assertEqual(
+            select_missing_concepts(shortlisted, self.REF, covered_threshold=0.62), [])
+
+    def test_empty_shortlist_yields_no_missing_concepts(self):
+        self.assertEqual(select_missing_concepts([], self.REF), [])

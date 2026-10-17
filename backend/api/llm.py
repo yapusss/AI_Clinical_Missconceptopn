@@ -1252,16 +1252,21 @@ def analyze_submission(submission_id: str) -> str:
         explanation_lines.append(f"Rekomendasi Intervensi Dosen: {intervention_text}")
         explanation = "\n".join(explanation_lines)
 
-        # Catalogue mapping (plan Phase 4). Embedding-only — NO new provider
+        # Catalogue mapping (plan Phases 4-5). Embedding-only — NO new provider
         # completion request (D7). Runs after the diagnosis is complete (the
-        # category is resolved above) and before persistence, so the artefact
-        # lands in the same jsonb. Every failure degrades to `catalog_match:
-        # None` and NEVER fails an analysis (same rule as the material enqueue
-        # below).
+        # category is resolved above) and before persistence, so both artefacts
+        # land in the same jsonb. Exactly one `embed_text` call per analysis,
+        # reused by the missing-concept step. The missing list is only computed
+        # when the accepted evidence span is null AND the category is not SC
+        # (precedence: never a highlight and a missing list for the same
+        # analysis). Every failure degrades to `catalog_match: None` / no missing
+        # list and NEVER fails an analysis (same rule as the material enqueue).
         catalog_match = None
+        missing_concepts = []
         try:
-            from api.catalog_mapping import build_catalog_match
-            catalog_match, _analysis_vec = build_catalog_match(
+            from api.catalog_mapping import build_catalog_artefacts
+            allow_missing = evidence_span is None and category != 'SC'
+            catalog_match, missing_concepts, _analysis_vec = build_catalog_artefacts(
                 analysis_text="\n".join([
                     explanation,
                     ctx.tier1_answer or '',
@@ -1269,11 +1274,14 @@ def analyze_submission(submission_id: str) -> str:
                 ]),
                 topic_id=ctx.topic_id,
                 question_version_id=ctx.question_version_id,
+                reference_vec=ctx.reference_t1_vec,
+                allow_missing=allow_missing,
             )
         except Exception as e:  # noqa: BLE001 — mapping must never fail an analysis
             logger.warning(
                 'Catalogue mapping failed for %s (non-fatal): %s', submission_id, e)
             catalog_match = None
+            missing_concepts = []
 
         concept_breakdown = {
             'module_a': {'score': mod_a_score, 'reasoning': mod_a_exp},
@@ -1300,8 +1308,12 @@ def analyze_submission(submission_id: str) -> str:
             # because `sp_record_llm_analysis` already takes concept_breakdown as
             # jsonb — no migration, no procedure change.
             'evidence_span': evidence_span,
-            # Phase 4: the catalogue mapping. None when there was nothing to map.
+            # Phase 4/5: the catalogue mapping and the missing-concept artefact.
+            # `catalog_match` is None when there was nothing to map; the missing
+            # list is empty unless a span was null, the category was not SC, and
+            # the student omitted a shortlisted concept.
             'catalog_match': catalog_match,
+            'missing_concepts': missing_concepts,
         }
 
         # 6. Simpan Hasil Analisis via Stored Procedure

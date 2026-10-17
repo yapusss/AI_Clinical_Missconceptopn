@@ -1,14 +1,18 @@
-"""Catalogue mapping at analysis time (plan Phase 4).
+"""Catalogue mapping at analysis time (plan Phases 4-5).
 
-**Map** — which catalogued misconception is this? Score the analysis text against
-the topic's concepts and take the best above a threshold, with an explicit
-`no_match` abstain (D3). Stored as `concept_breakdown_json.catalog_match`.
+Two jobs, both **embedding-only** (plan D7 — no new LLM completion):
 
-This is embedding-only (plan D7 — no new LLM completion). The scoring is a pure
-function (`score_catalog_match`) so it is testable without a database; the
-DB/embedding plumbing below it is deliberately thin. Every entry point degrades to
-`None` rather than raising: a mapping failure must never fail an analysis (same
-rule as the material enqueue).
+* **Map** — which catalogued misconception is this? Score the analysis text
+  against the topic's concepts and take the best above a threshold, with an
+  explicit `no_match` abstain (D3). Stored as `concept_breakdown_json.catalog_match`.
+* **Locate** — which concepts did the student *not* address? Shortlist the topic's
+  concepts against the question's reference answer, then keep those the student's
+  text does not cover. Stored as `concept_breakdown_json.missing_concepts`.
+
+The scoring is a pure function (`score_catalog_match`) so it is testable without a
+database; the DB/embedding plumbing below it is deliberately thin. Every entry
+point degrades to `None`/`[]` rather than raising: a mapping failure must never
+fail an analysis (same rule as the material enqueue).
 """
 
 import logging
@@ -22,6 +26,9 @@ from api.llm import _parse_vector
 logger = logging.getLogger(__name__)
 
 DEFAULT_MATCH_THRESHOLD = 0.62
+DEFAULT_COVERED_THRESHOLD = 0.62
+SHORTLIST_SIZE = 8
+MAX_MISSING = 3
 MAX_CANDIDATES_SHOWN = 3
 
 
@@ -108,10 +115,62 @@ def score_catalog_match(text_vec, candidates, threshold=None):
     }
 
 
+def shortlist_concepts(concepts, reference_vec, top_n=SHORTLIST_SIZE):
+    """Top `top_n` concepts by cosine(concept embedding, reference vector).
+
+    Deterministic (score desc, then `concept_id` asc); concepts without an
+    embedding are skipped. Each returned concept gains `shortlist_score`.
+    """
+    scored = []
+    for concept in concepts or []:
+        embedding = concept.get('embedding')
+        if not embedding:
+            continue
+        scored.append((cosine(reference_vec, embedding), str(concept['concept_id']), concept))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    shortlisted = []
+    for score, _cid, concept in scored[:top_n]:
+        entry = dict(concept)
+        entry['shortlist_score'] = round(score, 4)
+        shortlisted.append(entry)
+    return shortlisted
+
+
+def select_missing_concepts(shortlisted, student_vec, covered_threshold=None,
+                            max_keep=MAX_MISSING):
+    """Keep the shortlisted concepts the student did **not** address.
+
+    A concept is covered when `cosine(student_vec, concept embedding) >=
+    covered_threshold`; covered concepts are dropped. The survivors keep the
+    shortlist's order (plan Phase 5 step 3 ranks by the step-1 score) and are
+    capped at `max_keep`. Each stored entry carries the coverage `score`.
+    """
+    if covered_threshold is None:
+        covered_threshold = getattr(
+            settings, 'CONCEPT_COVERED_THRESHOLD', DEFAULT_COVERED_THRESHOLD)
+
+    missing = []
+    for concept in shortlisted or []:
+        embedding = concept.get('embedding')
+        if not embedding:
+            continue
+        score = cosine(student_vec, embedding)
+        if score >= covered_threshold:
+            continue
+        missing.append({
+            'concept_id': str(concept['concept_id']),
+            'name': concept.get('name'),
+            'correct_conception': concept.get('correct_conception'),
+            'score': round(score, 4),
+        })
+        if len(missing) >= max_keep:
+            break
+    return missing
+
+
 # ---------------------------------------------------------------------------
 # DB plumbing (thin)
 # ---------------------------------------------------------------------------
-
 def _group_concepts(rows):
     """Rows `(concept_id, name, correct_conception, c_embedding, m_id, m_label,
     m_embedding)` -> the candidate list the scorer expects."""
@@ -185,22 +244,33 @@ def narrow_candidates(concepts, concept_ids):
     return [c for c in concepts if c['concept_id'] in concept_ids]
 
 
-def build_catalog_match(*, analysis_text, topic_id, question_version_id=None,
-                        threshold=None):
-    """One `embed_text` call. Returns `(catalog_match, text_vec)`.
+def build_catalog_artefacts(*, analysis_text, topic_id, question_version_id=None,
+                            reference_vec=None, allow_missing=True,
+                            match_threshold=None, covered_threshold=None):
+    """One `embed_text` call, both artefacts. Returns
+    `(catalog_match, missing, text_vec)`.
 
     `catalog_match` is `None` when there is no topic or no embedded concept (the
-    honest "nothing to map" state). The vector is returned so a later step (the
-    missing-concept artefact, Phase 5) can reuse it instead of embedding twice.
-    A provider failure propagates as `EmbeddingError`; the caller decides how to
+    honest "nothing to map" state); `missing` is `[]` when it is not requested
+    (`allow_missing=False`), when there is no reference vector, or when nothing
+    qualifies. The vector is returned so the caller can see what was scored. A
+    provider failure propagates as `EmbeddingError`; the caller decides how to
     degrade.
     """
     concepts = load_topic_concepts(topic_id)
     if not concepts:
-        return None, None
+        return None, [], None
 
     text_vec = embed_text(analysis_text)
 
     concept_ids = question_version_concept_ids(question_version_id)
     candidates = narrow_candidates(concepts, concept_ids)
-    return score_catalog_match(text_vec, candidates, threshold), text_vec
+    catalog_match = score_catalog_match(text_vec, candidates, match_threshold)
+
+    missing = []
+    if allow_missing and reference_vec:
+        shortlisted = shortlist_concepts(concepts, reference_vec)
+        missing = select_missing_concepts(
+            shortlisted, text_vec, covered_threshold)
+
+    return catalog_match, missing, text_vec
