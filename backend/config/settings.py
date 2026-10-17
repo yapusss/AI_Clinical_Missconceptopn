@@ -188,6 +188,12 @@ READING_MATERIAL_TEMPERATURE = float(os.environ.get('READING_MATERIAL_TEMPERATUR
 READING_MATERIAL_MAX_RUNS = int(os.environ.get('READING_MATERIAL_MAX_RUNS', '3'))
 READING_MATERIAL_DRAIN_BATCH = int(os.environ.get('READING_MATERIAL_DRAIN_BATCH', '10'))
 
+# Catalogue mapping (plan Phases 4-5). Embedding-only, no LLM completion. The
+# thresholds are initial guesses (plan §6.2): tune from lecturer overrides once
+# enough confirmations exist. Both are env-overridable.
+CATALOG_MATCH_THRESHOLD = float(os.environ.get('CATALOG_MATCH_THRESHOLD', '0.62'))
+CONCEPT_COVERED_THRESHOLD = float(os.environ.get('CONCEPT_COVERED_THRESHOLD', '0.62'))
+
 # Background LLM workers. The API records work (a submission, a PENDING reading
 # material) but only `analyze_submissions` / `drain_reading_materials` perform it, and
 # nothing coupled those processes to the backend — so a running backend with no worker

@@ -22,6 +22,7 @@ from api import llm
 from api import reading_materials
 from api.models import ExamPackage
 from api.embeddings import answer_similarity, cosine
+from api.catalog_mapping import score_catalog_match
 from api.llm import (
     FourTierContext,
     accept_evidence_span,
@@ -2399,3 +2400,96 @@ class CatalogEmbeddingTextTests(SimpleTestCase):
             catalog_content_hash(misconception_embedding_text('label A')),
             catalog_content_hash(misconception_embedding_text('label B')),
         )
+
+
+def _vec(angle_deg):
+    """A unit 2-d vector; cosine([1, 0], _vec(a)) == cos(a)."""
+    import math
+    rad = math.radians(angle_deg)
+    return [math.cos(rad), math.sin(rad)]
+
+
+def _candidate(concept_id, angle, name='Concept', misconceptions=None):
+    return {
+        'concept_id': concept_id,
+        'name': name,
+        'embedding': _vec(angle),
+        'misconceptions': misconceptions or [],
+    }
+
+
+class CatalogMatchScoringTests(SimpleTestCase):
+    """Phase 4: `score_catalog_match` is pure, deterministic and abstains."""
+
+    TEXT = [1.0, 0.0]
+
+    def test_above_threshold_matches_the_best_concept(self):
+        candidates = [
+            _candidate('c-low', 45, 'Low'),
+            _candidate('c-high', 0, 'High'),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.62)
+        self.assertEqual(result['status'], 'matched')
+        self.assertEqual(result['concept_id'], 'c-high')
+        self.assertEqual(result['concept_name'], 'High')
+        self.assertEqual(result['score'], 1.0)
+        # The runner-up is shown, the winner is not repeated in `candidates`.
+        self.assertEqual(result['candidates'], [{'concept_id': 'c-low', 'score': 0.7071}])
+
+    def test_below_threshold_abstains_with_the_top_three(self):
+        candidates = [
+            _candidate('c1', 80),
+            _candidate('c2', 85),
+            _candidate('c3', 90),
+            _candidate('c4', 95),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.62)
+        self.assertEqual(result['status'], 'no_match')
+        self.assertEqual(result['score'], 0.1736)
+        self.assertEqual(len(result['candidates']), 3)
+        self.assertEqual([c['concept_id'] for c in result['candidates']],
+                         ['c1', 'c2', 'c3'])
+
+    def test_at_threshold_counts_as_a_match(self):
+        # cos(51.6832°) ~= 0.62 exactly at 4 decimals.
+        candidates = [_candidate('c1', 51.6832)]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.62)
+        self.assertEqual(result['status'], 'matched')
+
+    def test_tie_breaks_by_concept_id(self):
+        candidates = [
+            _candidate('bbb', 0),
+            _candidate('aaa', 0),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.62)
+        self.assertEqual(result['concept_id'], 'aaa')
+        self.assertEqual(result['candidates'], [{'concept_id': 'bbb', 'score': 1.0}])
+
+    def test_empty_candidate_list_is_no_match_with_no_score(self):
+        result = score_catalog_match(self.TEXT, [], threshold=0.62)
+        self.assertEqual(result, {'status': 'no_match', 'score': None, 'candidates': []})
+
+    def test_single_candidate_has_no_runner_ups(self):
+        result = score_catalog_match(self.TEXT, [_candidate('only', 0)], threshold=0.62)
+        self.assertEqual(result['status'], 'matched')
+        self.assertEqual(result['candidates'], [])
+
+    def test_candidate_without_an_embedding_is_skipped(self):
+        candidates = [{'concept_id': 'c1', 'name': 'N', 'embedding': None,
+                       'misconceptions': []}]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.62)
+        self.assertEqual(result, {'status': 'no_match', 'score': None, 'candidates': []})
+
+    def test_matched_concept_stores_its_best_scoring_misconception(self):
+        candidates = [
+            _candidate('c1', 0, 'N', misconceptions=[
+                {'id': 'm-far', 'label': 'far', 'embedding': _vec(60)},
+                {'id': 'm-near', 'label': 'near', 'embedding': _vec(5)},
+            ]),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.62)
+        self.assertEqual(result['misconception_id'], 'm-near')
+
+    def test_matched_concept_without_misconceptions_has_null_id(self):
+        result = score_catalog_match(self.TEXT, [_candidate('c1', 0)], threshold=0.62)
+        self.assertIsNone(result['misconception_id'])

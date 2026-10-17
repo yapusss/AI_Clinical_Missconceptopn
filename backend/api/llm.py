@@ -1252,6 +1252,29 @@ def analyze_submission(submission_id: str) -> str:
         explanation_lines.append(f"Rekomendasi Intervensi Dosen: {intervention_text}")
         explanation = "\n".join(explanation_lines)
 
+        # Catalogue mapping (plan Phase 4). Embedding-only — NO new provider
+        # completion request (D7). Runs after the diagnosis is complete (the
+        # category is resolved above) and before persistence, so the artefact
+        # lands in the same jsonb. Every failure degrades to `catalog_match:
+        # None` and NEVER fails an analysis (same rule as the material enqueue
+        # below).
+        catalog_match = None
+        try:
+            from api.catalog_mapping import build_catalog_match
+            catalog_match, _analysis_vec = build_catalog_match(
+                analysis_text="\n".join([
+                    explanation,
+                    ctx.tier1_answer or '',
+                    ctx.tier3_reason or '',
+                ]),
+                topic_id=ctx.topic_id,
+                question_version_id=ctx.question_version_id,
+            )
+        except Exception as e:  # noqa: BLE001 — mapping must never fail an analysis
+            logger.warning(
+                'Catalogue mapping failed for %s (non-fatal): %s', submission_id, e)
+            catalog_match = None
+
         concept_breakdown = {
             'module_a': {'score': mod_a_score, 'reasoning': mod_a_exp},
             'module_b': {'score': mod_b_score},
@@ -1277,6 +1300,8 @@ def analyze_submission(submission_id: str) -> str:
             # because `sp_record_llm_analysis` already takes concept_breakdown as
             # jsonb — no migration, no procedure change.
             'evidence_span': evidence_span,
+            # Phase 4: the catalogue mapping. None when there was nothing to map.
+            'catalog_match': catalog_match,
         }
 
         # 6. Simpan Hasil Analisis via Stored Procedure
