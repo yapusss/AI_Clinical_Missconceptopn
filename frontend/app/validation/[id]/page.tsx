@@ -469,7 +469,7 @@ export default function ValidationDetailPage() {
                     </h3>
                     <RichTextContent
                       html={data.question.prompt}
-                      className="mt-1.5 !text-xl font-semibold leading-relaxed text-on-surface"
+                      className="mt-1.5 !text-lg font-semibold leading-relaxed text-on-surface"
                     />
                   </div>
 

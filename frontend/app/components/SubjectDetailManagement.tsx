@@ -256,26 +256,9 @@ export default function SubjectDetailManagement({
         <>
           <PageHeader
             title={subject.name}
-            description={subject.slug}
+            description={subject.description || undefined}
             icon={BookOpen}
-            eyebrow={
-              <span className="text-xs font-bold uppercase tracking-wider text-primary">
-                Mata Kuliah
-              </span>
-            }
-            action={
-              <span
-                className={`badge ${subject.is_active ? "badge-active" : "badge-revoked"}`}
-              >
-                {subject.is_active ? "Aktif" : "Nonaktif"}
-              </span>
-            }
           />
-          {subject.description && (
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-on-surface-variant">
-              {subject.description}
-            </p>
-          )}
         </>
       )}
       {lecturerView ? (

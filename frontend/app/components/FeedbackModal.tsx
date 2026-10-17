@@ -2,12 +2,12 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 
 type Props = {
   open: boolean;
   message: string;
-  variant?: "error" | "warning";
+  variant?: "error" | "warning" | "success";
   onClose: () => void;
 };
 
@@ -22,7 +22,12 @@ export default function FeedbackModal({
   const titleId = useId();
   const descriptionId = useId();
   const [mounted, setMounted] = useState(false);
-  const title = variant === "warning" ? "Peringatan" : "Terjadi kesalahan";
+  const isSuccess = variant === "success";
+  const title = isSuccess
+    ? "Berhasil"
+    : variant === "warning"
+      ? "Peringatan"
+      : "Terjadi kesalahan";
 
   useEffect(() => setMounted(true), []);
 
@@ -64,10 +69,18 @@ export default function FeedbackModal({
         }
       }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-error/30 bg-surface-container-lowest p-6 shadow-2xl">
+      <div className={`w-full max-w-md rounded-2xl border bg-surface-container-lowest p-6 shadow-2xl ${
+        isSuccess ? "border-emerald-500/30" : "border-error/30"
+      }`}>
         <div className="flex items-start gap-3">
-          <span className="rounded-full bg-error-container p-2 text-error">
-            <AlertTriangle size={20} aria-hidden="true" />
+          <span className={`rounded-full p-2 ${
+            isSuccess ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-error-container text-error"
+          }`}>
+            {isSuccess ? (
+              <CheckCircle2 size={20} aria-hidden="true" />
+            ) : (
+              <AlertTriangle size={20} aria-hidden="true" />
+            )}
           </span>
           <div className="min-w-0 flex-1">
             <h2

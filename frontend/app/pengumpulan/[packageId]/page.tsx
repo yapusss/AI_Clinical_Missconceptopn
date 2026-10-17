@@ -267,7 +267,7 @@ function SubmissionPackageDetailPageContent() {
                   </div>
                   <RichTextContent
                     html={activeQuestion.prompt}
-                    className="mt-2.5 !text-xl leading-relaxed font-semibold text-on-surface sm:!text-2xl"
+                    className="mt-2.5 !text-lg leading-relaxed font-semibold text-on-surface sm:!text-xl"
                   />
                 </div>
 
