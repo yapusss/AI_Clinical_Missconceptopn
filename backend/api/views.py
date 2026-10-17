@@ -27,7 +27,7 @@ from openpyxl.utils import get_column_letter
 from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissionSerializer
 
 from .authentication import TokenAuthentication
-from .reading_materials import lecturer_category
+from .reading_materials import enqueue_reading_material, lecturer_category
 from .models import (
     AuthToken,
     AiModelChange,
@@ -2335,7 +2335,7 @@ _STUDENT_HIDDEN_ANALYSIS_KEYS = (
 )
 
 
-def _student_reading_material(question_version_id, category):
+def _student_reading_material(question_version_id, category, enqueue_missing=False):
     """The material the LLM wrote for one question, or a status stub while it is being
     generated, or `None` (C7, extended).
 
@@ -2348,6 +2348,12 @@ def _student_reading_material(question_version_id, category):
     `FAILED` also returns `None`: it is terminal, the student cannot act on it, and it
     surfaces in the lecturer's queue instead. Never a placeholder, and never the
     lecturer-only review/flag/staleness fields.
+
+    `enqueue_missing=True` turns an absent row into a queued one: the idempotent
+    `enqueue_reading_material` inserts the `PENDING` row (a cheap INSERT, never a
+    generation — material is never written inside a web request) and the caller is
+    told `{'status': 'PENDING'}` so the surface can say "being prepared" instead of
+    silently showing nothing for a verdict that should have material.
     """
     if not question_version_id or not category or category == 'SC':
         return None
@@ -2355,6 +2361,9 @@ def _student_reading_material(question_version_id, category):
         question_version_id=question_version_id, category=category
     ).first()
     if row is None:
+        if enqueue_missing:
+            enqueue_reading_material(question_version_id, category)
+            return {'status': 'PENDING'}
         return None
     if row.status in ('PENDING', 'STALE'):
         return {'status': row.status}
@@ -2373,15 +2382,36 @@ def _student_analysis_detail(analysis, breakdown, question_version_id):
     Keeps every pre-C5 key, drops the C5/C6 lecturer diagnostics
     (`_STUDENT_HIDDEN_ANALYSIS_KEYS`) and replaces the verdict's citation list
     with the student's own reading material (READY-only, or `None`).
+
+    v3.2: the reading material is keyed by the LECTURER's verdict when a
+    validation exists (their category overrules the AI's — `lecturer_category`
+    is the same authority the student package surface uses), an absent row is
+    enqueued (`PENDING`, never generated in-request), and the `evidence_span`
+    anchor is exposed only once that material row is `READY`.
     """
     from .validation_views import _grounding_detail
 
     detail = _grounding_detail(analysis, breakdown)
     for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
         detail.pop(key, None)
-    detail['reading_material'] = _student_reading_material(
-        question_version_id, getattr(analysis, 'four_tier_category', None)
+
+    validation = Validation.objects.filter(analysis=analysis).first()
+    if validation is not None:
+        category = lecturer_category(
+            analysis, validation.final_tier_level_snapshot,
+            getattr(validation, 'final_category', None),
+        )
+    else:
+        category = getattr(analysis, 'four_tier_category', None)
+
+    reading_material = _student_reading_material(
+        question_version_id, category, enqueue_missing=True,
     )
+    detail['reading_material'] = reading_material
+    # The tint and the model's causal claim must not arrive before the reading
+    # they belong to, so the anchor waits for READY material.
+    if not (reading_material and reading_material.get('status') == 'READY'):
+        detail['evidence_span'] = None
     return detail
 
 
@@ -3664,9 +3694,20 @@ def _build_submission_package_groups(user):
                     # already returns None for SC, for an absent row, and for any non-READY status.
                     reading_material = None
                     if final_score < 99.9:
-                        category = lecturer_category(analysis, validation.final_tier_level_snapshot)
+                        category = lecturer_category(
+                            analysis, validation.final_tier_level_snapshot,
+                            getattr(validation, 'final_category', None),
+                        )
                         if category:
                             reading_material = _student_reading_material(version.id, category)
+
+                    # v3.2: the student sees the anchor only once the material row
+                    # is READY — the model's causal claim must not arrive before
+                    # the reading it accompanies.
+                    evidence_span = None
+                    if reading_material and reading_material.get('status') == 'READY':
+                        breakdown = getattr(analysis, 'concept_breakdown_json', None) or {}
+                        evidence_span = breakdown.get('evidence_span')
 
                     evaluation_payload = {
                         'percentage_correct': final_score,
@@ -3683,6 +3724,7 @@ def _build_submission_package_groups(user):
                         'validator_name': validation.lecturer.full_name,
                         'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
                         'reading_material': reading_material,
+                        'evidence_span': evidence_span,
                     }
 
                 attempts.append({

@@ -189,6 +189,9 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
         'references': _attach_document_titles(breakdown.get('references') or []),
         'what_should_be_learned': breakdown.get('what_should_be_learned') or [],
         'suggested_materials': analysis.suggested_materials_json or [],
+        # v3.2: the sentence-level anchor to the misconception, as stored (with
+        # its `status`), or None. Lecturer surfaces show it unconditionally.
+        'evidence_span': breakdown.get('evidence_span'),
         # C5: answer-similarity + shadow verdict. Pre-C5 rows have NULLs; the
         # keys stay present (as `null`/`{}`) so the frontend never has to guess.
         'answer_similarity_t1': (

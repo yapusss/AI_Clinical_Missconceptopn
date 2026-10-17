@@ -21,6 +21,7 @@
 """
 
 import dataclasses
+import html
 import json
 import logging
 import re
@@ -48,7 +49,11 @@ logger = logging.getLogger(__name__)
 # v3.1: Modul B/C de-biased away from physics (dropped "penalaran fisis", "rumus",
 # "aljabar"; added an explicit "jangan mengasumsikan bidang ilmu" rule). v3.0 was
 # written for physics and mis-scored subjects whose reasoning is narrative.
-PROMPT_VERSION = f'four-tier-v3.1-{settings.TIER_VERDICT_SOURCE}'
+# v3.2: Modul B also returns an `evidence_span` — the single numbered sentence
+# that carries the misconception — inside the same call (no extra provider
+# request). The number->sentence mapping is the projection built by
+# `build_evidence_sentences`; `accept_evidence_span` guards it before storage.
+PROMPT_VERSION = f'four-tier-v3.2-{settings.TIER_VERDICT_SOURCE}'
 LLM_TEMPERATURE = 0.1
 LLM_MAX_RETRIES = 2
 
@@ -634,6 +639,183 @@ def _parse_what_should_be_learned(raw) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------
+# 3c. Evidence Span — sentence projection + acceptance guard
+# ----------------------------------------------------------------------------
+
+# Stored answers may be TipTap HTML with inline math nodes. MathLive stores
+# `<math-field data-latex="...">` (the LaTeX is the payload, not prose), and
+# older content used `<span data-type="math" data-latex="...">`. Both are removed
+# whole so a formula never leaks into the plain-text projection.
+_MATH_NODE_RE = re.compile(r'<math-field\b[^>]*>.*?</math-field>', re.IGNORECASE | re.DOTALL)
+_LEGACY_MATH_NODE_RE = re.compile(
+    r'<span\b[^>]*data-latex\s*=[^>]*>.*?</span>', re.IGNORECASE | re.DOTALL)
+_ANY_TAG_RE = re.compile(r'<[^>]+>')
+_WHITESPACE_RE = re.compile(r'\s+')
+# `.`, `!`, `?` followed by whitespace, plus newline boundaries. Deterministic
+# and deliberately simple — the numbering the model sees must be reproducible.
+_SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+|\n+')
+
+# Curly quotes are normalised to their straight forms so a quote copied from the
+# rendered text still matches the stored source.
+_CURLY_QUOTES = {
+    '\u2018': "'", '\u2019': "'", '\u201a': "'", '\u201b': "'",
+    '\u201c': '"', '\u201d': '"', '\u201e': '"', '\u201f': '"',
+    '\u2039': '<', '\u203a': '>', '\u00ab': '"', '\u00bb': '"',
+}
+
+
+def strip_html_collapse(text) -> str:
+    """Plain-text projection of a stored answer: drop tags + math, collapse spaces."""
+    if text is None:
+        return ''
+    value = str(text)
+    value = _MATH_NODE_RE.sub(' ', value)
+    value = _LEGACY_MATH_NODE_RE.sub(' ', value)
+    value = _ANY_TAG_RE.sub(' ', value)
+    value = html.unescape(value)
+    return _WHITESPACE_RE.sub(' ', value).strip()
+
+
+def split_sentences(text) -> list[str]:
+    """Split a plain-text projection into sentences (`. ! ?` and newlines)."""
+    plain = strip_html_collapse(text)
+    if not plain:
+        return []
+    return [part.strip() for part in _SENTENCE_BOUNDARY_RE.split(plain) if part.strip()]
+
+
+def build_evidence_sentences(tier1_text, tier3_text) -> list[dict]:
+    """Number the student's sentences across both fields, globally.
+
+    Returns `[{'id': 1, 'field': 'tier1', 'text': '...'}, ...]`. Tier 1 is
+    numbered first, then Tier 3, so one `sentence_id` identifies exactly one
+    sentence and its field. This is the numbering fed to Modul B and the one the
+    acceptance guard resolves against.
+    """
+    sentences = []
+    next_id = 1
+    for field_name, raw in (('tier1', tier1_text), ('tier3', tier3_text)):
+        for sentence in split_sentences(raw):
+            sentences.append({'id': next_id, 'field': field_name, 'text': sentence})
+            next_id += 1
+    return sentences
+
+
+def format_numbered_sentences(sentences) -> str:
+    """Render the numbered projection exactly as the model is asked to read it."""
+    lines = []
+    current_field = None
+    for sentence in sentences:
+        field_name = sentence.get('field')
+        if field_name != current_field:
+            if lines:
+                lines.append('')
+            label = 'Tier 1 (Jawaban Singkat)' if field_name == 'tier1' else 'Tier 3 (Alasan)'
+            lines.append(f'- field "{field_name}" — {label}:')
+            current_field = field_name
+        lines.append(f'- [{sentence.get("id")}] {sentence.get("text")}')
+    return '\n'.join(lines)
+
+
+EVIDENCE_SPAN_SCHEMA_LINE = (
+    '  "evidence_span": {\n'
+    '    "field": "tier1" | "tier3",\n'
+    '    "sentence_id": 4,\n'
+    '    "quote": "frasa persis dari kalimat tersebut, maksimum 15 kata",\n'
+    '    "reason": "satu kalimat menjelaskan mengapa pernyataan ini menunjukkan miskonsepsi"\n'
+    '  } | null'
+)
+
+EVIDENCE_SPAN_RULES = (
+    'ATURAN EVIDENCE SPAN:\n'
+    '1. Field "evidence_span" menandai SATU kalimat pada jawaban mahasiswa yang paling jelas memuat miskonsepsi.\n'
+    '2. "sentence_id" WAJIB salah satu nomor yang diberikan di atas; pilih SATU kalimat saja. Bila Tier 1 dan Tier 3 sama-sama menunjukkan miskonsepsi, utamakan Tier 3.\n'
+    '3. "quote" WAJIB disalin PERSIS dari kalimat tersebut (maksimum 15 kata): ambil frasa terpendek yang menunjukkan kesalahan (misalnya kasus "tidak").\n'
+    '4. "field" WAJIB "tier1" atau "tier3", selaras dengan nomor yang dipilih.\n'
+    '5. "reason" ditulis satu kalimat dalam Bahasa Indonesia formal.\n'
+    '6. Bila tidak ada pernyataan yang menunjukkan miskonsepsi (misalnya jawaban sudah benar), kembalikan "evidence_span": null. DILARANG mengarang kutipan.'
+)
+
+
+def _normalize_for_match(text) -> str:
+    """Casefold + collapse + curly-quote folding, after stripping HTML."""
+    value = strip_html_collapse(text)
+    for curly, straight in _CURLY_QUOTES.items():
+        value = value.replace(curly, straight)
+    return value.casefold()
+
+
+def _reject_evidence_span(field, reason):
+    logger.warning('evidence_span_rejected field=%s reason=%s', field, reason)
+    return None
+
+
+def accept_evidence_span(span, tier1_text, tier3_text, sentences) -> dict | None:
+    """Validate Modul B's `evidence_span` against the numbered sentences.
+
+    Pure: no DB, no network. Returns
+    `{'field', 'sentence_id', 'quote', 'reason', 'status'}` with
+    `status in {'exact', 'normalized'}`, or `None` (logged) on any failure. The
+    `status` exists so the anchor's degradation is measurable, not guessed.
+    """
+    if span is None:
+        # The prompt's "no misconception" answer, not a failure: `null` is a
+        # valid response and must not inflate the rejection metric.
+        return None
+    if not isinstance(span, dict):
+        return _reject_evidence_span(None, 'not_a_dict')
+
+    field = span.get('field')
+    if field not in ('tier1', 'tier3'):
+        return _reject_evidence_span(field, 'invalid_field')
+
+    raw_id = span.get('sentence_id')
+    try:
+        sentence_id = int(raw_id)
+    except (TypeError, ValueError):
+        return _reject_evidence_span(field, 'invalid_sentence_id')
+
+    resolved = None
+    for sentence in sentences or []:
+        try:
+            if int(sentence.get('id')) == sentence_id:
+                resolved = sentence
+                break
+        except (TypeError, ValueError):
+            continue
+    if resolved is None:
+        return _reject_evidence_span(field, 'unknown_sentence_id')
+    if resolved.get('field') != field:
+        return _reject_evidence_span(field, 'field_sentence_mismatch')
+
+    quote = str(span.get('quote') or '').strip()
+    if not quote:
+        return _reject_evidence_span(field, 'empty_quote')
+
+    sentence_text = str(resolved.get('text') or '')
+    field_text = tier1_text if field == 'tier1' else tier3_text
+    # The resolved sentence must belong to the field the model named; a quote that
+    # is only somewhere in the field (or nowhere) is not an anchor.
+    if _normalize_for_match(sentence_text) not in _normalize_for_match(field_text):
+        return _reject_evidence_span(field, 'sentence_not_in_field')
+
+    if quote in sentence_text:
+        status = 'exact'
+    elif _normalize_for_match(quote) and _normalize_for_match(quote) in _normalize_for_match(sentence_text):
+        status = 'normalized'
+    else:
+        return _reject_evidence_span(field, 'quote_not_in_sentence')
+
+    return {
+        'field': field,
+        'sentence_id': sentence_id,
+        'quote': quote,
+        'reason': str(span.get('reason') or ''),
+        'status': status,
+    }
+
+
+# ----------------------------------------------------------------------------
 # 4. Modular AI Evaluation Modules
 # ----------------------------------------------------------------------------
 
@@ -663,16 +845,37 @@ def run_module_a(ctx: FourTierContext, model_identifier: str) -> tuple[str, str]
     return score, str(data.get('reasoning', ''))
 
 
-def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list, list]:
+def run_module_b(ctx: FourTierContext, model_identifier: str,
+                 sentences: list[dict] | None = None) -> tuple[str, list, list, dict | None]:
     """Modul B — Penilai Alasan Ilmiah (Tier 3) langsung terhadap Model Answer.
 
     C8 (D17): Modul B is verdict-only. It no longer produces `student_feedback`
     or a lecturer `reasoning` string — the retained legacy `grounding_similarity`
     was built from `student_feedback['konsep_seharusnya']`, so the metric and its
-    input leave in the same commit. The only extra output is the citation
-    provenance (`referensi` / `what_should_be_learned`) when reference chunks
-    were supplied.
+    input leave in the same commit. The extra outputs are the citation provenance
+    (`referensi` / `what_should_be_learned`) when reference chunks were supplied,
+    and (v3.2) the raw `evidence_span` naming the numbered sentence that carries
+    the misconception. The span rides the same call — no second provider request.
+
+    `sentences` is the numbered projection (`build_evidence_sentences`). When it
+    is not supplied the answers are numbered here so a direct call still gets the
+    v3.2 contract; `analyze_submission` always passes the exact list it will hand
+    to `accept_evidence_span`, so ids resolve against the same sentences.
     """
+    if sentences is None:
+        sentences = build_evidence_sentences(ctx.tier1_answer, ctx.tier3_reason)
+
+    reference_block = build_reference_block(ctx.reference_chunks)
+
+    schema_lines = ['  "score": "BENAR" | "SALAH"']
+    if reference_block:
+        schema_lines.append(REFERENSI_SCHEMA_LINE)
+        schema_lines.append(
+            '  "what_should_be_learned": [{"topik": "...", "sumber_chunk_ids": ["<uuid>"]}]'
+        )
+    schema_lines.append(EVIDENCE_SPAN_SCHEMA_LINE)
+    schema_body = ',\n'.join(schema_lines)
+
     sys_prompt = (
         "Anda adalah Modul B: Penilai Alasan & Penalaran Ilmiah (Tier 3).\n"
         "Tugas: Nilai apakah penjelasan/alasan mahasiswa (Tier 3) secara ilmiah BENAR atau SALAH secara langsung terhadap Jawaban Model.\n"
@@ -686,27 +889,18 @@ def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list
         "   - ANTI-HALUSINASI: Nilai hanya apa yang tertulis. Jangan mengarang langkah atau konsep yang tidak ada di teks mahasiswa.\n\n"
         "Kembalikan HANYA format JSON valid:\n"
         "{\n"
-        '  "score": "BENAR" | "SALAH"\n'
+        f"{schema_body}\n"
         "}"
     )
-    reference_block = build_reference_block(ctx.reference_chunks)
     if reference_block:
-        # Only when references exist do the schema and rules change; with no
-        # references the prompt stays minimal.
-        sys_prompt = sys_prompt.replace(
-            '  "score": "BENAR" | "SALAH"\n}',
-            '  "score": "BENAR" | "SALAH",\n'
-            + REFERENSI_SCHEMA_LINE + ',\n'
-            '  "what_should_be_learned": [{"topik": "...", "sumber_chunk_ids": ["<uuid>"]}]\n'
-            "}",
-        )
         sys_prompt += "\n\n" + CITATION_RULES
+    sys_prompt += "\n\n" + EVIDENCE_SPAN_RULES
 
     user_prompt = (
         f"Pertanyaan:\n{ctx.question_prompt}\n\n"
         f"Jawaban Model (Acuan Kebenaran Sains):\nJawaban Singkat Referensi: {ctx.reference_short_answer or ctx.model_answer}\nAlasan Referensi: {ctx.reference_reason or ctx.model_answer}\n\n"
-        f"Kesimpulan Mahasiswa di Tier 1:\n\"{ctx.tier1_answer}\"\n\n"
-        f"Alasan/Penalaran Mahasiswa di Tier 3:\n\"{ctx.tier3_reason}\""
+        f"Kalimat jawaban mahasiswa (nomor dipakai untuk evidence_span.sentence_id):\n"
+        f"{format_numbered_sentences(sentences)}"
     )
     if reference_block:
         user_prompt = reference_block + "\n\n" + user_prompt
@@ -720,8 +914,11 @@ def run_module_b(ctx: FourTierContext, model_identifier: str) -> tuple[str, list
 
     referensi = _parse_referensi(data.get('referensi'))
     what_should_be_learned = _parse_what_should_be_learned(data.get('what_should_be_learned'))
+    evidence_span = data.get('evidence_span')
+    if not isinstance(evidence_span, dict):
+        evidence_span = None
 
-    return score, referensi, what_should_be_learned
+    return score, referensi, what_should_be_learned, evidence_span
 
 
 def run_module_c(ctx: FourTierContext, model_identifier: str) -> tuple[str, str, float, str, list]:
@@ -913,6 +1110,9 @@ def analyze_submission(submission_id: str) -> str:
         referensi = []
         what_should_be_learned = []
         mod_c_referensi = []
+        # v3.2: the accepted evidence anchor, or None. Stays None on the
+        # t3_kosong path (Modul B is not called there) and for SC below.
+        evidence_span = None
 
         # 1. Deterministic Heuristic Pre-Checks
         flags = compute_heuristic_flags(ctx.tier1_answer, ctx.tier3_reason)
@@ -948,7 +1148,16 @@ def analyze_submission(submission_id: str) -> str:
                 eval_b_ctx = ctx
 
             mod_a_score, mod_a_exp = run_module_a(ctx, model_identifier)
-            mod_b_score, referensi, what_should_be_learned = run_module_b(eval_b_ctx, model_identifier)
+            # Number the sentences Modul B will read; the same list resolves the
+            # returned span below, so sentence_id always maps to what the model saw.
+            evidence_sentences = build_evidence_sentences(
+                eval_b_ctx.tier1_answer, eval_b_ctx.tier3_reason)
+            (mod_b_score, referensi, what_should_be_learned,
+             raw_evidence_span) = run_module_b(
+                eval_b_ctx, model_identifier, evidence_sentences)
+            evidence_span = accept_evidence_span(
+                raw_evidence_span, eval_b_ctx.tier1_answer,
+                eval_b_ctx.tier3_reason, evidence_sentences)
 
             # Safeguard C: Validasi di Python
             t3_words = [w for w in ctx.tier3_reason.strip().split() if w]
@@ -1008,6 +1217,9 @@ def analyze_submission(submission_id: str) -> str:
             mod_c_label = None
             misc_role = None
             misc_role_label = None
+            # SC is "paham konsep utuh": there is no misconception to anchor, so
+            # a span the model volunteered here is dropped rather than stored.
+            evidence_span = None
         elif mod_c_code and mod_c_code != 'MK-LAIN':
             is_confirmed_type = category in ('FP', 'MSC')
             misc_role = 'CONFIRMED_MISCONCEPTION' if is_confirmed_type else 'CLASS_MAPPING_INDICATION'
@@ -1058,6 +1270,10 @@ def analyze_submission(submission_id: str) -> str:
             'intervention': intervention_text,
             'references': references,
             'what_should_be_learned': what_should_be_learned,
+            # v3.2: the accepted anchor (with its `status`), or None. Stored here
+            # because `sp_record_llm_analysis` already takes concept_breakdown as
+            # jsonb — no migration, no procedure change.
+            'evidence_span': evidence_span,
         }
 
         # 6. Simpan Hasil Analisis via Stored Procedure

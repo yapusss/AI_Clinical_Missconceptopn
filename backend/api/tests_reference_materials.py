@@ -23,11 +23,15 @@ from api.models import ExamPackage
 from api.embeddings import answer_similarity, cosine
 from api.llm import (
     FourTierContext,
+    accept_evidence_span,
+    build_evidence_sentences,
     build_reference_block,
     classify_tiers,
     grounded_similarity,
     run_module_b,
     run_module_c,
+    split_sentences,
+    strip_html_collapse,
     validate_citations,
 )
 from api.management.commands import ingest_materials as ingest_cmd
@@ -140,7 +144,7 @@ class PromptNeutralityTests(SimpleTestCase):
     def test_prompt_versions_carry_the_de_bias(self):
         # A prompt edit without a version bump pools two different prompts into one
         # metrics bucket, and for materials it means the old rows never regenerate.
-        self.assertIn('v3.1', llm.PROMPT_VERSION)
+        self.assertIn('v3.2', llm.PROMPT_VERSION)
         self.assertEqual(reading_materials.READING_MATERIAL_PROMPT_VERSION,
                          'reading-material-v1.2')
 
@@ -281,7 +285,7 @@ class PromptInjectionTests(SimpleTestCase):
             }
 
         with patch('api.llm._call_llm_json', side_effect=fake_call):
-            _, referensi, wsl = run_module_b(ctx, 'test-model')
+            _, referensi, wsl, _span = run_module_b(ctx, 'test-model')
 
         self.assertIn('SUMBER REFERENSI', captured['user'])
         self.assertIn('cid-1', captured['user'])
@@ -313,6 +317,105 @@ class PromptInjectionTests(SimpleTestCase):
         self.assertIn('SUMBER REFERENSI', captured['user'])
 
 
+class EvidenceSpanTests(SimpleTestCase):
+    """v3.2: the evidence-span anchor — sentence projection + acceptance guard.
+
+    Modul B returns the raw span inside its existing call; these tests pin the
+    pure projection/guard that decides whether it may be stored.
+    """
+
+    T1 = 'Air murni tidak mengandung hidrogen dan oksigen.'
+    T3 = ('Karena air tersusun dari molekul H2O, ia tidak mengandung gas hidrogen. '
+          'Suhunya 25 derajat.')
+
+    def _sentences(self):
+        # tier1 -> [1]; tier3 -> [2, 3]
+        return build_evidence_sentences(self.T1, self.T3)
+
+    def test_exact_quote_accepted(self):
+        span = {
+            'field': 'tier1', 'sentence_id': 1,
+            'quote': 'tidak mengandung hidrogen dan oksigen',
+            'reason': 'pernyataan menolak komposisi air',
+        }
+        result = accept_evidence_span(span, self.T1, self.T3, self._sentences())
+        self.assertIsNotNone(result)
+        self.assertEqual(result['status'], 'exact')
+        self.assertEqual(result['field'], 'tier1')
+        self.assertEqual(result['sentence_id'], 1)
+        self.assertEqual(result['quote'], 'tidak mengandung hidrogen dan oksigen')
+
+    def test_normalized_quote_accepted(self):
+        # Whitespace, case and curly quotes all differ from the stored text.
+        t3 = 'Air bukan \u201cgula\u201d, melainkan pelarut.'
+        sentences = build_evidence_sentences('', t3)
+        span = {
+            'field': 'tier3', 'sentence_id': 1,
+            'quote': '  AIR   BUKAN "GULA" ', 'reason': 'r',
+        }
+        result = accept_evidence_span(span, '', t3, sentences)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['status'], 'normalized')
+
+    def test_hallucinated_quote_rejected(self):
+        span = {'field': 'tier1', 'sentence_id': 1,
+                'quote': 'fotosintesis menghasilkan glukosa', 'reason': 'r'}
+        self.assertIsNone(
+            accept_evidence_span(span, self.T1, self.T3, self._sentences()))
+
+    def test_quote_in_field_but_not_in_resolved_sentence_rejected(self):
+        t1 = 'Kesimpulan benar. Alasan salah total.'
+        sentences = build_evidence_sentences(t1, '')
+        span = {'field': 'tier1', 'sentence_id': 1, 'quote': 'salah total', 'reason': 'r'}
+        self.assertIsNone(accept_evidence_span(span, t1, '', sentences))
+
+    def test_unknown_sentence_id_rejected(self):
+        span = {'field': 'tier1', 'sentence_id': 99,
+                'quote': 'tidak mengandung hidrogen', 'reason': 'r'}
+        self.assertIsNone(
+            accept_evidence_span(span, self.T1, self.T3, self._sentences()))
+
+    def test_empty_quote_rejected(self):
+        for quote in ('', '   ', None):
+            span = {'field': 'tier1', 'sentence_id': 1, 'quote': quote, 'reason': 'r'}
+            self.assertIsNone(
+                accept_evidence_span(span, self.T1, self.T3, self._sentences()),
+                f'blank quote {quote!r} must be rejected',
+            )
+
+    def test_non_dict_span_rejected(self):
+        # `null` is the legitimate "no misconception" answer and is silent; any
+        # other non-dict shape is a rejection.
+        self.assertIsNone(accept_evidence_span(None, self.T1, self.T3, self._sentences()))
+        self.assertIsNone(accept_evidence_span('nope', self.T1, self.T3, self._sentences()))
+
+    def test_sentence_splitter_keeps_math_latex_out(self):
+        # TipTap stores math as a native `<math-field>`; older content used a
+        # `<span data-latex>`. Neither the tag nor the LaTeX may reach the
+        # projection the model numbers.
+        html_text = (
+            'Air <math-field data-latex="H_2O">H2O</math-field> murni. '
+            'Gas <span data-type="math" data-latex="O_2">O2</span> oksigen.'
+        )
+        projection = strip_html_collapse(html_text)
+        self.assertNotIn('<span', projection)
+        self.assertNotIn('<math-field', projection)
+        self.assertNotIn('H_2O', projection)
+        self.assertNotIn('O_2', projection)
+
+        sentences = build_evidence_sentences(html_text, '')
+        joined = ' | '.join(s['text'] for s in sentences)
+        self.assertNotIn('<span', joined)
+        self.assertNotIn('<math-field', joined)
+        self.assertEqual([s['text'] for s in sentences], ['Air murni.', 'Gas oksigen.'])
+
+    def test_split_sentences_is_deterministic(self):
+        self.assertEqual(
+            split_sentences('Satu. Dua! Tiga?\nEmpat'),
+            ['Satu.', 'Dua!', 'Tiga?', 'Empat'],
+        )
+
+
 class ZeroChunkPipelineTests(SimpleTestCase):
     def test_zero_chunk_subject_records_empty_and_reaches_pending_validation(self):
         ctx = make_ctx(reference_chunks=[])
@@ -331,7 +434,7 @@ class ZeroChunkPipelineTests(SimpleTestCase):
                 patch('api.llm.load_context', return_value=ctx), \
                 patch('api.llm.retrieve_reference_chunks', return_value=[]), \
                 patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
-                patch('api.llm.run_module_b', return_value=('BENAR', [], [])):
+                patch('api.llm.run_module_b', return_value=('BENAR', [], [], None)):
             result = llm.analyze_submission('sub-1')
 
         self.assertEqual(result, 'PENDING_VALIDATION')
@@ -768,7 +871,7 @@ class ShadowPipelineTests(SimpleTestCase):
                 patch('api.llm.retrieve_reference_chunks', return_value=[]), \
                 patch('api.llm.answer_similarity', similarity), \
                 patch('api.llm.run_module_a', return_value=('BENAR', 'ok')), \
-                patch('api.llm.run_module_b', return_value=('BENAR', [], [])):
+                patch('api.llm.run_module_b', return_value=('BENAR', [], [], None)):
             result = llm.analyze_submission('sub-1')
         return result, recorded, similarity
 
@@ -960,7 +1063,7 @@ class ReadingMaterialQueueTests(SimpleTestCase):
         cursor = fake_connection.cursor.return_value.__enter__.return_value
         cursor.execute.side_effect = record
 
-        module_b_return = (mod_b, [], [])
+        module_b_return = (mod_b, [], [], None)
         with patch('api.llm.connection', fake_connection), \
                 patch('api.llm.load_context', return_value=ctx), \
                 patch('api.llm.retrieve_reference_chunks', return_value=[]), \
@@ -1437,13 +1540,21 @@ class StudentReadingMaterialTests(SimpleTestCase):
             submission=SimpleNamespace(question_version_id='qv-1'),
         )
 
+    @staticmethod
+    def _no_validation():
+        fake = MagicMock()
+        fake.objects.filter.return_value.first.return_value = None
+        return fake
+
     def test_student_detail_drops_lecturer_diagnostics(self):
         lecturer_material = MagicMock()
         lecturer_material.objects.filter.return_value.first.return_value = None
         student_material = MagicMock()
         student_material.objects.filter.return_value.first.return_value = None
         with patch('api.validation_views.GeneratedReadingMaterial', lecturer_material), \
-             patch('api.views.GeneratedReadingMaterial', student_material):
+             patch('api.views.GeneratedReadingMaterial', student_material), \
+             patch('api.views.Validation', self._no_validation()), \
+             patch('api.views.enqueue_reading_material') as enqueue:
             detail = _student_analysis_detail(self._analysis(), {}, 'qv-1')
         for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
             self.assertNotIn(key, detail, key)
@@ -1455,20 +1566,47 @@ class StudentReadingMaterialTests(SimpleTestCase):
         self.assertIn('references', detail)
         self.assertIn('concept_breakdown_json', detail)
         self.assertIn('reading_material', detail)
-        self.assertIsNone(detail['reading_material'])
+        # v3.2: an absent row is enqueued (idempotent INSERT, never a generation)
+        # and reported PENDING; the anchor waits for READY material.
+        self.assertEqual(detail['reading_material'], {'status': 'PENDING'})
+        self.assertIsNone(detail['evidence_span'])
+        enqueue.assert_called_once_with('qv-1', 'FN')
 
     def test_student_detail_serves_ready_material(self):
         lecturer_material = MagicMock()
         lecturer_material.objects.filter.return_value.first.return_value = None
         student_material = MagicMock()
         student_material.objects.filter.return_value.first.return_value = self._ready_row()
+        anchor = {'field': 'tier3', 'sentence_id': 2, 'quote': 'tidak mengandung',
+                  'reason': 'salah', 'status': 'exact'}
         with patch('api.validation_views.GeneratedReadingMaterial', lecturer_material), \
-             patch('api.views.GeneratedReadingMaterial', student_material):
-            detail = _student_analysis_detail(self._analysis(), {}, 'qv-1')
+             patch('api.views.GeneratedReadingMaterial', student_material), \
+             patch('api.views.Validation', self._no_validation()):
+            detail = _student_analysis_detail(
+                self._analysis(), {'evidence_span': anchor}, 'qv-1')
         self.assertEqual(detail['reading_material']['content_md'], '# Materi')
         self.assertEqual(detail['reading_material']['sources'], self.SOURCES)
+        # READY material releases the anchor unchanged.
+        self.assertEqual(detail['evidence_span'], anchor)
         for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
             self.assertNotIn(key, detail, key)
+
+    def test_student_detail_keys_material_by_lecturer_verdict(self):
+        # The lecturer's category overrules the AI's: a FP verdict re-labelled MSC
+        # must look up (and enqueue) the MSC material, never the AI's FP row.
+        validation = MagicMock()
+        validation.final_tier_level_snapshot = 2
+        validation.final_category = 'MSC'
+        fake_validation = MagicMock()
+        fake_validation.objects.filter.return_value.first.return_value = validation
+        lecturer_material = MagicMock()
+        lecturer_material.objects.filter.return_value.first.return_value = None
+        with patch('api.views.Validation', fake_validation), \
+             patch('api.validation_views.GeneratedReadingMaterial', lecturer_material), \
+             patch('api.views._student_reading_material') as material:
+            material.return_value = {'status': 'PENDING'}
+            _student_analysis_detail(self._analysis(), {}, 'qv-1')
+        material.assert_called_once_with('qv-1', 'MSC', enqueue_missing=True)
 
 
 class LecturerCategoryTests(SimpleTestCase):
