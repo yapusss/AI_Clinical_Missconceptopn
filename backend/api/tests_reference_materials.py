@@ -41,6 +41,7 @@ from api.llm import (
     validate_citations,
 )
 from api.management.commands import ingest_materials as ingest_cmd
+from api.management.commands.backfill_catalog_match import merge_catalog_artefacts
 from api.management.commands.backfill_evidence_spans import _as_dict, merge_evidence_span
 from api.materials_views import (
     MATERIAL_UPLOAD_MAX_BYTES,
@@ -2649,3 +2650,84 @@ class MissingConceptSelectionTests(SimpleTestCase):
 
     def test_empty_shortlist_yields_no_missing_concepts(self):
         self.assertEqual(select_missing_concepts([], self.REF), [])
+
+
+class BackfillCatalogMatchMergeTests(SimpleTestCase):
+    """Step A: the in-place `catalog_match` merge helper.
+
+    `merge_catalog_artefacts` is the pure core of `manage.py
+    backfill_catalog_match` — the command only supplies the DB rows and the
+    embedding call, so these cases pin the merge semantics without a database.
+    """
+
+    MATCH = {'status': 'matched', 'concept_id': 'c1', 'misconception_id': 'm1',
+             'score': 0.71, 'candidates': []}
+    NO_MATCH = {'status': 'no_match', 'score': 0.41, 'candidates': []}
+    MISSING = [{'concept_id': 'c1', 'name': 'N', 'correct_conception': 'C',
+                'score': 0.31}]
+
+    def test_preserves_every_other_key(self):
+        breakdown = {
+            'module_a': {'score': 'BENAR'},
+            'evidence_span': {'field': 'tier1', 'quote': 'q'},
+            'references': [{'chunk_id': 'x'}],
+        }
+        merged = merge_catalog_artefacts(
+            breakdown, self.MATCH, self.MISSING, category='FN', write_missing=True)
+        self.assertEqual(merged['module_a'], {'score': 'BENAR'})
+        self.assertEqual(merged['evidence_span'], {'field': 'tier1', 'quote': 'q'})
+        self.assertEqual(merged['references'], [{'chunk_id': 'x'}])
+        # The input dict is never mutated.
+        self.assertNotIn('catalog_match', breakdown)
+        self.assertNotIn('missing_concepts', breakdown)
+
+    def test_adds_both_artefacts(self):
+        merged = merge_catalog_artefacts(
+            {}, self.MATCH, self.MISSING, category='FN', write_missing=True)
+        self.assertEqual(merged['catalog_match'], self.MATCH)
+        self.assertEqual(merged['missing_concepts'], self.MISSING)
+        # The stored list is a copy, not the caller's object.
+        self.assertIsNot(merged['missing_concepts'], self.MISSING)
+
+    def test_no_match_is_written_like_a_match(self):
+        merged = merge_catalog_artefacts(
+            {}, self.NO_MATCH, [], category='FN', write_missing=True)
+        self.assertEqual(merged['catalog_match'], self.NO_MATCH)
+
+    def test_refuses_missing_concepts_for_sc(self):
+        # Even with a non-empty list and `write_missing`, an SC row gets no list.
+        merged = merge_catalog_artefacts(
+            {}, self.MATCH, self.MISSING, category='SC', write_missing=True)
+        self.assertEqual(merged['catalog_match'], self.MATCH)
+        self.assertNotIn('missing_concepts', merged)
+
+    def test_span_present_writes_no_missing_key(self):
+        # `write_missing=False` (a stored evidence span) keeps the key absent,
+        # even though the list handed in is empty.
+        merged = merge_catalog_artefacts(
+            {}, self.MATCH, [], category='FN', write_missing=False)
+        self.assertNotIn('missing_concepts', merged)
+
+    def test_idempotent_without_force(self):
+        first = merge_catalog_artefacts(
+            {'k': 1}, self.MATCH, self.MISSING, category='FN', write_missing=True)
+        self.assertIsNotNone(first)
+        # A second pass over an already-backfilled row is a no-op.
+        self.assertIsNone(merge_catalog_artefacts(
+            first, self.NO_MATCH, self.MISSING, category='FN', write_missing=True))
+        # Without --force the first result is untouched too.
+        self.assertEqual(first['catalog_match'], self.MATCH)
+
+    def test_force_recomputes_an_already_backfilled_row(self):
+        first = merge_catalog_artefacts(
+            {}, self.MATCH, self.MISSING, category='FN', write_missing=True)
+        second = merge_catalog_artefacts(
+            first, self.NO_MATCH, [], category='FN', write_missing=True, force=True)
+        self.assertEqual(second['catalog_match'], self.NO_MATCH)
+        self.assertEqual(second['missing_concepts'], [])
+
+    def test_non_dict_breakdown_is_rejected(self):
+        for bad in (None, 'nope', []):
+            with self.assertRaises(TypeError):
+                merge_catalog_artefacts(
+                    bad, self.MATCH, [], category='FN', write_missing=True)
