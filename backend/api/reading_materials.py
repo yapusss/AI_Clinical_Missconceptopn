@@ -47,7 +47,11 @@ logger = logging.getLogger(__name__)
 # existing material; the refresh pass is the (opt-in) trigger.
 # v1.1: added the ATURAN CAKUPAN block (stay on the question's own concept, never
 # assume a field of study).
-READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.1'
+# v1.2: added the ATURAN PANJANG & BENTUK block — the material is a misconception
+# summary (120-200 words, hard ceiling 1200 chars, misconception-naming first
+# paragraph, at most 3 one-sentence bullets, no closing paragraph). Kept in the
+# same prompt deliberately: no extra LLM call, one field less to keep in sync.
+READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.2'
 
 # Only these categories get material (D6). Kept as a constant so the skip is
 # testable and the schema CHECK and the code agree.
@@ -82,6 +86,12 @@ _SYSTEM_PROMPT = (
     "1. Materi WAJIB membahas konsep spesifik pada pertanyaan yang diberikan, bukan bidang ilmunya secara umum.\n"
     "2. JANGAN mengasumsikan bidang ilmu tertentu. Ikuti bidang dan tingkat kesulitan yang tersirat dari pertanyaan tersebut.\n"
     "3. Sesuaikan kedalaman materi dengan tingkat pendidikan mahasiswa; jangan menambah materi di luar cakupan pertanyaan.\n"
+    "ATURAN PANJANG & BENTUK:\n"
+    "1. Panjang total 120-200 kata, dan TIDAK BOLEH lebih dari 1200 karakter. Ini ringkasan, bukan uraian panjang.\n"
+    "2. Paragraf pertama (maksimum 60 kata) WAJIB menyebutkan kesalahan konsep spesifik yang dilakukan mahasiswa dan mengapa itu salah.\n"
+    "3. Setelah paragraf pertama, tulis MAKSIMUM 3 poin bullet. Setiap bullet satu kalimat berisi pembetulan konsep atau fakta kunci.\n"
+    "4. JANGAN menulis paragraf penutup, ringkasan ulang, ajakan belajar, atau daftar pustaka.\n"
+    "5. JANGAN mengulang teks pertanyaan atau jawaban mahasiswa secara panjang; langsung ke konsep yang salah.\n"
     "ATURAN SUMBER:\n"
     "1. Gunakan HANYA kutipan pada bagian SUMBER REFERENSI untuk setiap klaim faktual.\n"
     "2. Bila bagian SUMBER REFERENSI kosong, tulis materi dari pengetahuan Anda sendiri.\n"

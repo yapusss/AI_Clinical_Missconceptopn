@@ -142,7 +142,17 @@ class PromptNeutralityTests(SimpleTestCase):
         # metrics bucket, and for materials it means the old rows never regenerate.
         self.assertIn('v3.1', llm.PROMPT_VERSION)
         self.assertEqual(reading_materials.READING_MATERIAL_PROMPT_VERSION,
-                         'reading-material-v1.1')
+                         'reading-material-v1.2')
+
+    def test_material_prompt_demands_a_short_misconception_summary(self):
+        # v1.2: the material is a summary around the misconception, not an essay.
+        # Without these rules in the prompt the model writes 400+ words again, and
+        # the version bump alone would not have changed the output shape.
+        low = reading_materials._SYSTEM_PROMPT.lower()
+        self.assertIn('120-200 kata', low)
+        self.assertIn('1200 karakter', low)
+        self.assertIn('maksimum 3 poin bullet', low)
+        self.assertIn('jangan menulis paragraf penutup', low)
 
 
 class CosineTests(SimpleTestCase):
