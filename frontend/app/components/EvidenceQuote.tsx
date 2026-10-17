@@ -33,6 +33,7 @@ export default function EvidenceQuote({
   if (!evidence || !sentence) return null;
 
   const range = findQuoteRange(sentence, evidence.quote);
+  const reason = (evidence.reason ?? "").trim();
 
   return (
     <div className={className}>
@@ -52,6 +53,7 @@ export default function EvidenceQuote({
           sentence
         )}
       </blockquote>
+      {reason ? <p className="evidence-reason">Alasan: {reason}</p> : null}
     </div>
   );
 }

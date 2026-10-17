@@ -471,6 +471,17 @@ textarea.form-input {
   background-color: rgba(234, 179, 8, 0.45);
 }
 
+/* The explanation that belongs to the "Kutipan ..." block only — deliberately
+   NOT rendered under the inline highlight inside the student's own answer. */
+.evidence-reason {
+  margin: 0.4rem 0 0;
+  padding-left: 0.5rem;
+  border-left: 2px solid rgba(250, 204, 21, 0.7);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .question-prompt-editor.rte-content,
 .question-prompt-editor .rte-prosemirror {
   font-size: 1.125rem;
