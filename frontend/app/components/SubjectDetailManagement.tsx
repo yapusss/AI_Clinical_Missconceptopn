@@ -29,6 +29,7 @@ import PageHeader from "./PageHeader";
 import QuestionBankImport from "./QuestionBankImport";
 import RowMenu from "./RowMenu";
 import FeedbackModal from "./FeedbackModal";
+import { ReferenceMaterials } from "../materials/page";
 
 type Subject = {
   id: string;
@@ -80,7 +81,7 @@ export default function SubjectDetailManagement({
   const [topics, setTopics] = useState<Topic[]>([]);
   const [bankSets, setBankSets] = useState<BankSet[]>([]);
   const [packages, setPackages] = useState<ExamPackage[]>([]);
-  const [activeTab, setActiveTab] = useState<"TOPICS" | "PACKAGES">("TOPICS");
+  const [activeTab, setActiveTab] = useState<"TOPICS" | "PACKAGES" | "MATERIALS">("TOPICS");
   const [expandedTopics, setExpandedTopics] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState(blankTopic);
@@ -564,8 +565,8 @@ function LecturerWorkspace({
   topics: Topic[];
   bankSets: BankSet[];
   packages: ExamPackage[];
-  activeTab: "TOPICS" | "PACKAGES";
-  setActiveTab: (tab: "TOPICS" | "PACKAGES") => void;
+  activeTab: "TOPICS" | "PACKAGES" | "MATERIALS";
+  setActiveTab: (tab: "TOPICS" | "PACKAGES" | "MATERIALS") => void;
   expandedTopics: string[];
   setExpandedTopics: (ids: string[]) => void;
   onAddTopic: () => void;
@@ -631,8 +632,17 @@ function LecturerWorkspace({
         >
           Paket Ujian
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("MATERIALS")}
+          className={`border-b-2 px-5 py-3 text-sm font-semibold ${activeTab === "MATERIALS" ? "border-primary text-primary" : "border-transparent text-on-surface-variant"}`}
+        >
+          Materi Referensi
+        </button>
       </div>
-      {activeTab === "PACKAGES" ? (
+      {activeTab === "MATERIALS" ? (
+        <ReferenceMaterials subjectId={subjectId} embedded />
+      ) : activeTab === "PACKAGES" ? (
         <div className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
