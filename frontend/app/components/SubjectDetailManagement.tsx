@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -67,14 +66,10 @@ export default function SubjectDetailManagement({
   token,
   subjectId,
   lecturerView = false,
-  backHref = "/admin/subjects",
-  backLabel = "Kembali ke mata kuliah",
 }: {
   token: string;
   subjectId: string;
   lecturerView?: boolean;
-  backHref?: string;
-  backLabel?: string;
 }) {
   const router = useRouter();
   const [subject, setSubject] = useState<Subject | null>(null);
@@ -257,12 +252,6 @@ export default function SubjectDetailManagement({
           }
         }
       `}</style>
-      <Link
-        href={backHref}
-        className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-primary"
-      >
-        <ArrowLeft size={16} /> {backLabel}
-      </Link>
       {subject && (
         <>
           <PageHeader

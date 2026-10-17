@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   ArrowRight,
   ClipboardList,
   GraduationCap,
@@ -194,16 +193,8 @@ export default function QuestionSetReviewPage({
 
   return (
     <PageContainer>
-      <Link
-        href={data ? `/admin/subjects/${data.subject_id}` : "/admin/subjects"}
-        className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline"
-      >
-        <ArrowLeft size={16} /> Kembali ke mata kuliah
-      </Link>
-
       {data && (
         <PageHeader
-          className="mt-4"
           title={data.title}
           description={
             data.description ||

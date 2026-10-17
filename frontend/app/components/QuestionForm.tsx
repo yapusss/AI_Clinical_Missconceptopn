@@ -566,16 +566,6 @@ export default function QuestionForm({
 
   return (
     <PageContainer>
-      <div className="flex items-center justify-between mb-4">
-        <button
-          type="button"
-          onClick={handleExit}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary cursor-pointer"
-        >
-          <ArrowLeft size={14} /> Kembali ke mata kuliah
-        </button>
-      </div>
-
       <header className="mb-6">
         <h1 className="font-display text-2xl font-bold text-on-surface">
           {isReadOnly

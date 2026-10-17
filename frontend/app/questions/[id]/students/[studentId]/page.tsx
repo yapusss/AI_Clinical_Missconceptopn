@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeft,
   ArrowRight,
   BookMarked,
   BrainCircuit,
@@ -332,6 +330,8 @@ export default function StudentPackageReviewPage({
   const [notes, setNotes] = useState("");
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [showAiDetails, setShowAiDetails] = useState(false);
+  const [showShortAnswerReference, setShowShortAnswerReference] = useState(false);
+  const [showReasonReference, setShowReasonReference] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, ValidationDraft>>({});
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
@@ -396,6 +396,11 @@ export default function StudentPackageReviewPage({
     }
     return attemptsDesc[0];
   }, [activeQuestion, attemptsDesc, selectedAttemptByQuestion]);
+
+  useEffect(() => {
+    setShowShortAnswerReference(false);
+    setShowReasonReference(false);
+  }, [activeQuestion?.question_id, currentAttempt?.attempt_no]);
 
   useEffect(() => {
     if (!currentAttempt || !currentAttempt.analysis) return;
@@ -852,16 +857,9 @@ export default function StudentPackageReviewPage({
 
   return (
     <PageContainer>
-      <Link
-        href={`/${examPackage ? "exam-packages" : "questions"}/${setId}`}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary no-underline transition-colors"
-      >
-        <ArrowLeft size={14} /> Kembali ke daftar mahasiswa
-      </Link>
-
       {data && (
         <PageHeader
-          className="mt-2 mb-2"
+          className="mb-2"
           title={data.student.name}
           description={`${data.package.title} • ${data.package.subject_name}`}
           icon={ClipboardCheck}
@@ -1089,26 +1087,15 @@ export default function StudentPackageReviewPage({
                   </span>
                   <RichTextContent
                     html={activeQuestion.prompt}
-                    className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
+                    className="!text-xl font-semibold leading-relaxed text-on-surface sm:!text-2xl"
                   />
                 </div>
 
-                {/* Bandingkan setiap jawaban mahasiswa dengan referensi yang setara. */}
                 <div className="space-y-3.5">
-                  <div className="rounded-xl border border-outline-variant/60 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
-                        Jawaban Singkat (Referensi)
-                      </span>
-                      <RichTextContent
-                        html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ""}
-                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
-                      />
-                    </div>
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Jawaban Singkat Mahasiswa</span>
-                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
+                  <section className="space-y-2 rounded-xl border border-outline-variant/50 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
+                    <div>
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-primary">Jawaban Singkat Mahasiswa</span>
+                      <div className="space-y-0.5 text-sm leading-relaxed text-on-surface">
                         <MathContent
                           value={currentAttempt?.tier1_answer || currentAttempt?.answer_text}
                           fallback="Belum ada jawaban"
@@ -1122,21 +1109,30 @@ export default function StudentPackageReviewPage({
                         )}
                       </div>
                     </div>
-                  </div>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowShortAnswerReference((visible) => !visible)}
+                      aria-expanded={showShortAnswerReference}
+                      className="flex w-full items-center justify-between border-t border-outline-variant/30 pt-2 text-left text-xs font-semibold text-primary transition-colors hover:text-primary/75"
+                    >
+                      <span>{showShortAnswerReference ? "Sembunyikan referensi jawaban" : "Lihat referensi jawaban"}</span>
+                      {showShortAnswerReference ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </button>
+                    {showShortAnswerReference && (
+                      <div className="border-t border-outline-variant/30 pt-2">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-primary">Jawaban Singkat Referensi</span>
+                        <RichTextContent
+                          html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ""}
+                          className="mt-1 text-sm leading-relaxed text-on-surface"
+                        />
+                      </div>
+                    )}
+                  </section>
 
-                  <div className="rounded-xl border border-outline-variant/60 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">Alasan Referensi</span>
-                      <RichTextContent
-                        html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ""}
-                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
-                      />
-                    </div>
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Alasan Mahasiswa</span>
-                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
+                  <section className="space-y-2 rounded-xl border border-outline-variant/50 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
+                    <div>
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-primary">Alasan Mahasiswa</span>
+                      <div className="space-y-0.5 text-sm leading-relaxed text-on-surface">
                         <MathContent
                           value={currentAttempt?.tier3_reason || currentAttempt?.answer_text}
                           fallback="Belum ada alasan"
@@ -1152,8 +1148,25 @@ export default function StudentPackageReviewPage({
                         )}
                       </div>
                     </div>
-                  </div>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowReasonReference((visible) => !visible)}
+                      aria-expanded={showReasonReference}
+                      className="flex w-full items-center justify-between border-t border-outline-variant/30 pt-2 text-left text-xs font-semibold text-primary transition-colors hover:text-primary/75"
+                    >
+                      <span>{showReasonReference ? "Sembunyikan referensi alasan" : "Lihat referensi alasan"}</span>
+                      {showReasonReference ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </button>
+                    {showReasonReference && (
+                      <div className="border-t border-outline-variant/30 pt-2">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-primary">Alasan Referensi</span>
+                        <RichTextContent
+                          html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ""}
+                          className="mt-1 text-sm leading-relaxed text-on-surface"
+                        />
+                      </div>
+                    )}
+                  </section>
                 </div>
 
                 {/* REKOMENDASI AI: MURNI STATUS BENAR/SALAH */}
@@ -1546,7 +1559,7 @@ export default function StudentPackageReviewPage({
           </main>
 
           {/* KOLOM KANAN: DAFTAR SOAL + KARTU NILAI AKHIR (100%, 75%, 50%, ETC) */}
-          <aside className="w-full lg:w-52 shrink-0 lg:sticky lg:top-6 space-y-3">
+          <aside className="w-full lg:mt-16 lg:w-52 shrink-0 lg:sticky lg:top-6 space-y-3">
             {/* 1. KOTAK DAFTAR SOAL */}
             <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">

@@ -4,7 +4,6 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeft,
   ClipboardList,
   HelpCircle,
   LogOut,
@@ -464,14 +463,7 @@ function AnswerSetContent() {
   if (data && !started) {
     return (
       <PageContainer>
-        <button
-          type="button"
-          onClick={() => router.push("/code")}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary cursor-pointer"
-        >
-          <ArrowLeft size={14} /> Kembali ke daftar soal
-        </button>
-        <section className="glass-panel mt-6 rounded-xl border border-outline-variant/40 p-8 space-y-5">
+        <section className="glass-panel rounded-xl border border-outline-variant/40 p-8 space-y-5">
           <PageHeader
             title={data.title}
             description="Format Evaluasi Pemahaman Konseptual"
@@ -597,7 +589,7 @@ function AnswerSetContent() {
                 </span>
                 <RichTextContent
                   html={activeQuestion.prompt}
-                  className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
+                  className="!text-xl font-semibold leading-relaxed text-on-surface sm:!text-2xl"
                 />
               </section>
 
