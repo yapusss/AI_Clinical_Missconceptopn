@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
@@ -77,7 +77,13 @@ const fmtDate = (value: string | null) => {
   }
 };
 
-export default function MaterialsPage() {
+export function ReferenceMaterials({
+  subjectId: fixedSubjectId,
+  embedded = false,
+}: {
+  subjectId?: string;
+  embedded?: boolean;
+}) {
   const { user, token, loading } = useAuth();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +102,10 @@ export default function MaterialsPage() {
     if (loading) return;
     if (!user || !token) {
       router.replace("/login");
+      return;
+    }
+    if (fixedSubjectId) {
+      setSubjectId(fixedSubjectId);
       return;
     }
     void (async () => {
@@ -122,7 +132,7 @@ export default function MaterialsPage() {
         );
       }
     })();
-  }, [user, token, loading, router]);
+  }, [user, token, loading, router, fixedSubjectId]);
 
   const load = useCallback(async () => {
     if (!token || !subjectId) {
@@ -202,13 +212,34 @@ export default function MaterialsPage() {
 
   if (loading || !user) return null;
 
+  const Wrapper = embedded ? Fragment : PageContainer;
+
   return (
-    <PageContainer>
-      <PageHeader
-        title="Materi Referensi"
-        description="Unggah buku acuan atau catatan untuk mata kuliah Anda. AI mengutipnya saat menilai penalaran mahasiswa."
-        icon={BookOpen}
-        action={
+    <Wrapper>
+      {!embedded && (
+        <PageHeader
+          title="Materi Referensi"
+          description="Unggah buku acuan atau catatan untuk mata kuliah Anda. AI mengutipnya saat menilai penalaran mahasiswa."
+          icon={BookOpen}
+          action={
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={fetching || !subjectId}
+              className="btn-secondary inline-flex items-center gap-1.5 text-xs"
+            >
+              <RefreshCw size={14} className={fetching ? "animate-spin" : ""} />
+              Muat ulang
+            </button>
+          }
+        />
+      )}
+      {embedded && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl font-bold text-on-surface">Materi Referensi</h2>
+            <p className="mt-1 text-sm text-on-surface-variant">Sumber yang dipakai AI saat menilai penalaran mahasiswa pada mata kuliah ini.</p>
+          </div>
           <button
             type="button"
             onClick={() => void load()}
@@ -218,8 +249,8 @@ export default function MaterialsPage() {
             <RefreshCw size={14} className={fetching ? "animate-spin" : ""} />
             Muat ulang
           </button>
-        }
-      />
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-12 lg:items-start">
         {/* Upload panel */}
@@ -231,7 +262,7 @@ export default function MaterialsPage() {
           </header>
 
           <form onSubmit={handleUpload} className="space-y-4 p-5">
-            <div>
+            {!fixedSubjectId && <div>
               <label
                 htmlFor="material-subject"
                 className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-on-surface-variant"
@@ -246,7 +277,7 @@ export default function MaterialsPage() {
                 placeholder="Pilih mata kuliah..."
                 options={subjects.map((s) => ({ value: s.id, label: s.name }))}
               />
-            </div>
+            </div>}
 
             <div>
               <label
@@ -393,6 +424,10 @@ export default function MaterialsPage() {
       />
 
       <FeedbackModal open={!!error} message={error} onClose={() => setError("")} />
-    </PageContainer>
+    </Wrapper>
   );
+}
+
+export default function MaterialsPage() {
+  return <ReferenceMaterials />;
 }

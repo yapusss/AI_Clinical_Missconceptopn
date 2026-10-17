@@ -141,7 +141,7 @@ export default function SubmissionDetailPage() {
               <h2 className="mt-4 text-base font-bold text-on-surface">Soal</h2>
               <RichTextContent
                 html={data.question.prompt}
-                className="mt-2 text-sm leading-6"
+                className="mt-2 !text-2xl font-semibold leading-relaxed text-on-surface"
               />
               <h2 className="mt-6 text-base font-bold text-on-surface">
                 Jawaban mahasiswa

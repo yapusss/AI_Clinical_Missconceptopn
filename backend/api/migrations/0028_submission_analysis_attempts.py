@@ -110,6 +110,16 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("api", "0027_generated_reading_materials"),
+        # origin/main independently put a migration at 0028 (0028_widen_tier1_answer). Both
+        # branched off 0027, so the merged graph had two leaf nodes and Django refused to
+        # run anything: "Conflicting migrations detected; multiple leaf nodes in the
+        # migration graph: (0028_widen_tier1_answer, 0031_validation_category in api)".
+        # Renumbering a migration that is already applied on the deployed DB is worse than
+        # re-pointing one that has never been pushed, so this edge makes the chain linear:
+        #   0027 -> 0028_widen_tier1_answer -> 0028_submission_analysis_attempts -> 0029 -> ...
+        # The 0028-to-0028 naming is cosmetic; Django orders by the graph, not the number.
+        # (`makemigrations --merge` is banned in this repo, so this is the hand-written form.)
+        ("api", "0028_widen_tier1_answer"),
     ]
 
     operations = [

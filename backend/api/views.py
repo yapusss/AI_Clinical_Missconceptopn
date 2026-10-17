@@ -3268,7 +3268,7 @@ class StudentSubmissionCreateView(APIView):
             raw_text = str(request.data.get('answer_text') or '').strip()
             if not raw_text:
                 return Response({'detail': 'Jawaban tidak boleh kosong.'}, status=status.HTTP_400_BAD_REQUEST)
-            t1_answer = raw_text[:120]
+            t1_answer = raw_text[:1000]
             t3_reason = raw_text
             t2_conf = 4
             t4_conf = 4
@@ -3293,7 +3293,7 @@ class StudentSubmissionCreateView(APIView):
                         [
                             str(request.user.id),
                             str(version.id),
-                            t1_answer[:120],
+                            t1_answer[:1000],
                             t2_conf,
                             t3_reason,
                             t4_conf,

@@ -19,6 +19,10 @@ import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
 import FeedbackModal from "../../components/FeedbackModal";
+import RichTextEditor from "../../components/RichTextEditor";
+
+/** Max characters accepted by the backend for the Tier 1 conclusion. */
+const TIER1_MAX_LENGTH = 1000;
 
 type StudentQuestion = {
   question_id: string;
@@ -138,6 +142,19 @@ const formatRemainingTime = (seconds: number) => {
     .join(":");
 };
 
+// Tier 3 is a rich text editor now, so "filled in" is judged on the visible
+// text rather than the raw HTML markup (an empty doc serialises to "<p></p>").
+const htmlToPlain = (value: string) =>
+  value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const hasAnswerText = (value: string | undefined) =>
+  htmlToPlain(value ?? "").length > 0;
+
 function AnswerSetContent() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -153,7 +170,6 @@ function AnswerSetContent() {
   const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({});
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showExitWarningModal, setShowExitWarningModal] = useState(false);
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
@@ -287,18 +303,18 @@ function AnswerSetContent() {
 
   const t1HasReasonKeyword = Boolean(
     currentAnswer?.t1_answer &&
-    REASON_KEYWORDS.some((kw) =>
-      currentAnswer.t1_answer.toLowerCase().includes(kw),
-    ),
+      REASON_KEYWORDS.some((kw) =>
+        htmlToPlain(currentAnswer.t1_answer).toLowerCase().includes(kw),
+      ),
   );
 
   const isQuestionComplete = (qId: string) => {
     const a = answers[qId];
     if (!a) return false;
     return (
-      a.t1_answer.trim().length > 0 &&
+      hasAnswerText(a.t1_answer) &&
       a.t2_confidence !== null &&
-      a.t3_reason.trim().length > 0 &&
+      hasAnswerText(a.t3_reason) &&
       a.t4_confidence !== null
     );
   };
@@ -314,9 +330,9 @@ function AnswerSetContent() {
         const answer = answers[question.question_id];
         if (
           !answer ||
-          !answer.t1_answer.trim() ||
+          !hasAnswerText(answer.t1_answer) ||
           answer.t2_confidence === null ||
-          !answer.t3_reason.trim() ||
+          !hasAnswerText(answer.t3_reason) ||
           answer.t4_confidence === null
         ) {
           return [];
@@ -367,7 +383,7 @@ function AnswerSetContent() {
   const handleNextOrFinish = () => {
     if (!data || !activeQuestion || !currentAnswer || expired) return;
 
-    if (!currentAnswer.t1_answer.trim()) {
+    if (!hasAnswerText(currentAnswer.t1_answer)) {
       setError("Harap isi kesimpulan jawaban Anda terlebih dahulu.");
       return;
     }
@@ -375,7 +391,7 @@ function AnswerSetContent() {
       setError("Pilih tingkat keyakinan terhadap kesimpulan jawaban Anda.");
       return;
     }
-    if (!currentAnswer.t3_reason.trim()) {
+    if (!hasAnswerText(currentAnswer.t3_reason)) {
       setError("Harap isi alasan / penalaran ilmiah Anda terlebih dahulu.");
       return;
     }
@@ -482,8 +498,8 @@ function AnswerSetContent() {
             <ul className="list-disc pl-5 space-y-2 text-xs text-on-surface-variant leading-relaxed">
               <li>
                 <strong>1. Jawaban Singkat:</strong> Tuliskan
-                kesimpulan langsung atas pertanyaan, tanpa penjelasan panjang
-                (maksimal 120 karakter).
+                kesimpulan langsung atas pertanyaan, atau formula matematika
+                (maksimal 1000 karakter, tombol [fx] menyisipkan simbol).
               </li>
               <li>
                 <strong>2. Tingkat Keyakinan Jawaban:</strong> Pilih skala
@@ -530,10 +546,10 @@ function AnswerSetContent() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
-            onClick={() => setShowExitWarningModal(true)}
+            onClick={() => router.push("/code")}
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
           >
-            <LogOut size={15} /> Keluar dari Lembar Soal
+            <LogOut size={15} /> Keluar
           </button>
           {data?.attempt_deadline && (
             <div
@@ -581,35 +597,37 @@ function AnswerSetContent() {
                 </span>
                 <RichTextContent
                   html={activeQuestion.prompt}
-                  className="text-xl font-semibold leading-relaxed text-on-surface"
+                  className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
                 />
               </section>
 
               {/* 1. Jawaban Singkat */}
               <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                       1. Jawaban Singkat
                     </h3>
                     <p className="text-xs text-on-surface-variant mt-0.5">
-                      Maksimal 120 karakter.
+                      Tuliskan kesimpulan singkat atau formula matematika
+                      (maksimal {TIER1_MAX_LENGTH} karakter).
                     </p>
                   </div>
-                  <span
-                    className={`text-xs font-mono-ui font-bold ${currentAnswer.t1_answer.length > 120 ? "text-error" : "text-on-surface-variant"}`}
-                  >
-                    {currentAnswer.t1_answer.length} / 120
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span
+                      className={`text-xs font-mono-ui font-bold ${currentAnswer.t1_answer.length > TIER1_MAX_LENGTH ? "text-error" : "text-on-surface-variant"}`}
+                    >
+                      {currentAnswer.t1_answer.length} / {TIER1_MAX_LENGTH}
+                    </span>
+                  </div>
                 </div>
 
-                <input
-                  type="text"
-                  maxLength={120}
+                <RichTextEditor
                   value={currentAnswer.t1_answer}
-                  onChange={(e) => updateCurrent({ t1_answer: e.target.value })}
+                  onChange={(html) => updateCurrent({ t1_answer: html })}
+                  disabled={expired || submitting}
                   placeholder="Contoh: Resultan gayanya nol."
-                  className="form-input text-sm w-full"
+                  className="text-sm"
                 />
 
                 {t1HasReasonKeyword && (
@@ -644,18 +662,24 @@ function AnswerSetContent() {
 
               {/* 3. Alasan */}
               <section className="glass-panel rounded-xl border border-outline-variant/60 p-5 space-y-3">
-                <div>
-                  <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
                       3. Alasan
-                  </h3>
+                    </h3>
+                    <p className="text-xs text-on-surface-variant mt-0.5">
+                      Uraikan penalaran ilmiah. Gunakan tombol [fx] pada toolbar
+                      untuk menyisipkan formula matematika dengan slot kotak.
+                    </p>
+                  </div>
                 </div>
 
-                <textarea
-                  rows={4}
+                <RichTextEditor
                   value={currentAnswer.t3_reason}
-                  onChange={(e) => updateCurrent({ t3_reason: e.target.value })}
+                  onChange={(html) => updateCurrent({ t3_reason: html })}
+                  disabled={expired || submitting}
                   placeholder="Uraikan penalaran ilmiah dan dasar konsep Anda di sini..."
-                  className="form-input text-sm w-full"
+                  className="text-sm"
                 />
               {/* 4. Tingkat Keyakinan pada Alasan */}
               <div className="border-t border-outline-variant/30 pt-5">
@@ -769,50 +793,6 @@ function AnswerSetContent() {
             </aside>
           </div>
         </fieldset>
-      )}
-
-      {/* Modal Peringatan Keluar */}
-      {showExitWarningModal && (
-        <div
-          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
-          role="dialog"
-        >
-          <div className="w-full max-w-md rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2 text-rose-400">
-                <AlertTriangle size={18} /> Keluar dari Lembar Soal?
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowExitWarningModal(false)}
-                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <p className="text-sm text-on-surface-variant leading-relaxed">
-              Jawaban yang telah Anda isi{" "}
-              <strong>tersimpan aman di perangkat ini</strong>. Anda dapat
-              kembali kapan saja untuk melanjutkan.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowExitWarningModal(false)}
-                className="btn-secondary text-xs cursor-pointer"
-              >
-                Lanjut Mengerjakan
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push("/code")}
-                className="btn-danger text-xs cursor-pointer"
-              >
-                Keluar Sementara
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Modal Konfirmasi Pengumpulan Akhir */}

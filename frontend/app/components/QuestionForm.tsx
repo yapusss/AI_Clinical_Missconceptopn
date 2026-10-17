@@ -529,7 +529,7 @@ export default function QuestionForm({
             onChange={(html) => updateQuestionField(qIndex, "prompt", html)}
             disabled={isReadOnly}
             placeholder="Tuliskan butir soal konseptual di sini..."
-            className="mt-1"
+            className="mt-1 question-prompt-editor"
           />
         </div>
 
