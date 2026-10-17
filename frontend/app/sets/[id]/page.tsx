@@ -153,7 +153,6 @@ function AnswerSetContent() {
   const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({});
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showExitWarningModal, setShowExitWarningModal] = useState(false);
   const [started, setStarted] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
@@ -530,10 +529,10 @@ function AnswerSetContent() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
-            onClick={() => setShowExitWarningModal(true)}
+            onClick={() => router.push("/code")}
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
           >
-            <LogOut size={15} /> Keluar dari Lembar Soal
+            <LogOut size={15} /> Keluar
           </button>
           {data?.attempt_deadline && (
             <div
@@ -581,7 +580,7 @@ function AnswerSetContent() {
                 </span>
                 <RichTextContent
                   html={activeQuestion.prompt}
-                  className="text-xl font-semibold leading-relaxed text-on-surface"
+                  className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
                 />
               </section>
 
@@ -769,50 +768,6 @@ function AnswerSetContent() {
             </aside>
           </div>
         </fieldset>
-      )}
-
-      {/* Modal Peringatan Keluar */}
-      {showExitWarningModal && (
-        <div
-          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-4"
-          role="dialog"
-        >
-          <div className="w-full max-w-md rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2 text-rose-400">
-                <AlertTriangle size={18} /> Keluar dari Lembar Soal?
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowExitWarningModal(false)}
-                className="text-on-surface-variant hover:text-on-surface cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <p className="text-sm text-on-surface-variant leading-relaxed">
-              Jawaban yang telah Anda isi{" "}
-              <strong>tersimpan aman di perangkat ini</strong>. Anda dapat
-              kembali kapan saja untuk melanjutkan.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowExitWarningModal(false)}
-                className="btn-secondary text-xs cursor-pointer"
-              >
-                Lanjut Mengerjakan
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push("/code")}
-                className="btn-danger text-xs cursor-pointer"
-              >
-                Keluar Sementara
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Modal Konfirmasi Pengumpulan Akhir */}
