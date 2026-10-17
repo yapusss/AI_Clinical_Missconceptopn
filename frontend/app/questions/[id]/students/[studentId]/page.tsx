@@ -24,7 +24,6 @@ import AppSelect from "../../../../components/AppSelect";
 import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
 import ReadingMaterial from "../../../../components/ReadingMaterial";
-import CatalogResult from "../../../../components/CatalogResult";
 import RichTextContent from "../../../../components/RichTextContent";
 import MathContent from "../../../../components/MathContent";
 import { apiFetch } from "../../../../lib/api";
@@ -1366,17 +1365,6 @@ export default function StudentPackageReviewPage({
                         </div>
                       </div>
                     )}
-                  </div>
-                )}
-
-                {/* Phase 6: the catalogue result + the optional authoring control
-                    (D5) — one click links the misconception to the question. */}
-                {currentAttempt?.analysis && (
-                  <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/70 px-3.5 py-2.5 text-xs">
-                    <CatalogResult
-                      catalog={currentAttempt.analysis.catalog_match ?? null}
-                      versionId={activeQuestion.version_id}
-                    />
                   </div>
                 )}
 

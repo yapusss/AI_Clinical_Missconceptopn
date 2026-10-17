@@ -25,7 +25,6 @@ import EvidenceQuote, {
   resolveEvidenceSentence,
 } from "../../components/EvidenceQuote";
 import MissingConcepts from "../../components/MissingConcepts";
-import CatalogResult from "../../components/CatalogResult";
 import { apiFetch } from "../../lib/api";
 import FeedbackModal from "../../components/FeedbackModal";
 import type {
@@ -420,9 +419,7 @@ export default function ValidationDetailPage() {
   const evidenceSpan = data?.llm.evidence_span ?? null;
   const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
   const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
-  // Phase 6: the catalogue result (label + score, or the no-match candidates)
-  // and the missing-concept list, both lecturer-only on this surface.
-  const catalogMatch = data?.llm.catalog_match ?? null;
+  // Phase 6: the missing-concept list, lecturer-only on this surface.
   const missingConcepts = data?.llm.missing_concepts ?? [];
   const hasEvidenceBlock =
     evidenceSpan !== null && resolveEvidenceSentence(evidenceSpan) !== "";
@@ -697,14 +694,6 @@ export default function ValidationDetailPage() {
                       </div>
                     )}
 
-                    {/* Phase 6: the catalogue result + the optional authoring
-                        control (D5) — one click links the misconception to the
-                        question version; no typing, idempotent. */}
-                    <CatalogResult
-                      catalog={catalogMatch}
-                      versionId={data.question.version_id}
-                      className="mt-3 border-t border-outline-variant/20 pt-3"
-                    />
                   </div>
                 </div>
               </section>
