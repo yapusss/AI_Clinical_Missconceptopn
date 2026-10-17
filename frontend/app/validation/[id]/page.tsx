@@ -41,6 +41,14 @@ type MisconceptionMatch = {
   lecturer_confirmed?: boolean;
 };
 
+type EvidenceSpan = {
+  field: "tier1" | "tier3";
+  sentence_id: number;
+  quote: string;
+  reason: string;
+  status: "exact" | "normalized";
+};
+
 type Detail = {
   analysis_id: string;
   submission_id: string;
@@ -100,6 +108,8 @@ type Detail = {
     llm_t3_score?: string | null;
     verdict_shadow?: VerdictShadow;
     reading_material?: ReadingMaterial | null;
+    // v3.2: the sentence-level anchor to the misconception, or `null`.
+    evidence_span?: EvidenceSpan | null;
   };
   validatable: boolean;
   existing_validation: {
@@ -401,6 +411,11 @@ export default function ValidationDetailPage() {
       }
     : null;
 
+  // v3.2: the sentence-level anchor, surfaced to the lecturer unconditionally.
+  const evidenceSpan = data?.llm.evidence_span ?? null;
+  const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
+  const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
+
   if (loading || !user) return null;
 
   return (
@@ -549,6 +564,8 @@ export default function ValidationDetailPage() {
                         <MathContent
                           value={data.answer.tier1_answer || data.answer.text}
                           className="mt-1 text-sm font-semibold text-on-surface font-mono-ui"
+                          highlightQuote={tier1Highlight?.quote}
+                          highlightReason={tier1Highlight?.reason}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
@@ -570,6 +587,8 @@ export default function ValidationDetailPage() {
                         <MathContent
                           value={data.answer.tier3_reason || data.answer.text}
                           className="mt-1 text-sm text-on-surface font-mono-ui leading-relaxed"
+                          highlightQuote={tier3Highlight?.quote}
+                          highlightReason={tier3Highlight?.reason}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">

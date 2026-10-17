@@ -1,3 +1,11 @@
+export type EvidenceSpan = {
+  field: "tier1" | "tier3";
+  sentence_id: number;
+  quote: string;
+  reason: string;
+  status: "exact" | "normalized";
+};
+
 export type StudentEvaluation = {
   percentage_correct: number;
   is_score_modified: boolean;
@@ -14,6 +22,8 @@ export type StudentEvaluation = {
   // student sees the text and the reference the LLM used — never the lecturer's
   // citation/review/staleness diagnostics.
   reading_material?: StudentReadingMaterial | null;
+  // v3.2: the sentence-level anchor, present only while the material is READY.
+  evidence_span?: EvidenceSpan | null;
   validator_name?: string;
   validated_at?: string;
 };

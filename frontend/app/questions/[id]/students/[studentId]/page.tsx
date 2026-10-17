@@ -30,6 +30,7 @@ import RichTextContent from "../../../../components/RichTextContent";
 import MathContent from "../../../../components/MathContent";
 import { apiFetch } from "../../../../lib/api";
 import type {
+  EvidenceSpan,
   GroundingReference,
   LearnedTopic,
   StudentReadingMaterial,
@@ -66,6 +67,8 @@ type AttemptItem = {
     suggested_materials?: LearnedTopic[];
     // C7: the material the LLM wrote for this question, or `null`.
     reading_material?: StudentReadingMaterial | null;
+    // v3.2: the sentence-level anchor to the misconception, or `null`.
+    evidence_span?: EvidenceSpan | null;
     validation: {
       status: string;
       final_percentage: string | null;
@@ -387,6 +390,11 @@ export default function StudentPackageReviewPage({
     }
     return attemptsDesc[0];
   }, [activeQuestion, attemptsDesc, selectedAttemptByQuestion]);
+
+  // v3.2: the sentence-level anchor, surfaced to the lecturer unconditionally.
+  const evidenceSpan = currentAttempt?.analysis?.evidence_span ?? null;
+  const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
+  const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
 
   // Label opsi percobaan — beri jam pengumpulan bila nomor percobaannya kembar,
   // supaya tiap opsi tetap dapat dibedakan.
@@ -1174,6 +1182,8 @@ export default function StudentPackageReviewPage({
                           value={currentAttempt?.tier1_answer || currentAttempt?.answer_text}
                           fallback="Belum ada jawaban"
                           className="text-sm leading-relaxed text-on-surface mt-0.5"
+                          highlightQuote={tier1Highlight?.quote}
+                          highlightReason={tier1Highlight?.reason}
                         />
                         {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
                           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
@@ -1202,6 +1212,8 @@ export default function StudentPackageReviewPage({
                           value={currentAttempt?.tier3_reason || currentAttempt?.answer_text}
                           fallback="Belum ada alasan"
                           className="text-sm leading-relaxed text-on-surface mt-0.5 max-h-32 overflow-y-auto"
+                          highlightQuote={tier3Highlight?.quote}
+                          highlightReason={tier3Highlight?.reason}
                         />
                         {(currentAttempt?.heuristic_flags ?? []).some((flag) => flag === "t3_kosong" || flag === "t3_redundan" || flag === "t3_hafalan") && (
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">

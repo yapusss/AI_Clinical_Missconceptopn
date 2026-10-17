@@ -160,6 +160,15 @@ function SubmissionPackageDetailPageContent() {
     return attemptsDesc[0];
   }, [activeQuestion, attemptsDesc, selectedAttemptByQuestion]);
 
+  // v3.2: the student only sees the anchor while the reading material is READY
+  // (the backend already withholds it otherwise; this keeps the gate explicit).
+  const evidenceSpan =
+    currentAttempt?.evaluation?.reading_material?.status === "READY"
+      ? currentAttempt.evaluation?.evidence_span ?? null
+      : null;
+  const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
+  const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
+
   const handleSelectQuestion = (idx: number) => {
     setActiveQuestionIdx(idx);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -326,6 +335,8 @@ function SubmissionPackageDetailPageContent() {
                               currentAttempt.answer_text
                             }
                             className="mt-1 text-base font-semibold text-on-surface"
+                            highlightQuote={tier1Highlight?.quote}
+                            highlightReason={tier1Highlight?.reason}
                           />
                         </div>
 
@@ -352,6 +363,8 @@ function SubmissionPackageDetailPageContent() {
                               currentAttempt.answer_text
                             }
                             className="mt-1 text-base text-on-surface leading-relaxed"
+                            highlightQuote={tier3Highlight?.quote}
+                            highlightReason={tier3Highlight?.reason}
                           />
                         </div>
 
