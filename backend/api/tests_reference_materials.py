@@ -2735,6 +2735,58 @@ class MissingConceptSelectionTests(SimpleTestCase):
         self.assertEqual(select_missing_concepts([], self.REF), [])
 
 
+class CatalogCoverageCalibrationTests(SimpleTestCase):
+    """Step D acceptance: the calibrated coverage threshold keeps the judgement.
+
+    The cosines are the ones measured on the three FN rows during calibration.
+    A concept the student **demonstrably addressed** sits above the configured
+    default (`CONCEPT_COVERED_THRESHOLD`); one they did not sits below it. At the
+    old guess (0.62) every addressed concept was reported as missed, which is the
+    over-reporting the calibration fixed.
+    """
+
+    STUDENT = [1.0, 0.0]
+
+    def _concept(self, cid, score):
+        import math
+        return {
+            'concept_id': cid,
+            'name': cid,
+            'correct_conception': f'cc-{cid}',
+            'embedding': _vec(math.degrees(math.acos(score))),
+        }
+
+    def test_addressed_concept_is_not_reported_as_missed(self):
+        # 0308ed0d wrote "suhu gas yang sama tidak mengharuskan semua molekul
+        # bergerak sama cepat" — it addressed "Suhu sistem dan energi molekul".
+        shortlisted = [
+            self._concept('addressed-suhu', 0.5713),
+            self._concept('unaddressed-hukum-boyle', 0.4953),
+        ]
+        missing = select_missing_concepts(shortlisted, self.STUDENT)
+        self.assertEqual([m['concept_id'] for m in missing], ['unaddressed-hukum-boyle'])
+
+    def test_every_known_row_keeps_only_the_unaddressed_concepts(self):
+        rows = [
+            # 3b318e0b wrote "gerak individual partikel bersifat acak".
+            ([('addressed-gerak-acak', 0.6110), ('unaddressed-volume-sampel', 0.4553)],
+             ['unaddressed-volume-sampel']),
+            # 50b85665 wrote that solid particles stay close and barely move.
+            ([('addressed-gerak-padat', 0.5178), ('unaddressed-volume-gas', 0.3971)],
+             ['unaddressed-volume-gas']),
+        ]
+        for pairs, expected in rows:
+            shortlisted = [self._concept(cid, score) for cid, score in pairs]
+            missing = select_missing_concepts(shortlisted, self.STUDENT)
+            self.assertEqual([m['concept_id'] for m in missing], expected)
+
+    def test_the_old_guess_reported_an_addressed_concept_as_missed(self):
+        shortlisted = [self._concept('addressed-gerak-acak', 0.6110)]
+        missing = select_missing_concepts(
+            shortlisted, self.STUDENT, covered_threshold=0.62)
+        self.assertEqual([m['concept_id'] for m in missing], ['addressed-gerak-acak'])
+
+
 class BackfillCatalogMatchMergeTests(SimpleTestCase):
     """Step A: the in-place `catalog_match` merge helper.
 
