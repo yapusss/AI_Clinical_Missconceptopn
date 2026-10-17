@@ -12,8 +12,6 @@ type Props = {
   fallback?: string;
   /** Sentence to tint, exactly as stored in `evidence_span.quote`. */
   highlightQuote?: string;
-  /** One-line model reason, rendered only when the quote was actually located. */
-  highlightReason?: string;
 };
 
 const HTML_PATTERN =
@@ -29,7 +27,6 @@ export default function MathContent({
   className,
   fallback = "-",
   highlightQuote,
-  highlightReason,
 }: Props) {
   const raw = (value ?? "").trim();
   if (!raw) return <>{fallback}</>;
@@ -40,7 +37,6 @@ export default function MathContent({
         html={raw}
         className={className}
         highlightQuote={highlightQuote}
-        highlightReason={highlightReason}
       />
     );
   }
@@ -50,24 +46,19 @@ export default function MathContent({
   }
 
   // Plain prose: no DOM walker needed — split the single string at the located
-  // quote and wrap that slice. A miss renders the text untouched (and no reason).
+  // quote and wrap that slice. A miss renders the text untouched.
   const range = findQuoteRange(raw, highlightQuote);
   return (
-    <>
-      <span className={`whitespace-pre-wrap ${className ?? ""}`}>
-        {range ? (
-          <>
-            {raw.slice(0, range[0])}
-            <mark className="evidence-mark">{raw.slice(range[0], range[1])}</mark>
-            {raw.slice(range[1])}
-          </>
-        ) : (
-          raw
-        )}
-      </span>
-      {range && highlightReason ? (
-        <p className="evidence-reason">{highlightReason}</p>
-      ) : null}
-    </>
+    <span className={`whitespace-pre-wrap ${className ?? ""}`}>
+      {range ? (
+        <>
+          {raw.slice(0, range[0])}
+          <mark className="evidence-mark">{raw.slice(range[0], range[1])}</mark>
+          {raw.slice(range[1])}
+        </>
+      ) : (
+        raw
+      )}
+    </span>
   );
 }

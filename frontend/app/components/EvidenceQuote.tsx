@@ -8,8 +8,7 @@ import { findQuoteRange } from "./evidence";
  * The stored span may lack `sentence` (rows written before it was added), so the
  * quote is the fallback. The quote inside the sentence is tinted with the same
  * `.evidence-mark` used by the inline highlight; a miss shows the sentence
- * untinted. The reason is rendered only together with the text it explains — a
- * claim never appears on its own.
+ * untinted.
  */
 export function resolveEvidenceSentence(
   evidence?: EvidenceSpan | null,
@@ -19,8 +18,8 @@ export function resolveEvidenceSentence(
 }
 
 const FIELD_LABELS: Record<EvidenceSpan["field"], string> = {
-  tier1: "Tier 1",
-  tier3: "Tier 3",
+  tier1: "Kutipan Jawaban Mahasiswa",
+  tier3: "Kutipan Penjelasan Mahasiswa",
 };
 
 export default function EvidenceQuote({
@@ -34,12 +33,11 @@ export default function EvidenceQuote({
   if (!evidence || !sentence) return null;
 
   const range = findQuoteRange(sentence, evidence.quote);
-  const reason = (evidence.reason ?? "").trim();
 
   return (
     <div className={className}>
       <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
-        Kutipan Jawaban Mahasiswa ({FIELD_LABELS[evidence.field]})
+        {FIELD_LABELS[evidence.field]}
       </p>
       <blockquote className="mt-1.5 text-sm leading-relaxed text-on-surface">
         {range ? (
@@ -54,7 +52,6 @@ export default function EvidenceQuote({
           sentence
         )}
       </blockquote>
-      {reason ? <p className="evidence-reason">Alasan: {reason}</p> : null}
     </div>
   );
 }

@@ -471,17 +471,6 @@ textarea.form-input {
   background-color: rgba(234, 179, 8, 0.45);
 }
 
-/* The one-line reason that accompanies a located mark. Rendered only together
-   with the mark, never as a standalone claim. */
-.evidence-reason {
-  margin: 0.4rem 0 0;
-  padding-left: 0.5rem;
-  border-left: 2px solid rgba(250, 204, 21, 0.7);
-  font-size: 0.75rem;
-  line-height: 1.45;
-  color: var(--text-muted);
-}
-
 .question-prompt-editor.rte-content,
 .question-prompt-editor .rte-prosemirror {
   font-size: 1.125rem;

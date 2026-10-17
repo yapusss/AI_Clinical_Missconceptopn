@@ -325,7 +325,6 @@ function SubmissionPackageDetailPageContent() {
                             }
                             className="mt-1 text-base font-semibold text-on-surface"
                             highlightQuote={tier1Highlight?.quote}
-                            highlightReason={tier1Highlight?.reason}
                           />
                         </div>
 
@@ -353,7 +352,6 @@ function SubmissionPackageDetailPageContent() {
                             }
                             className="mt-1 text-base text-on-surface leading-relaxed"
                             highlightQuote={tier3Highlight?.quote}
-                            highlightReason={tier3Highlight?.reason}
                           />
                         </div>
 

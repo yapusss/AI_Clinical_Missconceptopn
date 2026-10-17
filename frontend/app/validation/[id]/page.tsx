@@ -566,7 +566,6 @@ export default function ValidationDetailPage() {
                           value={data.answer.tier1_answer || data.answer.text}
                           className="mt-1 text-sm font-semibold text-on-surface font-mono-ui"
                           highlightQuote={tier1Highlight?.quote}
-                          highlightReason={finalCategory ? tier1Highlight?.reason : undefined}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
@@ -589,7 +588,6 @@ export default function ValidationDetailPage() {
                           value={data.answer.tier3_reason || data.answer.text}
                           className="mt-1 text-sm text-on-surface font-mono-ui leading-relaxed"
                           highlightQuote={tier3Highlight?.quote}
-                          highlightReason={finalCategory ? tier3Highlight?.reason : undefined}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">

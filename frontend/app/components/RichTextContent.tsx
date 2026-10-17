@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import DOMPurify from "dompurify";
 import type { MathfieldElement } from "mathlive";
 import { loadMathLive } from "./mathLiveLoader";
@@ -123,17 +123,13 @@ export default function RichTextContent({
   html,
   className,
   highlightQuote,
-  highlightReason,
 }: {
   html?: string | null;
   className?: string;
   /** Sentence to tint, exactly as stored in `evidence_span.quote`. */
   highlightQuote?: string;
-  /** One-line model reason, rendered only when the quote was actually located. */
-  highlightReason?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [highlighted, setHighlighted] = useState(false);
 
   const clean = useMemo(() => {
     const value = html ?? "";
@@ -172,37 +168,27 @@ export default function RichTextContent({
   }, [clean]);
 
   // The tint runs after the HTML is mounted. A miss renders nothing at all — no
-  // mark and no reason line, so the model's claim never appears without the
-  // student text it points at.
+  // mark, so the model's claim never appears without the student text it points
+  // at.
   useEffect(() => {
     const root = containerRef.current;
     if (!root) return;
     clearMarks(root);
-    if (!highlightQuote) {
-      setHighlighted(false);
-      return;
-    }
-    let ok = false;
+    if (!highlightQuote) return;
     try {
-      ok = applyHighlight(root, highlightQuote);
+      applyHighlight(root, highlightQuote);
     } catch {
-      ok = false;
+      // A failed match leaves the text untinted.
     }
-    setHighlighted(ok);
   }, [clean, highlightQuote]);
 
   if (!html) return null;
 
   return (
-    <>
-      <div
-        ref={containerRef}
-        className={`rte-content ${className ?? ""}`}
-        dangerouslySetInnerHTML={{ __html: clean }}
-      />
-      {highlighted && highlightReason ? (
-        <p className="evidence-reason">{highlightReason}</p>
-      ) : null}
-    </>
+    <div
+      ref={containerRef}
+      className={`rte-content ${className ?? ""}`}
+      dangerouslySetInnerHTML={{ __html: clean }}
+    />
   );
 }

@@ -1235,7 +1235,6 @@ export default function StudentPackageReviewPage({
                           fallback="Belum ada jawaban"
                           className="text-sm leading-relaxed text-on-surface mt-0.5"
                           highlightQuote={tier1Highlight?.quote}
-                          highlightReason={tier1Highlight?.reason}
                         />
                         {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
                           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
@@ -1274,7 +1273,6 @@ export default function StudentPackageReviewPage({
                           fallback="Belum ada alasan"
                           className="text-sm leading-relaxed text-on-surface mt-0.5 max-h-32 overflow-y-auto"
                           highlightQuote={tier3Highlight?.quote}
-                          highlightReason={tier3Highlight?.reason}
                         />
                         {(currentAttempt?.heuristic_flags ?? []).some((flag) => flag === "t3_kosong" || flag === "t3_redundan" || flag === "t3_hafalan") && (
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
