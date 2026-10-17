@@ -203,7 +203,7 @@ class ExamPackageCreateSerializer(serializers.Serializer):
 
 class FourTierSubmissionItemSerializer(serializers.Serializer):
     question_id = serializers.UUIDField()
-    tier1_answer = serializers.CharField(max_length=120, allow_blank=False)
+    tier1_answer = serializers.CharField(max_length=1000, allow_blank=False)
     tier2_confidence = serializers.IntegerField(min_value=1, max_value=6)
     tier3_reason = serializers.CharField(min_length=1, max_length=10000, allow_blank=False)
     tier4_confidence = serializers.IntegerField(min_value=1, max_value=6)
@@ -212,8 +212,8 @@ class FourTierSubmissionItemSerializer(serializers.Serializer):
         val = val.strip()
         if not val:
             raise serializers.ValidationError("Tier 1 kesimpulan tidak boleh kosong.")
-        if len(val) > 120:
-            raise serializers.ValidationError("Tier 1 kesimpulan dibatasi maksimal 120 karakter.")
+        if len(val) > 1000:
+            raise serializers.ValidationError("Tier 1 kesimpulan dibatasi maksimal 1000 karakter.")
         return val
 
 

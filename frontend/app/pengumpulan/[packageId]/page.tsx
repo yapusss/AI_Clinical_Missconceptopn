@@ -23,6 +23,7 @@ import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import ReadingMaterial from "../../components/ReadingMaterial";
 import RichTextContent from "../../components/RichTextContent";
+import MathContent from "../../components/MathContent";
 import FeedbackModal from "../../components/FeedbackModal";
 import { apiFetch } from "../../lib/api";
 import {
@@ -277,7 +278,7 @@ function SubmissionPackageDetailPageContent() {
                   </div>
                   <RichTextContent
                     html={activeQuestion.prompt}
-                    className="mt-2.5 text-xl leading-relaxed font-semibold text-on-surface"
+                    className="mt-2.5 !text-2xl leading-relaxed font-semibold text-on-surface sm:!text-3xl"
                   />
                 </div>
 
@@ -319,11 +320,13 @@ function SubmissionPackageDetailPageContent() {
                           <span className="text-xs font-bold uppercase tracking-wide text-on-surface-variant">
                             1. Jawaban singkat
                           </span>
-                          <p className="mt-1 text-base font-semibold text-on-surface">
-                            {currentAttempt.tier1_answer ||
-                              currentAttempt.answer_text ||
-                              "-"}
-                          </p>
+                          <MathContent
+                            value={
+                              currentAttempt.tier1_answer ||
+                              currentAttempt.answer_text
+                            }
+                            className="mt-1 text-base font-semibold text-on-surface"
+                          />
                         </div>
 
                         <div className="flex items-center justify-between gap-3 rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2.5">
@@ -343,11 +346,13 @@ function SubmissionPackageDetailPageContent() {
                           <span className="text-xs font-bold uppercase tracking-wide text-on-surface-variant">
                             3. Alasan jawaban
                           </span>
-                          <p className="mt-1 text-base text-on-surface whitespace-pre-wrap leading-relaxed">
-                            {currentAttempt.tier3_reason ||
-                              currentAttempt.answer_text ||
-                              "-"}
-                          </p>
+                          <MathContent
+                            value={
+                              currentAttempt.tier3_reason ||
+                              currentAttempt.answer_text
+                            }
+                            className="mt-1 text-base text-on-surface leading-relaxed"
+                          />
                         </div>
 
                         <div className="flex items-center justify-between gap-3 rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2.5">
