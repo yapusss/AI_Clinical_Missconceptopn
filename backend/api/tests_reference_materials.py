@@ -62,10 +62,13 @@ from api.misconception_catalog import (
 )
 from api.reading_materials import (
     _filter_sources,
+    build_catalog_block,
+    catalog_citation,
     enqueue_reading_material,
     generate_reading_material,
     input_fingerprint,
     lecturer_category,
+    load_catalog_entry,
 )
 from api.validation_views import (
     QuestionVersionMisconceptionLinkView,
@@ -169,7 +172,7 @@ class PromptNeutralityTests(SimpleTestCase):
         # metrics bucket, and for materials it means the old rows never regenerate.
         self.assertIn('v3.2', llm.PROMPT_VERSION)
         self.assertEqual(reading_materials.READING_MATERIAL_PROMPT_VERSION,
-                         'reading-material-v1.2')
+                         'reading-material-v1.3')
 
     def test_material_prompt_demands_a_short_misconception_summary(self):
         # v1.2: the material is a summary around the misconception, not an essay.
@@ -180,6 +183,13 @@ class PromptNeutralityTests(SimpleTestCase):
         self.assertIn('1200 karakter', low)
         self.assertIn('maksimum 3 poin bullet', low)
         self.assertIn('jangan menulis paragraf penutup', low)
+
+    def test_material_prompt_has_the_catalogue_rule(self):
+        # v1.3: the model must correct the catalogue's documented error when the
+        # block is present, and must never invent an entry when it is absent.
+        low = reading_materials._SYSTEM_PROMPT.lower()
+        self.assertIn('katalog miskonsepsi', low)
+        self.assertIn('jangan mengarang entri katalog', low)
 
 
 class CosineTests(SimpleTestCase):
@@ -1132,6 +1142,7 @@ class ReadingMaterialGenerationTests(SimpleTestCase):
     def test_zero_chunk_still_ready_ungrounded_no_sources(self):
         ctx = make_ctx(question_version_id='qv-1')
         with patch('api.reading_materials.retrieve_reference_chunks', return_value=[]) as retrieve, \
+                patch('api.reading_materials.load_catalog_entry', return_value=None), \
                 patch('api.reading_materials.get_active_model_identifier', return_value='test-model'), \
                 patch('api.reading_materials._call_llm_json',
                       return_value={'reading_material_md': 'Materi.', 'sources': []}) as call, \
@@ -1151,10 +1162,36 @@ class ReadingMaterialGenerationTests(SimpleTestCase):
         self.assertEqual(kwargs['ungrounded_source_count'], 0)
         # generation temperature is 0.0, not the pipeline's 0.1
         self.assertEqual(call.call_args.kwargs.get('temperature'), 0.0)
+        # Phase 7: no catalogue entry -> the prompt is unchanged (no block).
+        self.assertNotIn('KATALOG MISKONSEPSI', call.call_args.args[1])
+
+    def test_matched_catalogue_entry_is_fed_into_the_prompt(self):
+        ctx = make_ctx(question_version_id='qv-1')
+        entry = {
+            'label': 'Es mengembang karena setiap molekul H₂O membesar',
+            'correct_conception': 'Es mengembang karena struktur terbuka, bukan molekul yang membesar',
+            'citation': 'Griffiths & Preston (1992).',
+        }
+        with patch('api.reading_materials.retrieve_reference_chunks', return_value=[]), \
+                patch('api.reading_materials.load_catalog_entry', return_value=entry) as lookup, \
+                patch('api.reading_materials.get_active_model_identifier', return_value='test-model'), \
+                patch('api.reading_materials._call_llm_json',
+                      return_value={'reading_material_md': 'Materi.', 'sources': []}) as call, \
+                patch('api.reading_materials._mark_ready'), \
+                patch('api.reading_materials._mark_failed'):
+            generate_reading_material(ctx, 'FN')
+
+        lookup.assert_called_once_with('qv-1', 'FN')
+        user_prompt = call.call_args.args[1]
+        self.assertIn('KATALOG MISKONSEPSI', user_prompt)
+        self.assertIn('Es mengembang karena setiap molekul H₂O membesar', user_prompt)
+        self.assertIn('struktur terbuka', user_prompt)
+        self.assertIn('Griffiths & Preston (1992).', user_prompt)
 
     def test_failure_marks_failed_and_never_raises(self):
         ctx = make_ctx(question_version_id='qv-1')
         with patch('api.reading_materials.retrieve_reference_chunks', return_value=[]), \
+                patch('api.reading_materials.load_catalog_entry', return_value=None), \
                 patch('api.reading_materials.get_active_model_identifier', return_value='test-model'), \
                 patch('api.reading_materials._call_llm_json', side_effect=RuntimeError('boom')), \
                 patch('api.reading_materials._mark_ready') as mark_ready, \
@@ -1169,6 +1206,52 @@ class ReadingMaterialGenerationTests(SimpleTestCase):
         self.assertEqual(args[0], 'qv-1')
         self.assertEqual(args[1], 'MSC')
         self.assertIn('boom', args[2])
+
+    def test_catalogue_lookup_failure_does_not_fail_the_material(self):
+        ctx = make_ctx(question_version_id='qv-1')
+        with patch('api.reading_materials.retrieve_reference_chunks', return_value=[]), \
+                patch('api.reading_materials.load_catalog_entry',
+                      side_effect=RuntimeError('catalogue down')), \
+                patch('api.reading_materials.get_active_model_identifier', return_value='test-model'), \
+                patch('api.reading_materials._call_llm_json',
+                      return_value={'reading_material_md': 'Materi.', 'sources': []}), \
+                patch('api.reading_materials._mark_ready'), \
+                patch('api.reading_materials._mark_failed') as mark_failed:
+            result = generate_reading_material(ctx, 'FN')
+
+        self.assertEqual(result['status'], 'READY')
+        mark_failed.assert_not_called()
+
+
+class CatalogMaterialBlockTests(SimpleTestCase):
+    """Phase 7: the pure catalogue → prompt translation."""
+
+    def test_citation_is_the_trailing_sumber_line(self):
+        description = 'Konsep benar.\n\nSumber: Ref A.; Ref B.'
+        self.assertEqual(catalog_citation(description), 'Ref A.; Ref B.')
+        self.assertEqual(catalog_citation('no citation here'), '')
+        self.assertEqual(catalog_citation(None), '')
+
+    def test_block_carries_label_concept_and_citation(self):
+        block = build_catalog_block({
+            'label': 'L', 'correct_conception': 'C', 'citation': 'Ref X.',
+        })
+        self.assertIn('KATALOG MISKONSEPSI', block)
+        self.assertIn('- Miskonsepsi terdaftar: L', block)
+        self.assertIn('- Konsep yang benar: C', block)
+        self.assertIn('- Sumber: Ref X.', block)
+
+    def test_block_without_a_citation_omits_the_sumber_line(self):
+        block = build_catalog_block({
+            'label': 'L', 'correct_conception': 'C', 'citation': '',
+        })
+        self.assertNotIn('Sumber:', block)
+        self.assertIn('- Konsep yang benar: C', block)
+
+    def test_load_catalog_entry_is_none_for_missing_inputs(self):
+        # Pure guard: no question version / no category never touches the DB.
+        self.assertIsNone(load_catalog_entry(None, 'FN'))
+        self.assertIsNone(load_catalog_entry('qv-1', None))
 
 
 @override_settings(SHADOW_RULE_VERDICT=True, TIER_VERDICT_SOURCE='llm',

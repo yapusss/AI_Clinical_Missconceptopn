@@ -51,7 +51,11 @@ logger = logging.getLogger(__name__)
 # summary (120-200 words, hard ceiling 1200 chars, misconception-naming first
 # paragraph, at most 3 one-sentence bullets, no closing paragraph). Kept in the
 # same prompt deliberately: no extra LLM call, one field less to keep in sync.
-READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.2'
+# v1.3: when the analysis carries a `matched` catalogue entry (plan Phase 7), the
+# prompt receives a KATALOG MISKONSEPSI block (label + correct conception +
+# citation) and must correct that documented error in the instrument authors' own
+# words. `no_match`/absent leaves the prompt unchanged — never invent an entry.
+READING_MATERIAL_PROMPT_VERSION = 'reading-material-v1.3'
 
 # Only these categories get material (D6). Kept as a constant so the skip is
 # testable and the schema CHECK and the code agree.
@@ -96,6 +100,11 @@ _SYSTEM_PROMPT = (
     "1. Gunakan HANYA kutipan pada bagian SUMBER REFERENSI untuk setiap klaim faktual.\n"
     "2. Bila bagian SUMBER REFERENSI kosong, tulis materi dari pengetahuan Anda sendiri.\n"
     "3. Setiap chunk_id pada \"sources\" WAJIB berasal dari SUMBER REFERENSI.\n"
+    "ATURAN KATALOG:\n"
+    "1. Bila ada bagian KATALOG MISKONSEPSI, materi WAJIB membetulkan miskonsepsi "
+    "terdaftar itu secara spesifik, memakai konsep yang benar yang diberikan.\n"
+    "2. JANGAN mengarang entri katalog. Bila bagian KATALOG MISKONSEPSI tidak ada, "
+    "tulis materi seperti biasa.\n"
     "Kembalikan HANYA format JSON valid:\n"
     "{\n"
     '  "reading_material_md": "<materi dalam format Markdown>",\n'
@@ -103,6 +112,86 @@ _SYSTEM_PROMPT = (
     '"document_title": "<judul>", "page": <nomor>}]\n'
     "}"
 )
+
+
+CATALOG_SOURCE_MARKER = 'Sumber:'
+
+
+def catalog_citation(description):
+    """The trailing `Sumber:` line of `misconceptions.description`, or ''.
+
+    Pure: `build_description` stores the correct conception first and the
+    references as a trailing `Sumber: ...` line (the bank has no citation column),
+    so the citation is recovered by splitting on that marker.
+    """
+    text = description or ''
+    index = text.find(CATALOG_SOURCE_MARKER)
+    if index == -1:
+        return ''
+    return text[index + len(CATALOG_SOURCE_MARKER):].strip()
+
+
+def build_catalog_block(entry):
+    """The `KATALOG MISKONSEPSI` block appended to the material prompt (pure).
+
+    `entry` is `{'label', 'correct_conception', 'citation'}` — a `matched`
+    catalogue result (Phase 7). Only ever called with a matched entry;
+    `no_match`/absent keeps the prompt unchanged and never invents one.
+    """
+    lines = [
+        'KATALOG MISKONSEPSI (acuan utama):',
+        f"- Miskonsepsi terdaftar: {entry.get('label') or '-'}",
+        f"- Konsep yang benar: {entry.get('correct_conception') or '-'}",
+    ]
+    citation = (entry.get('citation') or '').strip()
+    if citation:
+        lines.append(f'- Sumber: {citation}')
+    lines.append(
+        'Materi WAJIB membetulkan miskonsepsi terdaftar di atas, bukan miskonsepsi lain.')
+    return '\n'.join(lines)
+
+
+def load_catalog_entry(question_version_id, category):
+    """The `matched` catalogue entry for `(question_version, category)`, or `None`.
+
+    Phase 7: the newest current analysis of this question version whose stored
+    `catalog_match` is `matched` (and whose category matches the material bucket)
+    supplies the misconception label, the concept's correct conception, and the
+    citation. `None` for `no_match`/absent — the caller leaves the prompt
+    unchanged.
+    """
+    if not question_version_id or not category:
+        return None
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT m.label, c.correct_conception, m.description
+            FROM llm_analyses a
+            JOIN submissions s ON s.id = a.submission_id
+            JOIN misconceptions m
+              ON m.id = (
+                    a.concept_breakdown_json->'catalog_match'->>'misconception_id'
+                 )::uuid
+            LEFT JOIN concepts c ON c.id = m.concept_id
+            WHERE s.question_version_id = %s
+              AND a.four_tier_category = %s
+              AND a.is_current
+              AND a.concept_breakdown_json->'catalog_match'->>'status' = 'matched'
+              AND a.concept_breakdown_json->'catalog_match'->>'misconception_id' IS NOT NULL
+            ORDER BY a.created_at DESC
+            LIMIT 1
+            """,
+            [question_version_id, category],
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    label, correct_conception, description = row
+    return {
+        'label': label,
+        'correct_conception': correct_conception,
+        'citation': catalog_citation(description),
+    }
 
 
 def input_fingerprint(prompt_version, model_identifier, question_version_id, category,
@@ -320,10 +409,23 @@ def generate_reading_material(ctx, category) -> dict:
         )
         retrieved_by_id = {c['chunk_id']: c for c in chunks}
 
+        # Phase 7: feed the matched catalogue entry, when this analysis has one.
+        # A lookup failure must never fail the material (same rule as retrieval).
+        catalog_entry = None
+        try:
+            catalog_entry = load_catalog_entry(question_version_id, category)
+        except Exception:  # noqa: BLE001 — the catalogue is an enhancement
+            logger.warning(
+                'Catalogue entry lookup failed for %s/%s (non-fatal)',
+                question_version_id, category, exc_info=True,
+            )
+
         reference_block = build_reference_block(chunks)
         user_prompt_parts = []
         if reference_block:
             user_prompt_parts.append(reference_block)
+        if catalog_entry:
+            user_prompt_parts.append(build_catalog_block(catalog_entry))
         user_prompt_parts.append(
             f"Kategori kesalahan mahasiswa: {category}\n\n"
             f"Pertanyaan:\n{ctx.question_prompt}\n\n"
