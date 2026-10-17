@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   ArrowRight,
   BrainCircuit,
   ClipboardList,
@@ -108,15 +107,8 @@ export default function SubmissionDetailPage() {
 
   return (
     <PageContainer>
-      <Link
-        href="/submissions"
-        className="inline-flex items-center gap-2 text-sm font-semibold text-primary no-underline hover:underline"
-      >
-        <ArrowLeft size={16} /> Kembali ke jawaban mahasiswa
-      </Link>
       {data && (
         <PageHeader
-          className="mt-4"
           title={data.student.name}
           description={`${data.set.title} · ${data.subject.name}`}
           icon={ClipboardList}
@@ -141,7 +133,7 @@ export default function SubmissionDetailPage() {
               <h2 className="mt-4 text-base font-bold text-on-surface">Soal</h2>
               <RichTextContent
                 html={data.question.prompt}
-                className="mt-2 !text-2xl font-semibold leading-relaxed text-on-surface"
+                className="mt-2 !text-lg font-semibold leading-relaxed text-on-surface"
               />
               <h2 className="mt-6 text-base font-bold text-on-surface">
                 Jawaban mahasiswa

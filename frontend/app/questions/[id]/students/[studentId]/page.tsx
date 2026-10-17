@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeft,
   ArrowRight,
   BrainCircuit,
   CheckCircle2,
@@ -324,6 +322,8 @@ export default function StudentPackageReviewPage({
   const [notes, setNotes] = useState("");
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [showAiDetails, setShowAiDetails] = useState(false);
+  const [showShortAnswerReference, setShowShortAnswerReference] = useState(false);
+  const [showReasonReference, setShowReasonReference] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, ValidationDraft>>({});
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
@@ -420,6 +420,11 @@ export default function StudentPackageReviewPage({
   const currentDraft: ValidationDraft | undefined = currentAttempt?.analysis
     ? drafts[currentAttempt.analysis.id]
     : undefined;
+
+  useEffect(() => {
+    setShowShortAnswerReference(false);
+    setShowReasonReference(false);
+  }, [activeQuestion?.question_id, currentAttempt?.attempt_no]);
 
   useEffect(() => {
     if (!currentAttempt || !currentAttempt.analysis) return;
@@ -595,6 +600,39 @@ export default function StudentPackageReviewPage({
     inFlightQuestions.length === 0 &&
     (awaitingDecisionQuestions.length === 0 ||
       decidedPendingCount === awaitingDecisionQuestions.length);
+
+  const trustableAiItems = useMemo(() => {
+    const items: typeof finalizeItems = [];
+    for (const question of data?.questions ?? []) {
+      const attempt = latestAttemptOf(question);
+      const analysis = attempt?.analysis;
+      if (
+        attempt?.status !== "PENDING_VALIDATION" ||
+        !analysis ||
+        analysis.validation ||
+        drafts[analysis.id]?.decisionTouched
+      ) {
+        continue;
+      }
+      items.push({
+        analysisId: analysis.id,
+        orderIndex: question.order_index,
+        attempt,
+        draft: {
+          questionId: question.question_id,
+          orderIndex: question.order_index,
+          isCorrect: Number(analysis.percentage_correct) >= 99.9,
+          finalCategory: analysis.four_tier_category ?? "LK",
+          mode: "new",
+          touched: false,
+          decisionTouched: true,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    }
+    return items.sort((left, right) => left.orderIndex - right.orderIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, drafts]);
 
   const finalizeSummary = useMemo(() => {
     const s = { benar: 0, salah: 0, correction: 0 };
@@ -811,17 +849,18 @@ export default function StudentPackageReviewPage({
   };
 
   const handleFinalize = async () => {
-    if (!finalizeItems.length || finalizing) return;
+    const items = finalizeItems;
+    if (!items.length || finalizing) return;
     setFinalizing(true);
     setError("");
     setNotice("");
     const failed: string[] = [];
     const succeededIds: string[] = [];
-    const total = finalizeItems.length;
+    const total = items.length;
     let done = 0;
     setFinalizeProgress({ done: 0, total });
 
-    for (const item of finalizeItems) {
+    for (const item of items) {
       if (!item.draft.finalCategory) {
         failed.push(`Soal ${item.orderIndex}: diagnosis akhir wajib dipilih.`);
         continue;
@@ -858,6 +897,21 @@ export default function StudentPackageReviewPage({
       setNotice(`Evaluasi selesai: ${succeededIds.length} validasi disimpan.`);
     }
     setFinalizing(false);
+  };
+
+  const handleTrustAi = () => {
+    if (!trustableAiItems.length) return;
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const item of trustableAiItems) {
+        next[item.analysisId] = item.draft;
+      }
+      persistDrafts(setId, studentId, next);
+      return next;
+    });
+    setNotice(
+      `${trustableAiItems.length} rekomendasi AI diterapkan ke draf. Simpan seluruh keputusan melalui Selesai Evaluasi.`,
+    );
   };
 
   // Tolak & Re-analisis: LANGSUNG kirim REJECTED untuk soal aktif (tidak di-draft),
@@ -923,35 +977,21 @@ export default function StudentPackageReviewPage({
 
   return (
     <PageContainer>
-      <Link
-        href={`/${examPackage ? "exam-packages" : "questions"}/${setId}`}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary no-underline transition-colors"
-      >
-        <ArrowLeft size={14} /> Kembali ke daftar mahasiswa
-      </Link>
-
       {data && (
         <PageHeader
-          className="mt-2 mb-2"
+          className="mb-4 border-b border-outline-variant/30 pb-4"
           title={data.student.name}
-          description={`${data.package.title} • ${data.package.subject_name}`}
+          description={`Review evaluasi diagnostik • ${data.package.title} • ${data.package.subject_name}`}
           icon={ClipboardCheck}
-          eyebrow={
-            <span className="font-mono-ui text-xs font-bold uppercase tracking-wider text-primary">
-              {data.package.code} • Meja Evaluasi Diagnostik
-            </span>
+          action={
+            <div className="inline-flex items-center gap-2 rounded-lg border border-primary-fixed-dim bg-primary-fixed/50 px-3 py-2 text-xs">
+              <span className="font-semibold text-on-surface-variant">Paket ujian</span>
+              <span className="font-mono-ui font-bold uppercase tracking-wider text-primary">
+                {data.package.code}
+              </span>
+            </div>
           }
         />
-      )}
-
-      {notice && (
-        <div
-          role="status"
-          className="mt-3 flex items-center gap-2.5 rounded-lg border border-primary-fixed-dim bg-primary-fixed/60 p-3 text-xs text-primary"
-        >
-          <CheckCircle2 size={15} className="shrink-0" />
-          <span>{notice}</span>
-        </div>
       )}
 
       {fetching ? (
@@ -990,9 +1030,27 @@ export default function StudentPackageReviewPage({
 
             {activeTab === "SUMMARY" ? (
               <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-on-surface mb-3">
-                  Ringkasan Evaluasi Mahasiswa
-                </h3>
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-on-surface">
+                      Ringkasan Evaluasi Mahasiswa
+                    </h3>
+                    <p className="mt-1 text-xs text-on-surface-variant">
+                      {trustableAiItems.length > 0
+                        ? `${trustableAiItems.length} rekomendasi AI belum divalidasi.`
+                        : "Tidak ada rekomendasi AI yang menunggu validasi."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTrustAi}
+                    disabled={trustableAiItems.length === 0}
+                    className="btn-secondary shrink-0 !py-2 !px-3 text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <BrainCircuit size={15} />
+                    {`Gunakan Rekomendasi AI (${trustableAiItems.length})`}
+                  </button>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-sm">
                     <thead>
@@ -1158,26 +1216,15 @@ export default function StudentPackageReviewPage({
                   </span>
                   <RichTextContent
                     html={activeQuestion.prompt}
-                    className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
+                    className="!text-lg font-semibold leading-relaxed text-on-surface sm:!text-xl"
                   />
                 </div>
 
-                {/* Bandingkan setiap jawaban mahasiswa dengan referensi yang setara. */}
                 <div className="space-y-3.5">
-                  <div className="rounded-xl border border-outline-variant/60 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
-                        Jawaban Singkat (Referensi)
-                      </span>
-                      <RichTextContent
-                        html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ""}
-                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
-                      />
-                    </div>
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Jawaban Singkat Mahasiswa</span>
-                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
+                  <section className="space-y-2 rounded-xl border border-outline-variant/50 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
+                    <div>
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-primary">Jawaban Singkat Mahasiswa</span>
+                      <div className="space-y-0.5 text-sm leading-relaxed text-on-surface">
                         <MathContent
                           value={currentAttempt?.tier1_answer || currentAttempt?.answer_text}
                           fallback="Belum ada jawaban"
@@ -1193,21 +1240,30 @@ export default function StudentPackageReviewPage({
                         )}
                       </div>
                     </div>
-                  </div>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowShortAnswerReference((visible) => !visible)}
+                      aria-expanded={showShortAnswerReference}
+                      className="flex w-full items-center justify-between border-t border-outline-variant/30 pt-2 text-left text-xs font-semibold text-primary transition-colors hover:text-primary/75"
+                    >
+                      <span>{showShortAnswerReference ? "Sembunyikan referensi jawaban" : "Lihat referensi jawaban"}</span>
+                      {showShortAnswerReference ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </button>
+                    {showShortAnswerReference && (
+                      <div className="border-t border-outline-variant/30 pt-2">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-primary">Jawaban Singkat Referensi</span>
+                        <RichTextContent
+                          html={activeQuestion.reference?.short_answer ?? activeQuestion.short_answer ?? ""}
+                          className="mt-1 text-sm leading-relaxed text-on-surface"
+                        />
+                      </div>
+                    )}
+                  </section>
 
-                  <div className="rounded-xl border border-outline-variant/60 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">Alasan Referensi</span>
-                      <RichTextContent
-                        html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ""}
-                        className="text-sm leading-relaxed text-on-surface bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/20"
-                      />
-                    </div>
-                    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Alasan Mahasiswa</span>
-                      <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
+                  <section className="space-y-2 rounded-xl border border-outline-variant/50 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
+                    <div>
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-primary">Alasan Mahasiswa</span>
+                      <div className="space-y-0.5 text-sm leading-relaxed text-on-surface">
                         <MathContent
                           value={currentAttempt?.tier3_reason || currentAttempt?.answer_text}
                           fallback="Belum ada alasan"
@@ -1225,8 +1281,25 @@ export default function StudentPackageReviewPage({
                         )}
                       </div>
                     </div>
-                  </div>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowReasonReference((visible) => !visible)}
+                      aria-expanded={showReasonReference}
+                      className="flex w-full items-center justify-between border-t border-outline-variant/30 pt-2 text-left text-xs font-semibold text-primary transition-colors hover:text-primary/75"
+                    >
+                      <span>{showReasonReference ? "Sembunyikan referensi alasan" : "Lihat referensi alasan"}</span>
+                      {showReasonReference ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </button>
+                    {showReasonReference && (
+                      <div className="border-t border-outline-variant/30 pt-2">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-primary">Alasan Referensi</span>
+                        <RichTextContent
+                          html={activeQuestion.reference?.reason ?? activeQuestion.model_answer ?? ""}
+                          className="mt-1 text-sm leading-relaxed text-on-surface"
+                        />
+                      </div>
+                    )}
+                  </section>
                 </div>
 
                 {/* REKOMENDASI AI: MURNI STATUS BENAR/SALAH */}
@@ -1334,38 +1407,40 @@ export default function StudentPackageReviewPage({
 
                     {isLocked ? (
                       <div className="space-y-3 pt-1">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                          <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
-                              STATUS BUTIR INI
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                          <div>
+                            <span className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
+                              PENILAIAN BUTIR SOAL INI
                             </span>
-                            <span
-                              className={`font-mono-ui text-lg font-extrabold inline-flex items-center gap-1.5 ${
-                                isCorrect ? "text-emerald-500" : "text-rose-500"
+                            <div
+                              className={`w-full rounded-lg border px-3 py-2 text-xs font-mono-ui font-bold inline-flex items-center gap-1.5 ${
+                                isCorrect
+                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/50"
+                                  : "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/50"
                               }`}
                             >
                               {isCorrect ? (
-                                <CheckCircle2 size={18} />
+                                <CheckCircle2 size={15} />
                               ) : (
-                                <XCircle size={18} />
+                                <XCircle size={15} />
                               )}
                               {isCorrect ? "Benar" : "Salah"}
-                            </span>
+                            </div>
                           </div>
 
-                          <div className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/25">
-                            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
+                          <div>
+                            <span className="block text-xs font-bold uppercase tracking-wider text-on-surface mb-1">
                               DIAGNOSIS AKHIR DOSEN
                             </span>
-                            <span
-                              className={`font-mono-ui text-xs font-bold inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full ${
+                            <div
+                              className={`w-full rounded-lg border px-3 py-2 text-xs font-medium font-mono-ui ${
                                 CATEGORY_STYLES[finalCategory]?.badgeCls
                               }`}
                             >
                               [{finalCategory}]{" "}
                               {CATEGORY_STYLES[finalCategory]?.label ??
                                 finalCategory}
-                            </span>
+                            </div>
                           </div>
                         </div>
 
@@ -1654,7 +1729,7 @@ export default function StudentPackageReviewPage({
           </main>
 
           {/* KOLOM KANAN: DAFTAR SOAL + KARTU NILAI AKHIR (100%, 75%, 50%, ETC) */}
-          <aside className="w-full lg:w-52 shrink-0 lg:sticky lg:top-6 space-y-3">
+          <aside className="w-full lg:mt-16 lg:w-52 shrink-0 lg:sticky lg:top-6 space-y-3">
             {/* 1. KOTAK DAFTAR SOAL */}
             <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5 shadow-sm">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
@@ -1686,42 +1761,35 @@ export default function StudentPackageReviewPage({
 
                   let boxBorderCls =
                     "border-outline-variant/50 bg-surface-container text-on-surface-variant";
-                  let dotColor = "bg-slate-400";
+                  let dotColor: string | null = null;
                   let statusTitle = "Belum Dijawab";
 
                   if (isValidated) {
                     if (isCorrectItem) {
                       boxBorderCls =
                         "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
-                      dotColor = "bg-emerald-400";
                       statusTitle = "Jawaban Benar";
                     } else {
                       boxBorderCls =
                         "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
-                      dotColor = "bg-rose-400";
                       statusTitle = "Jawaban Salah";
                     }
                   } else if (hasLecturerDecision) {
                     if (draft?.isCorrect) {
                       boxBorderCls =
                         "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold";
-                      dotColor = "bg-emerald-400";
                       statusTitle = "Keputusan dosen: Benar";
                     } else {
                       boxBorderCls =
                         "border-rose-500/60 bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold";
-                      dotColor = "bg-rose-400";
                       statusTitle = "Keputusan dosen: Salah";
                     }
                   } else if (latestAttempt?.status === "PENDING_VALIDATION") {
-                    boxBorderCls =
-                      "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold";
                     dotColor = "bg-amber-400";
                     statusTitle = "Belum diputuskan";
                   } else if (isAnswered) {
                     boxBorderCls =
                       "border-blue-500/60 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold";
-                    dotColor = "bg-blue-400";
                     statusTitle = "Tersimpan";
                   }
 
@@ -1735,15 +1803,17 @@ export default function StudentPackageReviewPage({
                       }}
                       className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-xs transition-all cursor-pointer shadow-sm ${boxBorderCls} ${
                         isCurrent
-                          ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
+                          ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold"
                           : "hover:border-primary/60"
                       }`}
                       title={`Soal ${idx + 1}: ${statusTitle}`}
                     >
                       {idx + 1}
-                      <span
-                        className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
-                      />
+                      {dotColor && (
+                        <span
+                          className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${dotColor}`}
+                        />
+                      )}
                     </button>
                   );
                 })}
@@ -1751,16 +1821,8 @@ export default function StudentPackageReviewPage({
 
               <div className="pt-2 border-t border-outline-variant/30 space-y-1 text-xs text-on-surface-variant font-medium">
                 <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span>Jawaban Benar</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-rose-400 shrink-0" />
-                  <span>Jawaban Salah</span>
-                </div>
-                <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                  <span>Belum diputuskan</span>
+                  <span>Belum divalidasi</span>
                 </div>
               </div>
             </div>
@@ -1954,7 +2016,7 @@ export default function StudentPackageReviewPage({
               </button>
               <button
                 type="button"
-                onClick={handleFinalize}
+                onClick={() => void handleFinalize()}
                 disabled={finalizing}
                 className="btn-primary text-xs font-bold cursor-pointer"
               >
@@ -1968,6 +2030,12 @@ export default function StudentPackageReviewPage({
         open={!!error}
         message={error}
         onClose={() => setError("")}
+      />
+      <FeedbackModal
+        open={!!notice}
+        message={notice}
+        variant="success"
+        onClose={() => setNotice("")}
       />
     </PageContainer>
   );

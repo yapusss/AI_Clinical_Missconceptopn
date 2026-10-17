@@ -27,8 +27,6 @@ export default function QuestionSetSubjectPage() {
       token={token}
       subjectId={subjectId}
       lecturerView
-      backHref="/questions"
-      backLabel="Kembali ke daftar mata kuliah"
     />
   );
 }

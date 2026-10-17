@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   CalendarDays,
   ChevronRight,
   ClipboardList,
@@ -209,15 +208,7 @@ export default function ExamPackageForm({
   if (loading) return null;
   return (
     <PageContainer>
-      <button
-        type="button"
-        onClick={() => router.push(`/admin/subjects/${subjectId}`)}
-        className="inline-flex items-center gap-2 text-sm font-semibold text-primary"
-      >
-        <ArrowLeft size={16} /> Kembali ke mata kuliah
-      </button>
       <PageHeader
-        className="mt-5"
         title={packageId ? "Edit Paket Ujian" : "Buat Paket Ujian"}
         description="Susun pengaturan, pilih soal terbit, lalu tinjau sebelum menyimpan."
         icon={ClipboardList}

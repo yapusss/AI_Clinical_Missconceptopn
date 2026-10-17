@@ -4,10 +4,9 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeft,
   ClipboardList,
+  Flag,
   HelpCircle,
-  LogOut,
   Send,
   Timer,
   X,
@@ -51,6 +50,7 @@ type QuestionAnswer = {
   t2_confidence: number | null; // 1 - 6
   t3_reason: string;
   t4_confidence: number | null; // 1 - 6
+  flagged?: boolean;
 };
 
 const CONFIDENCE_LEVELS = [
@@ -464,14 +464,7 @@ function AnswerSetContent() {
   if (data && !started) {
     return (
       <PageContainer>
-        <button
-          type="button"
-          onClick={() => router.push("/code")}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary cursor-pointer"
-        >
-          <ArrowLeft size={14} /> Kembali ke daftar soal
-        </button>
-        <section className="glass-panel mt-6 rounded-xl border border-outline-variant/40 p-8 space-y-5">
+        <section className="glass-panel rounded-xl border border-outline-variant/40 p-8 space-y-5">
           <PageHeader
             title={data.title}
             description="Format Evaluasi Pemahaman Konseptual"
@@ -543,14 +536,12 @@ function AnswerSetContent() {
   return (
     <PageContainer>
       <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <button
-            type="button"
-            onClick={() => router.push("/code")}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
-          >
-            <LogOut size={15} /> Keluar
-          </button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          {activeQuestion && (
+            <span className="mr-auto font-display text-xl font-extrabold tracking-tight text-on-surface">
+              Soal {activeQuestion.order_index}
+            </span>
+          )}
           {data?.attempt_deadline && (
             <div
               className={`flex w-fit items-center justify-center gap-2 self-start rounded-xl border border-outline-variant/50 px-3.5 py-2 sm:self-auto ${
@@ -590,15 +581,41 @@ function AnswerSetContent() {
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_13rem] lg:items-start">
             <div className="min-w-0 flex-1 space-y-5">
               {/* Teks Pertanyaan Konseptual */}
-              <section className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6 space-y-2">
-                <span className="font-mono-ui text-sm font-bold uppercase tracking-wider text-primary">
-                  Soal Nomor {activeQuestion.order_index} dari{" "}
-                  {data?.questions.length}
-                </span>
-                <RichTextContent
-                  html={activeQuestion.prompt}
-                  className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
-                />
+              <section className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6">
+                <div className="flex items-start gap-3">
+                  <RichTextContent
+                    html={activeQuestion.prompt}
+                    className="min-w-0 flex-1 !text-lg font-semibold leading-relaxed text-on-surface sm:!text-xl"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateCurrent({ flagged: !currentAnswer.flagged })
+                    }
+                    aria-pressed={Boolean(currentAnswer.flagged)}
+                    aria-label={
+                      currentAnswer.flagged
+                        ? "Batalkan tanda untuk dicek kembali"
+                        : "Tandai soal untuk dicek kembali"
+                    }
+                    title={
+                      currentAnswer.flagged
+                        ? "Batalkan tanda untuk dicek kembali"
+                        : "Tandai untuk dicek kembali"
+                    }
+                    className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg border transition-colors cursor-pointer ${
+                      currentAnswer.flagged
+                        ? "border-rose-500/50 bg-rose-500/15 text-rose-700 dark:text-rose-400"
+                        : "border-outline-variant/50 bg-surface-container-lowest text-on-surface-variant hover:border-rose-500/50 hover:text-rose-600 dark:hover:text-rose-400"
+                    }`}
+                  >
+                    <Flag
+                      size={14}
+                      fill={currentAnswer.flagged ? "currentColor" : "none"}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
               </section>
 
               {/* 1. Jawaban Singkat */}
@@ -606,7 +623,7 @@ function AnswerSetContent() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                      1. Jawaban Singkat
+                      Jawaban Singkat
                     </h3>
                     <p className="text-xs text-on-surface-variant mt-0.5">
                       Tuliskan kesimpulan singkat atau formula matematika
@@ -645,7 +662,7 @@ function AnswerSetContent() {
               <div className="border-t border-outline-variant/30 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                    2. Tingkat Keyakinan pada Jawaban
+                    Tingkat Keyakinan pada Jawaban
                   </h3>
                   <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
                     {confidenceLabel(currentAnswer.t2_confidence)}
@@ -665,7 +682,7 @@ function AnswerSetContent() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                      3. Alasan
+                      Alasan
                     </h3>
                     <p className="text-xs text-on-surface-variant mt-0.5">
                       Uraikan penalaran ilmiah. Gunakan tombol [fx] pada toolbar
@@ -685,7 +702,7 @@ function AnswerSetContent() {
               <div className="border-t border-outline-variant/30 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-bold text-sm uppercase tracking-wider text-on-surface">
-                    4. Tingkat Keyakinan pada Alasan
+                    Tingkat Keyakinan pada Alasan
                   </h3>
                   <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
                     {confidenceLabel(currentAnswer.t4_confidence)}
@@ -750,6 +767,7 @@ function AnswerSetContent() {
                   {data.questions.map((q, idx) => {
                     const isDone = isQuestionComplete(q.question_id);
                     const isCurrent = idx === activeIndex;
+                    const isFlagged = Boolean(answers[q.question_id]?.flagged);
                     const boxCls = isDone
                       ? "border-emerald-500/60 bg-emerald-500/15 font-bold text-emerald-600 dark:text-emerald-400"
                       : "border-outline-variant/50 bg-surface-container text-on-surface-variant";
@@ -766,29 +784,17 @@ function AnswerSetContent() {
                             ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
                             : "hover:border-primary/60"
                         }`}
-                        title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi" : "Belum diisi"}`}
+                        title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi" : "Belum diisi"}${isFlagged ? " · Ditandai untuk dicek kembali" : ""}`}
                       >
                         {idx + 1}
-                        <span
-                          className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-surface-container-lowest ${
-                            isDone ? "bg-emerald-400" : "bg-slate-400"
-                          }`}
-                        />
+                        {isFlagged && (
+                          <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full border border-surface-container-lowest bg-rose-500" />
+                        )}
                       </button>
                     );
                   })}
                 </div>
 
-                <div className="space-y-1 border-t border-outline-variant/30 pt-2 text-xs font-medium text-on-surface-variant">
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
-                    <span>Sudah Diisi</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-slate-400" />
-                    <span>Belum Diisi</span>
-                  </div>
-                </div>
               </div>
             </aside>
           </div>

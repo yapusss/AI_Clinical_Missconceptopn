@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeft,
   Award,
   CheckCircle2,
   ChevronLeft,
@@ -185,16 +184,6 @@ function SubmissionPackageDetailPageContent() {
 
   return (
     <PageContainer>
-      <div className="mb-3">
-        <Link
-          href="/code#pengumpulan"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary transition-colors no-underline"
-        >
-          <ArrowLeft size={14} />
-          Kembali ke Daftar Pengumpulan Soal
-        </Link>
-      </div>
-
       {fetching ? (
         <p className="mt-8 text-sm text-on-surface-variant">
           Memuat rincian evaluasi diagnostik...
@@ -287,7 +276,7 @@ function SubmissionPackageDetailPageContent() {
                   </div>
                   <RichTextContent
                     html={activeQuestion.prompt}
-                    className="mt-2.5 !text-2xl leading-relaxed font-semibold text-on-surface sm:!text-3xl"
+                    className="mt-2.5 !text-lg leading-relaxed font-semibold text-on-surface sm:!text-xl"
                   />
                 </div>
 

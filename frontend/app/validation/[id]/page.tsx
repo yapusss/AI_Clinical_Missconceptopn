@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeft,
   BookMarked,
   BrainCircuit,
   CheckCircle2,
@@ -420,13 +418,6 @@ export default function ValidationDetailPage() {
 
   return (
     <PageContainer>
-      <Link
-        href="/validation"
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary no-underline"
-      >
-        <ArrowLeft size={14} /> Kembali ke antrian validasi
-      </Link>
-
       {notice && (
         <div
           role="status"
@@ -493,7 +484,7 @@ export default function ValidationDetailPage() {
                     </h3>
                     <RichTextContent
                       html={data.question.prompt}
-                      className="mt-1.5 !text-2xl font-semibold leading-relaxed text-on-surface"
+                      className="mt-1.5 !text-lg font-semibold leading-relaxed text-on-surface"
                     />
                   </div>
 
