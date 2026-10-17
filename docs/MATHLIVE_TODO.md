@@ -39,7 +39,10 @@ components were deleted. MathLive owns the virtual keyboard now.
 
 ## Known risk flagged to user
 
-`submissions.tier1_answer` and `sp_submit_conceptual_answer(p_tier1_answer ...)`
-are **VARCHAR(255)** (migrations `0011`, `0022`). The app cap is 1000, but values
-longer than 255 will only persist after a DB-side widening, which is out of scope
-by the "no migrations" rule.
+**Resolved after this TODO was written.** The Tier 1 cap is 1000 characters in
+`serializers.py` / `views.py`, and `submissions.tier1_answer` is now **`TEXT`**, not
+`VARCHAR(255)`: migration `0028_widen_tier1_answer` ran
+`ALTER COLUMN tier1_answer TYPE TEXT` (verified — `information_schema.columns` reports
+`text`), so long rich-text answers persist and there is no length ceiling left to hit.
+`varchar -> text` is binary-coercible, so no table rewrite and no procedure change was needed
+(PostgreSQL does not enforce a declared `varchar(n)` on procedure parameters).
