@@ -450,6 +450,11 @@ export default function StudentPackageReviewPage({
 
   const isAlreadyValidated = Boolean(currentAttempt?.analysis?.validation);
   const isLocked = isAlreadyValidated && !isUnlocked;
+  const activeDraft = currentAttempt?.analysis
+    ? drafts[currentAttempt.analysis.id]
+    : undefined;
+  const hasActiveLecturerDecision =
+    !isAlreadyValidated && Boolean(activeDraft?.decisionTouched);
 
   const updateDraft = (
     patch: Partial<{
@@ -1052,15 +1057,25 @@ export default function StudentPackageReviewPage({
                       )}
                     </div>
 
-                    {currentAttempt ? (
+                    {!currentAttempt ? (
+                      <span className="badge badge-draft text-xs">
+                        Belum Dijawab
+                      </span>
+                    ) : hasActiveLecturerDecision ? (
+                      <span
+                        className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
+                          activeDraft?.isCorrect
+                            ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                            : "text-rose-700 dark:text-rose-400 bg-rose-500/10 border-rose-500/30"
+                        }`}
+                      >
+                        Keputusan Dosen: {activeDraft?.isCorrect ? "Benar" : "Salah"}
+                      </span>
+                    ) : (
                       <span
                         className={`badge ${STATUS_BADGE[currentAttempt.status]?.cls} text-xs`}
                       >
                         {STATUS_BADGE[currentAttempt.status]?.label}
-                      </span>
-                    ) : (
-                      <span className="badge badge-draft text-xs">
-                        Belum Dijawab
                       </span>
                     )}
                   </div>
@@ -1073,13 +1088,13 @@ export default function StudentPackageReviewPage({
                   </span>
                   <RichTextContent
                     html={activeQuestion.prompt}
-                    className="text-lg font-semibold leading-relaxed text-on-surface"
+                    className="!text-2xl font-semibold leading-relaxed text-on-surface sm:!text-3xl"
                   />
                 </div>
 
                 {/* Bandingkan setiap jawaban mahasiswa dengan referensi yang setara. */}
                 <div className="space-y-3.5">
-                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/40 p-3">
+                  <div className="rounded-xl border border-outline-variant/60 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">
@@ -1093,7 +1108,7 @@ export default function StudentPackageReviewPage({
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-bold uppercase tracking-wider text-primary block mb-1.5">Jawaban Singkat Mahasiswa</span>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-2.5 space-y-0.5">
-                        <p className="text-base font-medium text-on-surface leading-normal mt-0.5">{currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}</p>
+                        <p className="text-sm leading-relaxed text-on-surface mt-0.5">{currentAttempt?.tier1_answer || currentAttempt?.answer_text || "Belum ada jawaban"}</p>
                         {currentAttempt?.heuristic_flags?.includes("t1_berisi_alasan") && (
                           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
                             <AlertTriangle size={12} className="shrink-0" />
@@ -1105,7 +1120,7 @@ export default function StudentPackageReviewPage({
                   </div>
                   </div>
 
-                  <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/40 p-3">
+                  <div className="rounded-xl border border-outline-variant/60 border-l-4 border-l-primary/70 bg-surface-container-low/40 p-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
                     <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3.5">
                       <span className="text-xs font-semibold uppercase tracking-wider text-primary block mb-1">Alasan Referensi</span>
@@ -1219,8 +1234,8 @@ export default function StudentPackageReviewPage({
                         </h3>
                       </div>
 
-                      <div>
-                        {isLocked ? (
+                      {isLocked && (
+                        <div>
                           <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 inline-flex items-center gap-1.5">
                             ✓ Sudah Divalidasi (
                             {
@@ -1231,12 +1246,8 @@ export default function StudentPackageReviewPage({
                             }
                             )
                           </span>
-                        ) : (
-                          <span className="text-xs font-semibold text-on-surface-variant bg-surface-container px-2.5 py-0.5 rounded-full border border-outline-variant/30">
-                            Menunggu Validasi
-                          </span>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
 
                     {isLocked ? (

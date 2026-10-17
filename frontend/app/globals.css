@@ -446,6 +446,12 @@ main:not([data-scrolled]) > header {
   overflow-wrap: anywhere;
 }
 
+.question-prompt-editor.rte-content,
+.question-prompt-editor .rte-prosemirror {
+  font-size: 1.5rem;
+  line-height: 1.6;
+}
+
 .rte-content > :first-child,
 .rte-prosemirror > :first-child {
   margin-top: 0;
