@@ -7,6 +7,7 @@ the pipeline test monkeypatches `load_context`, retrieval, the three modules and
     venv/Scripts/python.exe manage.py test api.tests_reference_materials -v 2
 """
 
+import copy
 import json
 from contextlib import ExitStack
 from datetime import datetime
@@ -35,6 +36,7 @@ from api.llm import (
     validate_citations,
 )
 from api.management.commands import ingest_materials as ingest_cmd
+from api.management.commands.backfill_evidence_spans import _as_dict, merge_evidence_span
 from api.materials_views import (
     MATERIAL_UPLOAD_MAX_BYTES,
     ReadingMaterialFlagView,
@@ -2134,3 +2136,71 @@ class AnalysisRetryCapTests(SimpleTestCase):
         field = Submission._meta.get_field('analysis_attempts')
         self.assertEqual(field.default, 0)
         self.assertFalse(field.null)
+
+
+class EvidenceSpanBackfillMergeTests(SimpleTestCase):
+    """The pure jsonb merge used by `backfill_evidence_spans --apply`.
+
+    The command writes onto an existing `llm_analyses` row, so the merge must
+    preserve every other `concept_breakdown` key and never mutate its input:
+    the rest of that row is not ours to rewrite.
+    """
+
+    BREAKDOWN = {
+        'module_a': {'score': 'SALAH', 'reasoning': 'alasan'},
+        'module_b': {'score': 'SALAH'},
+        'module_c': None,
+        'decision_matrix': {'category': 'MSC', 't1': 'SALAH'},
+        'heuristic_flags': [],
+        'percentage_correct': 0.0,
+        'references': [{'chunk_id': 'c1'}],
+        'evidence_span': None,
+    }
+    SPAN = {
+        'field': 'tier3',
+        'sentence_id': 2,
+        'quote': 'air tidak mengandung hidrogen',
+        'reason': 'menolak komposisi air',
+        'status': 'exact',
+        'sentence': 'Air tidak mengandung hidrogen.',
+    }
+
+    def test_merge_preserves_every_other_key(self):
+        merged = merge_evidence_span(self.BREAKDOWN, self.SPAN)
+        self.assertEqual(set(merged), set(self.BREAKDOWN))
+        for key, value in self.BREAKDOWN.items():
+            if key == 'evidence_span':
+                continue
+            self.assertEqual(merged[key], value)
+
+    def test_merge_adds_the_span_and_its_source(self):
+        merged = merge_evidence_span(self.BREAKDOWN, self.SPAN)
+        span = merged['evidence_span']
+        for key, value in self.SPAN.items():
+            self.assertEqual(span[key], value)
+        self.assertEqual(span['source'], 'backfill-v3.2')
+
+    def test_merge_does_not_mutate_the_inputs(self):
+        breakdown = copy.deepcopy(self.BREAKDOWN)
+        span = copy.deepcopy(self.SPAN)
+        merge_evidence_span(breakdown, span)
+        self.assertEqual(breakdown, self.BREAKDOWN)
+        self.assertEqual(span, self.SPAN)
+        self.assertNotIn('source', span)
+
+    def test_merge_replaces_an_existing_span(self):
+        # `--force` depends on this: the stored span is replaced, the rest stays.
+        existing = copy.deepcopy(self.BREAKDOWN)
+        existing['evidence_span'] = {'quote': 'lama', 'source': 'backfill-v3.2'}
+        merged = merge_evidence_span(existing, self.SPAN)
+        self.assertEqual(merged['evidence_span']['quote'], self.SPAN['quote'])
+        self.assertEqual(existing['evidence_span']['quote'], 'lama')
+
+    def test_jsonb_text_is_decoded_before_merging(self):
+        # A raw cursor hands jsonb back as text; treating that as "no data"
+        # would drop every other key from the row.
+        breakdown = _as_dict(json.dumps(self.BREAKDOWN))
+        self.assertEqual(breakdown, self.BREAKDOWN)
+        merged = merge_evidence_span(breakdown, self.SPAN)
+        self.assertEqual(merged['module_a'], self.BREAKDOWN['module_a'])
+        self.assertEqual(merged['evidence_span']['source'], 'backfill-v3.2')
