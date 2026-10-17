@@ -345,6 +345,18 @@ class EvidenceSpanTests(SimpleTestCase):
         self.assertEqual(result['sentence_id'], 1)
         self.assertEqual(result['quote'], 'tidak mengandung hidrogen dan oksigen')
 
+    def test_resolved_sentence_is_stored(self):
+        # The block above "Materi Bacaan" needs the student's whole sentence, not
+        # just the quote fragment, so the accepted span carries the resolved
+        # sentence. Tier 3 sentence 3 (not the first) proves it is the resolved one.
+        span = {
+            'field': 'tier3', 'sentence_id': 3,
+            'quote': 'Suhunya 25 derajat', 'reason': 'r',
+        }
+        result = accept_evidence_span(span, self.T1, self.T3, self._sentences())
+        self.assertIsNotNone(result)
+        self.assertEqual(result['sentence'], 'Suhunya 25 derajat.')
+
     def test_normalized_quote_accepted(self):
         # Whitespace, case and curly quotes all differ from the stored text.
         t3 = 'Air bukan \u201cgula\u201d, melainkan pelarut.'

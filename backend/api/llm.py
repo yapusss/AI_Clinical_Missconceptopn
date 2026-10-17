@@ -754,9 +754,11 @@ def accept_evidence_span(span, tier1_text, tier3_text, sentences) -> dict | None
     """Validate Modul B's `evidence_span` against the numbered sentences.
 
     Pure: no DB, no network. Returns
-    `{'field', 'sentence_id', 'quote', 'reason', 'status'}` with
+    `{'field', 'sentence_id', 'quote', 'reason', 'status', 'sentence'}` with
     `status in {'exact', 'normalized'}`, or `None` (logged) on any failure. The
     `status` exists so the anchor's degradation is measurable, not guessed.
+    `sentence` is the resolved sentence text, so a surface can show the student's
+    statement in context rather than the bare quote fragment.
     """
     if span is None:
         # The prompt's "no misconception" answer, not a failure: `null` is a
@@ -812,6 +814,7 @@ def accept_evidence_span(span, tier1_text, tier3_text, sentences) -> dict | None
         'quote': quote,
         'reason': str(span.get('reason') or ''),
         'status': status,
+        'sentence': sentence_text,
     }
 
 
