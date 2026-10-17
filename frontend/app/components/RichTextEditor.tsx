@@ -15,11 +15,13 @@ import {
   ListOrdered,
   Quote,
   Redo2,
+  Sigma,
   Strikethrough,
   Undo2,
 } from "lucide-react";
 import RichTextContent from "./RichTextContent";
 import ResizableImage from "./ResizableImage";
+import MathExtension from "./MathExtension";
 
 type Props = {
   value: string;
@@ -90,6 +92,7 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
         link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" } },
       }),
       ResizableImage.configure({ inline: false, allowBase64: false }),
+      MathExtension,
       Placeholder.configure({ placeholder: placeholder ?? "" }),
     ],
     content: value || "",
@@ -170,6 +173,12 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
     return <div className={`rte-editor ${className ?? ""}`}><div className="rte-prosemirror min-h-28" /></div>;
   }
 
+  const insertMath = () => {
+    // MathLive renders the field and opens its own native virtual keyboard on
+    // focus, so the toolbar just drops an empty formula node at the caret.
+    editor.chain().focus().insertMathField().run();
+  };
+
   return (
     <div className={`rte-editor ${className ?? ""}`}>
       <div className="rte-toolbar">
@@ -204,6 +213,12 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
         </ToolbarButton>
         <ToolbarButton label={uploading ? "Mengunggah gambar..." : "Unggah gambar"} disabled={uploading} onClick={pickImage}>
           <ImagePlus size={16} />
+        </ToolbarButton>
+        <ToolbarButton
+          label="Sisipkan formula matematika (fx)"
+          onClick={insertMath}
+        >
+          <Sigma size={16} />
         </ToolbarButton>
         <span className="mx-1 h-5 w-px self-center bg-outline-variant/50" />
         <ToolbarButton label="Urungkan" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>
