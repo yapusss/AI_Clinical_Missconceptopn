@@ -445,6 +445,9 @@ function SubmissionPackageDetailPageContent() {
 
                         <ReadingMaterial
                           material={currentAttempt.evaluation?.reading_material}
+                          evidence={
+                            currentAttempt.evaluation?.evidence_span ?? null
+                          }
                         />
 
                         {currentAttempt.evaluation.validator_name && (

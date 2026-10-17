@@ -4,6 +4,9 @@ export type EvidenceSpan = {
   quote: string;
   reason: string;
   status: "exact" | "normalized";
+  // The resolved sentence; absent on rows written before it was stored, in
+  // which case surfaces fall back to `quote`.
+  sentence?: string | null;
 };
 
 export type StudentEvaluation = {

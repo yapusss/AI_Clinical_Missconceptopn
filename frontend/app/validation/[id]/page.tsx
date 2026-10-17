@@ -23,9 +23,13 @@ import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
 import MathContent from "../../components/MathContent";
+import EvidenceQuote, {
+  resolveEvidenceSentence,
+} from "../../components/EvidenceQuote";
 import { apiFetch } from "../../lib/api";
 import FeedbackModal from "../../components/FeedbackModal";
 import type {
+  EvidenceSpan,
   GroundingReference,
   LearnedTopic,
   ReadingMaterial,
@@ -39,14 +43,6 @@ type MisconceptionMatch = {
   confidence: string;
   reasoning: string;
   lecturer_confirmed?: boolean;
-};
-
-type EvidenceSpan = {
-  field: "tier1" | "tier3";
-  sentence_id: number;
-  quote: string;
-  reason: string;
-  status: "exact" | "normalized";
 };
 
 type Detail = {
@@ -724,6 +720,12 @@ export default function ValidationDetailPage() {
                     </div>
                   )}
                 </header>
+
+                {evidenceSpan && resolveEvidenceSentence(evidenceSpan) ? (
+                  <div className="border-b border-outline-variant/40 bg-surface-container-lowest px-5 py-3">
+                    <EvidenceQuote evidence={evidenceSpan} />
+                  </div>
+                ) : null}
 
                 <div className="space-y-3 p-5">
                   {!readingMaterial ? (

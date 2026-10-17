@@ -1369,7 +1369,10 @@ export default function StudentPackageReviewPage({
                           </div>
                         </div>
 
-                        <ReadingMaterial material={currentAttempt.analysis?.reading_material} />
+                        <ReadingMaterial
+                          material={currentAttempt.analysis?.reading_material}
+                          evidence={currentAttempt.analysis?.evidence_span ?? null}
+                        />
 
                         <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
                           <span className="text-xs text-on-surface-variant">
@@ -1485,7 +1488,10 @@ export default function StudentPackageReviewPage({
 
                           {/* Materi Bacaan — the material the LLM wrote for this
                               question (C7). Renders nothing when null. */}
-                          <ReadingMaterial material={currentAttempt.analysis?.reading_material} />
+                          <ReadingMaterial
+                          material={currentAttempt.analysis?.reading_material}
+                          evidence={currentAttempt.analysis?.evidence_span ?? null}
+                        />
                         </div>
 
                         {/* Peringatan keputusan bertentangan (tidak memblokir) */}
