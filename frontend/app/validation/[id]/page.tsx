@@ -24,12 +24,16 @@ import MathContent from "../../components/MathContent";
 import EvidenceQuote, {
   resolveEvidenceSentence,
 } from "../../components/EvidenceQuote";
+import MissingConcepts from "../../components/MissingConcepts";
+import CatalogResult from "../../components/CatalogResult";
 import { apiFetch } from "../../lib/api";
 import FeedbackModal from "../../components/FeedbackModal";
 import type {
+  CatalogMatch,
   EvidenceSpan,
   GroundingReference,
   LearnedTopic,
+  MissingConcept,
   ReadingMaterial,
   VerdictShadow,
 } from "../../lib/studentSubmissions";
@@ -104,6 +108,9 @@ type Detail = {
     reading_material?: ReadingMaterial | null;
     // v3.2: the sentence-level anchor to the misconception, or `null`.
     evidence_span?: EvidenceSpan | null;
+    // Phase 6: the catalogue mapping (lecturer-only) and the missing-concept list.
+    catalog_match?: CatalogMatch | null;
+    missing_concepts?: MissingConcept[];
   };
   validatable: boolean;
   existing_validation: {
@@ -413,6 +420,12 @@ export default function ValidationDetailPage() {
   const evidenceSpan = data?.llm.evidence_span ?? null;
   const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
   const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
+  // Phase 6: the catalogue result (label + score, or the no-match candidates)
+  // and the missing-concept list, both lecturer-only on this surface.
+  const catalogMatch = data?.llm.catalog_match ?? null;
+  const missingConcepts = data?.llm.missing_concepts ?? [];
+  const hasEvidenceBlock =
+    evidenceSpan !== null && resolveEvidenceSentence(evidenceSpan) !== "";
 
   if (loading || !user) return null;
 
@@ -683,9 +696,32 @@ export default function ValidationDetailPage() {
                         )}
                       </div>
                     )}
+
+                    {/* Phase 6: the catalogue result + the optional authoring
+                        control (D5) — one click links the misconception to the
+                        question version; no typing, idempotent. */}
+                    <CatalogResult
+                      catalog={catalogMatch}
+                      versionId={data.question.version_id}
+                      className="mt-3 border-t border-outline-variant/20 pt-3"
+                    />
                   </div>
                 </div>
               </section>
+
+              {/* Phase 6.0: the evidence anchor and the missing-concept list are
+                  their own block, immediately ABOVE the Materi Bacaan section
+                  (order: block-before-material), matching the student page. */}
+              {(hasEvidenceBlock || missingConcepts.length > 0) && (
+                <section className="glass-panel overflow-hidden rounded-xl border border-outline-variant/40">
+                  <div className="space-y-3 bg-surface-container-lowest px-5 py-4">
+                    {hasEvidenceBlock ? (
+                      <EvidenceQuote evidence={evidenceSpan} />
+                    ) : null}
+                    <MissingConcepts concepts={missingConcepts} />
+                  </div>
+                </section>
+              )}
 
               {/* Materi Bacaan — generated reading material (C6). Review only:
                   there is deliberately no edit control, textarea or save button
@@ -711,12 +747,6 @@ export default function ValidationDetailPage() {
                     </div>
                   )}
                 </header>
-
-                {evidenceSpan && resolveEvidenceSentence(evidenceSpan) ? (
-                  <div className="border-b border-outline-variant/40 bg-surface-container-lowest px-5 py-3">
-                    <EvidenceQuote evidence={evidenceSpan} />
-                  </div>
-                ) : null}
 
                 <div className="space-y-3 p-5">
                   {!readingMaterial ? (

@@ -66,6 +66,7 @@ from api.reading_materials import (
     lecturer_category,
 )
 from api.validation_views import (
+    QuestionVersionMisconceptionLinkView,
     ValidationSubmitView,
     _analysis_metrics,
     _answer_similarity_metrics,
@@ -79,6 +80,8 @@ from api.validation_views import (
     _reading_material_detail,
     _reading_material_staleness,
     _zero_validation_payload,
+    catalog_match_surface,
+    missing_concepts_surface,
 )
 from api.views import (
     _STUDENT_HIDDEN_ANALYSIS_KEYS,
@@ -2731,3 +2734,152 @@ class BackfillCatalogMatchMergeTests(SimpleTestCase):
             with self.assertRaises(TypeError):
                 merge_catalog_artefacts(
                     bad, self.MATCH, [], category='FN', write_missing=True)
+
+
+class CatalogSurfaceTests(SimpleTestCase):
+    """Phase 6: the catalogue surfaces exposed to lecturers and (restricted) students."""
+
+    MATCHED = {
+        'status': 'matched', 'concept_id': 'c1', 'concept_name': 'Konsep',
+        'misconception_id': 'm1', 'score': 0.71,
+        'candidates': [{'concept_id': 'c2', 'score': 0.55}],
+    }
+    NO_MATCH = {
+        'status': 'no_match', 'score': 0.58,
+        'candidates': [{'concept_id': 'c2', 'score': 0.58},
+                       {'concept_id': 'c3', 'score': 0.51}],
+    }
+    MISSING = [
+        {'concept_id': 'c1', 'name': 'N1', 'correct_conception': 'C1', 'score': 0.30},
+        {'concept_id': 'c2', 'name': 'N2', 'correct_conception': 'C2', 'score': 0.20},
+        {'concept_id': 'c3', 'name': 'N3', 'correct_conception': 'C3', 'score': 0.10},
+        {'concept_id': 'c4', 'name': 'N4', 'correct_conception': 'C4', 'score': 0.05},
+    ]
+
+    # -- missing_concepts_surface (pure) -----------------------------------
+
+    def test_missing_surface_drops_score_and_id_and_caps_three(self):
+        out = missing_concepts_surface({'missing_concepts': self.MISSING})
+        self.assertEqual([c['name'] for c in out], ['N1', 'N2', 'N3'])
+        for entry in out:
+            self.assertEqual(set(entry), {'name', 'correct_conception'})
+            self.assertNotIn('score', entry)
+            self.assertNotIn('concept_id', entry)
+
+    def test_missing_surface_is_empty_for_absent_or_malformed(self):
+        for breakdown in ({}, {'missing_concepts': None}, {'missing_concepts': 5}, None,
+                          {'missing_concepts': ['x', {}, {'correct_conception': 'C'}]}):
+            self.assertEqual(missing_concepts_surface(breakdown), [])
+
+    # -- catalog_match_surface (lecturer) ----------------------------------
+
+    def test_catalog_surface_is_none_when_nothing_was_mapped(self):
+        self.assertIsNone(catalog_match_surface({}))
+        self.assertIsNone(catalog_match_surface({'catalog_match': None}))
+        self.assertIsNone(catalog_match_surface(None))
+
+    def test_catalog_surface_matched_resolves_the_label_and_candidates(self):
+        with patch('api.validation_views._misconception_label',
+                   return_value='Label X') as label, \
+                patch('api.validation_views._concept_names',
+                      return_value={'c2': 'Kandidat'}), \
+                patch('api.validation_views._concept_misconceptions',
+                      return_value={'c2': [{'id': 'm2', 'label': 'L2'}]}):
+            out = catalog_match_surface({'catalog_match': self.MATCHED})
+        self.assertEqual(out['status'], 'matched')
+        self.assertEqual(out['label'], 'Label X')
+        self.assertEqual(out['misconception_id'], 'm1')
+        self.assertEqual(out['score'], 0.71)
+        label.assert_called_once_with('m1')
+        self.assertEqual(out['candidates'], [{
+            'concept_id': 'c2', 'name': 'Kandidat', 'score': 0.55,
+            'misconceptions': [{'id': 'm2', 'label': 'L2'}],
+        }])
+
+    def test_catalog_surface_no_match_never_invents_a_label(self):
+        with patch('api.validation_views._concept_names',
+                   return_value={'c2': 'C2', 'c3': 'C3'}), \
+                patch('api.validation_views._concept_misconceptions',
+                      return_value={'c3': [{'id': 'm3', 'label': 'L3'}]}), \
+                patch('api.validation_views._misconception_label') as label:
+            out = catalog_match_surface({'catalog_match': self.NO_MATCH})
+        self.assertEqual(out['status'], 'no_match')
+        self.assertIsNone(out['label'])
+        label.assert_not_called()
+        self.assertEqual([c['name'] for c in out['candidates']], ['C2', 'C3'])
+        self.assertEqual(out['candidates'][1]['misconceptions'], [{'id': 'm3', 'label': 'L3'}])
+
+    # -- _grounding_detail wiring ------------------------------------------
+
+    def _analysis(self):
+        return SimpleNamespace(suggested_materials_json=[])
+
+    def test_grounding_detail_exposes_catalog_and_missing(self):
+        breakdown = {'catalog_match': self.NO_MATCH, 'missing_concepts': self.MISSING}
+        with patch('api.validation_views._attach_document_titles', return_value=[]), \
+                patch('api.validation_views._reading_material_detail', return_value=None), \
+                patch('api.validation_views._concept_names', return_value={}), \
+                patch('api.validation_views._concept_misconceptions', return_value={}):
+            detail = _grounding_detail(self._analysis(), breakdown)
+            without = _grounding_detail(self._analysis(), breakdown, include_catalog=False)
+        self.assertEqual(detail['catalog_match']['status'], 'no_match')
+        self.assertEqual(len(detail['missing_concepts']), 3)
+        # The student slice suppresses the mapping but keeps the safe list.
+        self.assertIsNone(without['catalog_match'])
+        self.assertEqual(len(without['missing_concepts']), 3)
+
+
+class StudentCatalogueVisibilityTests(SimpleTestCase):
+    """Phase 6/D2: the student slice never carries the catalogue mapping."""
+
+    MATCHED = CatalogSurfaceTests.MATCHED
+    MISSING = CatalogSurfaceTests.MISSING
+    SOURCES = [{'chunk_id': 'c1', 'document_title': 'T', 'page': 3}]
+
+    def _analysis(self):
+        return SimpleNamespace(
+            suggested_materials_json=[],
+            answer_similarity_t1=None, answer_similarity_t3=None,
+            llm_t1_score=None, llm_t3_score=None, verdict_shadow_json={},
+            four_tier_category='FN',
+            submission=SimpleNamespace(question_version_id='qv-1'),
+        )
+
+    def _run(self, *, material, breakdown):
+        fake_validation = MagicMock()
+        fake_validation.objects.filter.return_value.first.return_value = None
+        with patch('api.views.Validation', fake_validation), \
+                patch('api.views._student_reading_material', return_value=material), \
+                patch('api.validation_views._reading_material_detail', return_value=None):
+            return _student_analysis_detail(self._analysis(), breakdown, 'qv-1')
+
+    def test_student_slice_has_no_mapping_and_a_safe_list_when_ready(self):
+        breakdown = {
+            'catalog_match': self.MATCHED,
+            'missing_concepts': self.MISSING,
+            'evidence_span': {'field': 'tier1', 'quote': 'q', 'sentence': 'q'},
+            'module_a': {'score': 'SALAH'},
+        }
+        detail = self._run(
+            material={'status': 'READY', 'content_md': 'M', 'sources': self.SOURCES},
+            breakdown=breakdown,
+        )
+        self.assertNotIn('catalog_match', detail)
+        self.assertEqual(
+            [c['name'] for c in detail['missing_concepts']], ['N1', 'N2', 'N3'])
+        for entry in detail['missing_concepts']:
+            self.assertEqual(set(entry), {'name', 'correct_conception'})
+        # the nested breakdown is scrubbed of BOTH raw artefacts
+        self.assertNotIn('catalog_match', detail['concept_breakdown_json'])
+        self.assertNotIn('missing_concepts', detail['concept_breakdown_json'])
+        # unrelated keys survive
+        self.assertEqual(detail['concept_breakdown_json']['module_a'], {'score': 'SALAH'})
+
+    def test_student_slice_hides_the_list_until_the_material_is_ready(self):
+        detail = self._run(
+            material={'status': 'PENDING'},
+            breakdown={'catalog_match': self.MATCHED, 'missing_concepts': self.MISSING},
+        )
+        self.assertEqual(detail['missing_concepts'], [])
+        self.assertIsNone(detail['evidence_span'])
+        self.assertNotIn('catalog_match', detail)

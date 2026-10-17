@@ -7,6 +7,7 @@ from .materials_views import (
 )
 from .validation_views import (
     ModelMetricsView,
+    QuestionVersionMisconceptionLinkView,
     ValidationDetailView,
     ValidationQueueView,
     ValidationSubmitView,
@@ -99,6 +100,7 @@ urlpatterns = [
     path('question-imports/<uuid:pk>', QuestionImportDetailView.as_view(), name='question-import-detail'),
     path('question-imports/<uuid:pk>/commit', QuestionImportCommitView.as_view(), name='question-import-commit'),
     path('questions/versions/<uuid:version_id>/publish', QuestionPublishView.as_view(), name='question-version-publish'),
+    path('questions/versions/<uuid:version_id>/misconceptions', QuestionVersionMisconceptionLinkView.as_view(), name='question-version-misconception-link'),
     path('exam-packages', ExamPackageListCreateView.as_view(), name='exam-package-list-create'),
     path('exam-packages/<uuid:pk>', ExamPackageDetailView.as_view(), name='exam-package-detail'),
     path('exam-packages/<uuid:pk>/duplicate', ExamPackageDuplicateView.as_view(), name='exam-package-duplicate'),

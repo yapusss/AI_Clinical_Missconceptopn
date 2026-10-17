@@ -24,13 +24,16 @@ import AppSelect from "../../../../components/AppSelect";
 import PageHeader from "../../../../components/PageHeader";
 import PageContainer from "../../../../components/PageContainer";
 import ReadingMaterial from "../../../../components/ReadingMaterial";
+import CatalogResult from "../../../../components/CatalogResult";
 import RichTextContent from "../../../../components/RichTextContent";
 import MathContent from "../../../../components/MathContent";
 import { apiFetch } from "../../../../lib/api";
 import type {
+  CatalogMatch,
   EvidenceSpan,
   GroundingReference,
   LearnedTopic,
+  MissingConcept,
   StudentReadingMaterial,
 } from "../../../../lib/studentSubmissions";
 import FeedbackModal from "../../../../components/FeedbackModal";
@@ -67,6 +70,9 @@ type AttemptItem = {
     reading_material?: StudentReadingMaterial | null;
     // v3.2: the sentence-level anchor to the misconception, or `null`.
     evidence_span?: EvidenceSpan | null;
+    // Phase 6: the catalogue mapping (lecturer-only) and the missing-concept list.
+    catalog_match?: CatalogMatch | null;
+    missing_concepts?: MissingConcept[];
     validation: {
       status: string;
       final_percentage: string | null;
@@ -84,6 +90,7 @@ type AttemptItem = {
 type QuestionReviewItem = {
   question_id: string;
   order_index: number;
+  version_id: string;
   prompt: string;
   short_answer?: string;
   model_answer: string;
@@ -91,7 +98,6 @@ type QuestionReviewItem = {
   status: string;
   attempts: AttemptItem[];
 };
-
 type PackageReviewSummary = {
   total_questions: number;
   validated_count: number;
@@ -1363,6 +1369,17 @@ export default function StudentPackageReviewPage({
                   </div>
                 )}
 
+                {/* Phase 6: the catalogue result + the optional authoring control
+                    (D5) — one click links the misconception to the question. */}
+                {currentAttempt?.analysis && (
+                  <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/70 px-3.5 py-2.5 text-xs">
+                    <CatalogResult
+                      catalog={currentAttempt.analysis.catalog_match ?? null}
+                      versionId={activeQuestion.version_id}
+                    />
+                  </div>
+                )}
+
                 {/* KEPUTUSAN VALIDASI DOSEN */}
                 {currentAttempt?.analysis ? (
                   <section
@@ -1447,6 +1464,9 @@ export default function StudentPackageReviewPage({
                         <ReadingMaterial
                           material={currentAttempt.analysis?.reading_material}
                           evidence={currentAttempt.analysis?.evidence_span ?? null}
+                          missingConcepts={
+                            currentAttempt.analysis?.missing_concepts ?? []
+                          }
                         />
 
                         <div className="pt-2 flex items-center justify-between border-t border-outline-variant/20">
@@ -1566,6 +1586,9 @@ export default function StudentPackageReviewPage({
                           <ReadingMaterial
                           material={currentAttempt.analysis?.reading_material}
                           evidence={currentAttempt.analysis?.evidence_span ?? null}
+                          missingConcepts={
+                            currentAttempt.analysis?.missing_concepts ?? []
+                          }
                         />
                         </div>
 

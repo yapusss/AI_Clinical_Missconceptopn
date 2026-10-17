@@ -3,9 +3,11 @@ import { BookMarked, Loader2 } from "lucide-react";
 
 import type {
   EvidenceSpan,
+  MissingConcept,
   ReadingMaterialSource,
 } from "../lib/studentSubmissions";
 import EvidenceQuote, { resolveEvidenceSentence } from "./EvidenceQuote";
+import MissingConcepts from "./MissingConcepts";
 
 export type ReadingMaterialProps = {
   material?:
@@ -17,6 +19,8 @@ export type ReadingMaterialProps = {
     | null;
   /** v3.2: the student's misconception sentence, rendered above the header. */
   evidence?: EvidenceSpan | null;
+  /** Phase 6: the "Konsep yang belum dikuasai" list, above the material. */
+  missingConcepts?: MissingConcept[] | null;
 };
 
 // C7/S3: the student sees the material the LLM wrote for them, never the verdict's
@@ -30,12 +34,15 @@ export type ReadingMaterialProps = {
 // v3.2: the evidence block is about the ANSWER, not the material, so it renders
 // even when the material is missing/PENDING. When only the evidence exists there
 // is no material header to sit above — the card holds the block alone.
+// Phase 6 adds the missing-concept list in the same block, above "Materi Bacaan".
 export default function ReadingMaterial({
   material,
   evidence,
+  missingConcepts,
 }: ReadingMaterialProps) {
   const hasEvidence = resolveEvidenceSentence(evidence) !== "";
-  if (!material && !hasEvidence) return null;
+  const hasMissing = (missingConcepts ?? []).length > 0;
+  if (!material && !hasEvidence && !hasMissing) return null;
 
   const sources = material?.sources ?? [];
   const generating =
@@ -48,10 +55,18 @@ export default function ReadingMaterial({
         {hasEvidence && (
           <div
             className={
-              material ? "mb-3 border-b border-outline-variant/20 pb-3" : ""
+              material || hasMissing
+                ? "mb-3 border-b border-outline-variant/20 pb-3"
+                : ""
             }
           >
             <EvidenceQuote evidence={evidence} />
+          </div>
+        )}
+
+        {hasMissing && (
+          <div className={material ? "mb-3 border-b border-outline-variant/20 pb-3" : ""}>
+            <MissingConcepts concepts={missingConcepts} />
           </div>
         )}
 

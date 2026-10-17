@@ -437,6 +437,9 @@ function SubmissionPackageDetailPageContent() {
                           evidence={
                             currentAttempt.evaluation?.evidence_span ?? null
                           }
+                          missingConcepts={
+                            currentAttempt.evaluation?.missing_concepts ?? []
+                          }
                         />
 
                         {currentAttempt.evaluation.validator_name && (

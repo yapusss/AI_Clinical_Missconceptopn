@@ -16,8 +16,9 @@
 
 import json
 import logging
+import uuid
 
-from django.db import ProgrammingError, connection, transaction
+from django.db import IntegrityError, ProgrammingError, connection, transaction
 from django.db.models import Count, Q
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -174,7 +175,134 @@ def _reading_material_detail(analysis):
     }
 
 
-def _grounding_detail(analysis, breakdown: dict) -> dict:
+def _concept_names(concept_ids):
+    """`{str(concept_id): name}` for the given concepts; `{}` on any failure.
+
+    Catalogue metadata is a presentational extra: a lookup failure must degrade
+    to a name-less candidate, never break the review page.
+    """
+    ids = [str(c) for c in concept_ids if c]
+    if not ids:
+        return {}
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                'SELECT id, name FROM concepts WHERE id = ANY(%s::uuid[])',
+                [ids],
+            )
+            return {str(row[0]): row[1] for row in cur.fetchall()}
+    except Exception:  # noqa: BLE001 — never fail the surface on a lookup
+        logger.warning('Could not resolve catalogue concept names', exc_info=True)
+        return {}
+
+
+def _concept_misconceptions(concept_ids):
+    """`{str(concept_id): [{'id','label'}]}` — the override options per concept."""
+    ids = [str(c) for c in concept_ids if c]
+    if not ids:
+        return {}
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT concept_id, id, label
+                FROM misconceptions
+                WHERE concept_id = ANY(%s::uuid[])
+                ORDER BY concept_id, label
+                """,
+                [ids],
+            )
+            options = {}
+            for concept_id, misconception_id, label in cur.fetchall():
+                options.setdefault(str(concept_id), []).append(
+                    {'id': str(misconception_id), 'label': label})
+            return options
+    except Exception:  # noqa: BLE001 — never fail the surface on a lookup
+        logger.warning('Could not resolve catalogue misconceptions', exc_info=True)
+        return {}
+
+
+def _misconception_label(misconception_id):
+    """The catalogue misconception's label, or `None` when it cannot be read."""
+    if not misconception_id:
+        return None
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                'SELECT label FROM misconceptions WHERE id = %s',
+                [str(misconception_id)],
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:  # noqa: BLE001 — never fail the surface on a lookup
+        logger.warning('Could not resolve misconception label', exc_info=True)
+        return None
+
+
+def missing_concepts_surface(breakdown, limit=3) -> list:
+    """The student-safe missing list: concept `name` + `correct_conception`.
+
+    Plan D2/D4: the student never sees the misconception label nor any score, so
+    the stored `concept_id`/`score` are dropped here. The list is already capped
+    by the writer; `limit` is a belt-and-braces guard. Pure — no DB, no network.
+    """
+    raw = (breakdown or {}).get('missing_concepts')
+    out = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict) or not item.get('name'):
+                continue
+            out.append({
+                'name': item.get('name'),
+                'correct_conception': item.get('correct_conception'),
+            })
+            if len(out) >= limit:
+                break
+    return out
+
+
+def catalog_match_surface(breakdown):
+    """The lecturer-facing catalogue result, or `None` when nothing was mapped.
+
+    A `matched` result exposes the misconception label + score; a `no_match`
+    result exposes the top-3 candidate concepts with their scores and, for the
+    override control, each candidate concept's misconception options (plan D3 /
+    D5). A `None`/`no_match` never invents a label.
+    """
+    match = (breakdown or {}).get('catalog_match')
+    if not isinstance(match, dict):
+        return None
+
+    candidates_raw = [
+        c for c in (match.get('candidates') or []) if isinstance(c, dict)]
+    concept_ids = [c.get('concept_id') for c in candidates_raw]
+    names = _concept_names(concept_ids)
+    options_by_concept = _concept_misconceptions(concept_ids)
+
+    candidates = []
+    for c in candidates_raw:
+        cid = str(c['concept_id']) if c.get('concept_id') else None
+        candidates.append({
+            'concept_id': cid,
+            'name': names.get(cid) or None,
+            'score': c.get('score'),
+            'misconceptions': options_by_concept.get(cid, []) if cid else [],
+        })
+
+    status = match.get('status')
+    return {
+        'status': status,
+        'score': match.get('score'),
+        'misconception_id': match.get('misconception_id'),
+        'label': (_misconception_label(match.get('misconception_id'))
+                  if status == 'matched' else None),
+        'concept_id': match.get('concept_id'),
+        'concept_name': match.get('concept_name'),
+        'candidates': candidates,
+    }
+
+
+def _grounding_detail(analysis, breakdown: dict, include_catalog=True) -> dict:
     """Assemble the reference/material block exposed to the lecturer UI.
 
     Stable shape across prompt versions. `references` is the provenance of the
@@ -183,8 +311,12 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
     (`grounding_similarity`, `grounding_payload` and the nested `grounding`
     block); their DB columns stay so historical rows remain interpretable. C6
     adds the generated `reading_material` block (or `None`).
+
+    Phase 6 adds the catalogue surfaces. `include_catalog=False` is used by the
+    student-slice builder, which must never expose the mapping (label, score,
+    candidates) — see `views._student_analysis_detail`.
     """
-    return {
+    detail = {
         'concept_breakdown_json': breakdown,
         'references': _attach_document_titles(breakdown.get('references') or []),
         'what_should_be_learned': breakdown.get('what_should_be_learned') or [],
@@ -208,7 +340,13 @@ def _grounding_detail(analysis, breakdown: dict) -> dict:
         # C6: the generated reading material for this (question_version, category),
         # or `None` when none exists (SC, or a pre-drain analysis).
         'reading_material': _reading_material_detail(analysis),
+        # Phase 6: the catalogue mapping (label + score, or the no-match
+        # candidates) and the missing-concept list. Student-slice callers pass
+        # `include_catalog=False` so neither reaches the student surface.
+        'catalog_match': catalog_match_surface(breakdown) if include_catalog else None,
+        'missing_concepts': missing_concepts_surface(breakdown),
     }
+    return detail
 
 
 def _misconception_confirmations(breakdown: dict, confirmations: list) -> dict:
@@ -404,6 +542,78 @@ class ValidationDetailView(APIView):
             },
             'validatable': sub.status == 'PENDING_VALIDATION',
             'existing_validation': existing_payload,
+        })
+
+
+class QuestionVersionMisconceptionLinkView(APIView):
+    """The optional authoring path (plan D5) — link a misconception to a question.
+
+    Confirming a catalogue match (or overriding it) stores the lecturer's chosen
+    misconception in `question_version_misconceptions`. Idempotent: the link
+    table's primary key is `(question_version_id, misconception_id)`, so a
+    repeated link is a no-op and no text is ever typed. The link narrows the
+    catalogue candidate set the next time the question is analysed
+    (`catalog_mapping.question_version_concept_ids`).
+    """
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, version_id):
+        misconception_id = request.data.get('misconception_id')
+        try:
+            misconception_id = str(uuid.UUID(str(misconception_id)))
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'misconception_id tidak valid.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT qs.subject_id
+                FROM question_versions qv
+                JOIN questions q ON q.id = qv.question_id
+                JOIN question_sets qs ON qs.id = q.question_set_id
+                WHERE qv.id = %s
+                """,
+                [str(version_id)],
+            )
+            row = cur.fetchone()
+        if not row:
+            return Response(
+                {'detail': 'Versi soal tidak ditemukan.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not is_lecturer_for_subject(request.user, row[0]):
+            return Response(
+                {'detail': 'Anda tidak berwenang mengubah soal ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO question_version_misconceptions
+                        (question_version_id, misconception_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT (question_version_id, misconception_id) DO NOTHING
+                    """,
+                    [str(version_id), misconception_id],
+                )
+                linked = cur.rowcount > 0
+        except IntegrityError:
+            return Response(
+                {'detail': 'Miskonsepsi tidak ditemukan.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'question_version_id': str(version_id),
+            'misconception_id': misconception_id,
+            'linked': linked,
         })
 
 

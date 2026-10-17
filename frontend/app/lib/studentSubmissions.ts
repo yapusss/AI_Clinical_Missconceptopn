@@ -9,6 +9,33 @@ export type EvidenceSpan = {
   sentence?: string | null;
 };
 
+// Phase 6 (plan D2): the student-facing "Konsep yang belum dikuasai" list. The
+// backend deliberately drops the concept id and the similarity score — only the
+// concept name and its correct conception cross the boundary.
+export type MissingConcept = {
+  name: string;
+  correct_conception: string | null;
+};
+
+// The lecturer-facing catalogue result (Phase 6): a matched misconception label
+// with its score, or a `no_match` abstain with the top-3 candidate concepts.
+export type CatalogCandidate = {
+  concept_id: string | null;
+  name: string | null;
+  score: number | null;
+  misconceptions: { id: string; label: string }[];
+};
+
+export type CatalogMatch = {
+  status: string;
+  score: number | null;
+  misconception_id: string | null;
+  label: string | null;
+  concept_id: string | null;
+  concept_name: string | null;
+  candidates: CatalogCandidate[];
+};
+
 export type StudentEvaluation = {
   percentage_correct: number;
   is_score_modified: boolean;
@@ -27,6 +54,9 @@ export type StudentEvaluation = {
   reading_material?: StudentReadingMaterial | null;
   // v3.2: the sentence-level anchor, present only while the material is READY.
   evidence_span?: EvidenceSpan | null;
+  // Phase 6 (plan D2): concepts the student did not address, present only while
+  // the material is READY. Never carries a misconception label or a score.
+  missing_concepts?: MissingConcept[];
   validator_name?: string;
   validated_at?: string;
 };

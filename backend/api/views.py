@@ -2388,12 +2388,29 @@ def _student_analysis_detail(analysis, breakdown, question_version_id):
     is the same authority the student package surface uses), an absent row is
     enqueued (`PENDING`, never generated in-request), and the `evidence_span`
     anchor is exposed only once that material row is `READY`.
-    """
-    from .validation_views import _grounding_detail
 
-    detail = _grounding_detail(analysis, breakdown)
+    Phase 6 (plan D2/D3): the student gets the `missing_concepts` list
+    (`name` + `correct_conception` only) and **never** the catalogue mapping —
+    no misconception label, candidates or score. The nested
+    `concept_breakdown_json` is scrubbed of both artefacts, and the list obeys
+    the same `READY`-material gate as the anchor.
+    """
+    from .validation_views import _grounding_detail, missing_concepts_surface
+
+    detail = _grounding_detail(analysis, breakdown, include_catalog=False)
     for key in _STUDENT_HIDDEN_ANALYSIS_KEYS:
         detail.pop(key, None)
+    # D2/D3: the mapping (label, score, candidates) never reaches the student.
+    detail.pop('catalog_match', None)
+
+    # D2/D3: scrub the raw (score-bearing) catalogue artefacts from the nested
+    # breakdown so nothing can leak them, whatever the caller does with `detail`.
+    safe_breakdown = detail.get('concept_breakdown_json')
+    if isinstance(safe_breakdown, dict):
+        safe_breakdown = dict(safe_breakdown)
+        safe_breakdown.pop('catalog_match', None)
+        safe_breakdown.pop('missing_concepts', None)
+        detail['concept_breakdown_json'] = safe_breakdown
 
     validation = Validation.objects.filter(analysis=analysis).first()
     if validation is not None:
@@ -2409,9 +2426,13 @@ def _student_analysis_detail(analysis, breakdown, question_version_id):
     )
     detail['reading_material'] = reading_material
     # The tint and the model's causal claim must not arrive before the reading
-    # they belong to, so the anchor waits for READY material.
+    # they belong to, so the anchor and the missing-concept list wait for READY
+    # material.
     if not (reading_material and reading_material.get('status') == 'READY'):
         detail['evidence_span'] = None
+        detail['missing_concepts'] = []
+    else:
+        detail['missing_concepts'] = missing_concepts_surface(breakdown)
     return detail
 
 
@@ -2476,6 +2497,8 @@ class QuestionSetStudentReviewView(APIView):
         }
 
         rows = []
+        from .validation_views import catalog_match_surface
+
         for question in questions:
             version = version_by_question.get(question.id)
             if not version:
@@ -2519,6 +2542,11 @@ class QuestionSetStudentReviewView(APIView):
                             analysis, analysis.concept_breakdown_json or {},
                             s.question_version_id,
                         ),
+                        # Phase 6: the lecturer reviewing this student also needs
+                        # the catalogue result. It is deliberately NOT part of the
+                        # student slice spread above (D2/D3).
+                        'catalog_match': catalog_match_surface(
+                            analysis.concept_breakdown_json or {}),
                         'validation': {
                             'status': validation.status,
                             'final_percentage': str(validation.final_percentage) if validation.final_percentage is not None else None,
@@ -3617,6 +3645,8 @@ class StudentSubmissionListView(APIView):
 
 def _build_submission_package_groups(user):
     """Group student submissions by their assigned exam package and exact versions."""
+    from .validation_views import missing_concepts_surface
+
     submissions = list(
         Submission.objects.filter(student=user, exam_package_id__isnull=False)
         .order_by('submitted_at')
@@ -3703,11 +3733,15 @@ def _build_submission_package_groups(user):
 
                     # v3.2: the student sees the anchor only once the material row
                     # is READY — the model's causal claim must not arrive before
-                    # the reading it accompanies.
+                    # the reading it accompanies. Phase 6 adds the
+                    # `missing_concepts` list under the same gate (D2: name +
+                    # correct_conception only — never a label, candidate or score).
                     evidence_span = None
+                    missing_concepts = []
                     if reading_material and reading_material.get('status') == 'READY':
                         breakdown = getattr(analysis, 'concept_breakdown_json', None) or {}
                         evidence_span = breakdown.get('evidence_span')
+                        missing_concepts = missing_concepts_surface(breakdown)
 
                     evaluation_payload = {
                         'percentage_correct': final_score,
@@ -3725,6 +3759,7 @@ def _build_submission_package_groups(user):
                         'validated_at': validation.validated_at.isoformat() if validation.validated_at else None,
                         'reading_material': reading_material,
                         'evidence_span': evidence_span,
+                        'missing_concepts': missing_concepts,
                     }
 
                 attempts.append({
