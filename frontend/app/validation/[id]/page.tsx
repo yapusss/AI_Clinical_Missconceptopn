@@ -214,9 +214,10 @@ export default function ValidationDetailPage() {
 
       const existing = det.existing_validation;
       setFinalPct(existing?.final_percentage ?? det.llm.percentage_correct);
-      setFinalCategory(
-        existing?.final_category ?? det.llm.four_tier_category ?? "",
-      );
+      // The diagnosis is the decision this screen exists to make, so it is never
+      // inherited from the AI: with no prior validation the lecturer must choose
+      // it explicitly. Editing an earlier decision keeps the stored value.
+      setFinalCategory(existing?.final_category ?? "");
       setFeedback(existing?.final_feedback ?? det.llm.explanation);
 
       const initialConfirms: Record<string, boolean> = {};
@@ -387,7 +388,10 @@ export default function ValidationDetailPage() {
   const resetToAiValues = () => {
     if (!data) return;
     setFinalPct(data.llm.percentage_correct);
-    setFinalCategory(data.llm.four_tier_category ?? "");
+    // Score and feedback can fall back to the AI's; the diagnosis cannot. It is
+    // cleared back to an explicit choice so the reset never re-seeds the very
+    // decision this screen exists to overrule.
+    setFinalCategory("");
     setFeedback(data.llm.explanation);
   };
 
@@ -565,7 +569,7 @@ export default function ValidationDetailPage() {
                           value={data.answer.tier1_answer || data.answer.text}
                           className="mt-1 text-sm font-semibold text-on-surface font-mono-ui"
                           highlightQuote={tier1Highlight?.quote}
-                          highlightReason={tier1Highlight?.reason}
+                          highlightReason={finalCategory ? tier1Highlight?.reason : undefined}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
@@ -588,7 +592,7 @@ export default function ValidationDetailPage() {
                           value={data.answer.tier3_reason || data.answer.text}
                           className="mt-1 text-sm text-on-surface font-mono-ui leading-relaxed"
                           highlightQuote={tier3Highlight?.quote}
-                          highlightReason={tier3Highlight?.reason}
+                          highlightReason={finalCategory ? tier3Highlight?.reason : undefined}
                         />
                       </div>
                       <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 sm:col-span-2">
@@ -1043,7 +1047,7 @@ export default function ValidationDetailPage() {
                       type="button"
                       onClick={resetToAiValues}
                       className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 cursor-pointer font-medium"
-                      title="Kembalikan form ke nilai awal AI"
+                      title="Kembalikan skor & umpan balik ke nilai awal AI (diagnosis tetap pilihan Anda)"
                     >
                       <RotateCcw size={12} /> Reset ke AI
                     </button>
