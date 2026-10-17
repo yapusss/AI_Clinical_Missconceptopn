@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef } from "react";
 import DOMPurify from "dompurify";
 import type { MathfieldElement } from "mathlive";
 import { loadMathLive } from "./mathLiveLoader";
-import { buildNormalized, foldQuotes } from "./evidence";
 import "mathlive/static.css";
 
 const ALLOWED_TAGS = [
@@ -43,91 +42,12 @@ function ensureStyleHook() {
   styleHookReady = true;
 }
 
-type TextSpan = { node: Text; start: number; end: number };
-
-/**
- * One concatenated plain string of every rendered text node (outside a
- * `math-field`, whose LaTeX is not student prose) plus the per-node offsets used
- * to map a match back onto the nodes.
- */
-function collectText(root: HTMLElement): { text: string; spans: TextSpan[] } {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => {
-      const parent = (node as Text).parentElement;
-      if (parent && parent.closest("math-field")) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  let text = "";
-  const spans: TextSpan[] = [];
-  let current = walker.nextNode();
-  while (current) {
-    const node = current as Text;
-    const start = text.length;
-    text += node.data;
-    spans.push({ node, start, end: text.length });
-    current = walker.nextNode();
-  }
-  return { text, spans };
-}
-
-/** Undo a previous pass so the effect is idempotent (and MathLive survives). */
-function clearMarks(root: HTMLElement) {
-  root.querySelectorAll("mark.evidence-mark").forEach((mark) => {
-    const parent = mark.parentNode;
-    if (!parent) return;
-    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-    parent.removeChild(mark);
-  });
-  root.normalize();
-}
-
-/** Wrap the located quote's original characters in `<mark class="evidence-mark">`. */
-function applyHighlight(root: HTMLElement, quote: string): boolean {
-  const { text, spans } = collectText(root);
-  if (!text) return false;
-  const { value, indexMap } = buildNormalized(text);
-  const cleanQuote = foldQuotes(quote).toLowerCase().replace(/\s+/g, " ").trim();
-  if (!cleanQuote) return false;
-  const at = value.indexOf(cleanQuote);
-  if (at < 0) return false;
-
-  const start = indexMap[at];
-  const end = indexMap[at + cleanQuote.length - 1] + 1;
-
-  const segments: { node: Text; start: number; end: number }[] = [];
-  for (const span of spans) {
-    const segStart = Math.max(start, span.start);
-    const segEnd = Math.min(end, span.end);
-    if (segStart < segEnd) {
-      segments.push({ node: span.node, start: segStart - span.start, end: segEnd - span.start });
-    }
-  }
-  if (!segments.length) return false;
-
-  // Apply last-to-first so splitting an earlier node cannot invalidate a later
-  // segment's recorded offsets.
-  for (let i = segments.length - 1; i >= 0; i -= 1) {
-    const seg = segments[i];
-    const range = document.createRange();
-    range.setStart(seg.node, seg.start);
-    range.setEnd(seg.node, seg.end);
-    const mark = document.createElement("mark");
-    mark.className = "evidence-mark";
-    range.surroundContents(mark);
-  }
-  return true;
-}
-
 export default function RichTextContent({
   html,
   className,
-  highlightQuote,
 }: {
   html?: string | null;
   className?: string;
-  /** Sentence to tint, exactly as stored in `evidence_span.quote`. */
-  highlightQuote?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -166,21 +86,6 @@ export default function RichTextContent({
       active = false;
     };
   }, [clean]);
-
-  // The tint runs after the HTML is mounted. A miss renders nothing at all — no
-  // mark, so the model's claim never appears without the student text it points
-  // at.
-  useEffect(() => {
-    const root = containerRef.current;
-    if (!root) return;
-    clearMarks(root);
-    if (!highlightQuote) return;
-    try {
-      applyHighlight(root, highlightQuote);
-    } catch {
-      // A failed match leaves the text untinted.
-    }
-  }, [clean, highlightQuote]);
 
   if (!html) return null;
 

@@ -6,9 +6,8 @@ import { findQuoteRange } from "./evidence";
  * a block above "Materi Bacaan".
  *
  * The stored span may lack `sentence` (rows written before it was added), so the
- * quote is the fallback. The quote inside the sentence is tinted with the same
- * `.evidence-mark` used by the inline highlight; a miss shows the sentence
- * untinted.
+ * quote is the fallback. The quote inside the sentence is tinted with
+ * `.evidence-mark`; a miss shows the sentence untinted.
  */
 export function resolveEvidenceSentence(
   evidence?: EvidenceSpan | null,
