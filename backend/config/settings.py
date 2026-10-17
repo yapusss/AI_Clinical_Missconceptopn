@@ -188,11 +188,35 @@ READING_MATERIAL_TEMPERATURE = float(os.environ.get('READING_MATERIAL_TEMPERATUR
 READING_MATERIAL_MAX_RUNS = int(os.environ.get('READING_MATERIAL_MAX_RUNS', '3'))
 READING_MATERIAL_DRAIN_BATCH = int(os.environ.get('READING_MATERIAL_DRAIN_BATCH', '10'))
 
-# Catalogue mapping (plan Phases 4-5). Embedding-only, no LLM completion. The
-# thresholds are initial guesses (plan §6.2): tune from lecturer overrides once
-# enough confirmations exist. Both are env-overridable.
+# Catalogue mapping (plan Phases 4-5). Embedding-only, no LLM completion. Both
+# thresholds are calibrated by Step C of the calibration task against
+# `manage.py calibrate_catalog` (the 6 most recent validations; 5 of them produced
+# a score — the 6th, c05d46f6, is on a topic outside the catalogue). Both are
+# env-overridable.
+#
+# CATALOG_MATCH_THRESHOLD is calibrated against the **combined match score**
+# (the greater of the concept cosine and the extended-misconception cosine —
+# `label + "\n" + description`, Step C of the calibration task). On the 5 scored
+# rows the only scientifically-correct row (SC) scores 0.5688, while every known
+# misconception row (3 FN + 1 LK) scores 0.6071-0.6588. 0.62 (the original guess,
+# unchanged) sits in the largest gap in that distribution (0.6422 -> 0.6071) and
+# abstains on the correct row with a 0.051 margin; the construct fix, not a
+# lowered threshold, is what makes the `matched` branch fire. Only n=1 confirmed
+# negative exists, so the value is deliberately not lowered to also swallow the
+# 0.6071 row; every match score is stored per analysis so this remains
+# re-calibratable from lecturer overrides.
 CATALOG_MATCH_THRESHOLD = float(os.environ.get('CATALOG_MATCH_THRESHOLD', '0.62'))
-CONCEPT_COVERED_THRESHOLD = float(os.environ.get('CONCEPT_COVERED_THRESHOLD', '0.62'))
+
+# CONCEPT_COVERED_THRESHOLD is calibrated against the **coverage cosine**
+# (cos(student text, concept's `correct_conception`))) on the three FN rows that
+# actually receive a `missing_concepts` list. At the old guess (0.62) every row
+# hit the cap of 3 and the list named concepts the students demonstrably
+# addressed — e.g. 3b318e0b writes "gerak individual partikel bersifat acak" and
+# was told it missed "Gerak acak partikel" (cosine 0.6110). The concepts each
+# student actually addressed score 0.5178-0.6110; those they did not score
+# 0.3953-0.5039. 0.50 sits in that gap, so only genuinely unaddressed concepts
+# are flagged (6 concepts across the 3 rows, no row capped).
+CONCEPT_COVERED_THRESHOLD = float(os.environ.get('CONCEPT_COVERED_THRESHOLD', '0.50'))
 
 # Background LLM workers. The API records work (a submission, a PENDING reading
 # material) but only `analyze_submissions` / `drain_reading_materials` perform it, and

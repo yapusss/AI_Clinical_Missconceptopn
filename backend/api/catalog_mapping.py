@@ -5,6 +5,9 @@ Two jobs, both **embedding-only** (plan D7 — no new LLM completion):
 * **Map** — which catalogued misconception is this? Score the analysis text
   against the topic's concepts and take the best above a threshold, with an
   explicit `no_match` abstain (D3). Stored as `concept_breakdown_json.catalog_match`.
+  A candidate's score is `max(cos(text, concept), best misconception score)`,
+  where the misconception score is `max(cos(text, label_vec), cos(text,
+  full_vec))` — Step C's length-asymmetry fix.
 * **Locate** — which concepts did the student *not* address? Shortlist the topic's
   concepts against the question's reference answer, then keep those the student's
   text does not cover. Stored as `concept_breakdown_json.missing_concepts`.
@@ -12,7 +15,8 @@ Two jobs, both **embedding-only** (plan D7 — no new LLM completion):
 The scoring is a pure function (`score_catalog_match`) so it is testable without a
 database; the DB/embedding plumbing below it is deliberately thin. Every entry
 point degrades to `None`/`[]` rather than raising: a mapping failure must never
-fail an analysis (same rule as the material enqueue).
+fail an analysis (same rule as the material enqueue). A `None` is always logged
+with its reason (`catalog_absence_reason`) so it stays explainable.
 """
 
 import logging
@@ -26,7 +30,7 @@ from api.llm import _parse_vector
 logger = logging.getLogger(__name__)
 
 DEFAULT_MATCH_THRESHOLD = 0.62
-DEFAULT_COVERED_THRESHOLD = 0.62
+DEFAULT_COVERED_THRESHOLD = 0.50
 SHORTLIST_SIZE = 8
 MAX_MISSING = 3
 MAX_CANDIDATES_SHOWN = 3
@@ -36,18 +40,38 @@ MAX_CANDIDATES_SHOWN = 3
 # Pure scoring (no DB, no network)
 # ---------------------------------------------------------------------------
 
+def _misconception_score(text_vec, misconception):
+    """`max(cos(text, label_vec), cos(text, full_vec))`, or `None` if unscorable.
+
+    Step C: a misconception carries two vectors — the extended text (label +
+    description, `embedding`) and the preserved label-only vector
+    (`label_embedding`, migration 0034). Taking the better of the two means the
+    long analysis is no longer scored only against a short label, which depressed
+    cosine for reasons unrelated to meaning. Vectors that are absent are skipped;
+    `None` means the misconception has no usable embedding.
+    """
+    scores = []
+    for key in ('embedding', 'label_embedding'):
+        embedding = misconception.get(key)
+        if embedding:
+            scores.append(cosine(text_vec, embedding))
+    return max(scores) if scores else None
+
+
 def _best_misconception(text_vec, misconceptions):
     """The best-scoring misconception of the winning concept.
 
-    Deterministic: score desc, then `id` asc so a tie is stable. Misconceptions
-    without an embedding are skipped. Returns `None` when none can be scored.
+    Scores each misconception via `_misconception_score` (the better of its
+    extended and label-only vectors). Deterministic: score desc, then `id` asc so
+    a tie is stable. Misconceptions without an embedding are skipped. Returns
+    `None` when none can be scored.
     """
     scored = []
     for misc in misconceptions or []:
-        embedding = misc.get('embedding')
-        if not embedding:
+        score = _misconception_score(text_vec, misc)
+        if score is None:
             continue
-        scored.append((cosine(text_vec, embedding), str(misc['id']), misc))
+        scored.append((score, str(misc['id']), misc))
     if not scored:
         return None
     scored.sort(key=lambda item: (-item[0], item[1]))
@@ -58,10 +82,18 @@ def score_catalog_match(text_vec, candidates, threshold=None):
     """Map one analysis vector onto the catalogue.
 
     `candidates` is a list of
-    `{'concept_id', 'name', 'embedding', 'misconceptions': [{'id','label','embedding'}]}`.
-    A candidate without an embedding is skipped.
+    `{'concept_id', 'name', 'embedding', 'misconceptions': [{'id','label',
+    'embedding','label_embedding'}]}`. A candidate without a concept embedding is
+    skipped.
 
-    Returns, for a match (best score `>= threshold`):
+    Each candidate is scored as `max(cos(text, concept), misconception score)`,
+    where the misconception score is the best of the candidate's misconceptions'
+    `max(cos(text, label_vec), cos(text, full_vec))` (Step C). The **concept
+    score itself is unchanged** (`cos(text, candidate embedding)`) and remains the
+    floor; the extended misconception vector can only lift a candidate, never
+    lower it — so no row that matched before can stop matching.
+
+    Returns, for a match (best candidate score `>= threshold`):
 
         {'status': 'matched', 'concept_id', 'concept_name', 'misconception_id',
          'score', 'candidates': [{'concept_id', 'score'}, ... top 3 others]}
@@ -82,13 +114,19 @@ def score_catalog_match(text_vec, candidates, threshold=None):
         embedding = candidate.get('embedding')
         if not embedding:
             continue
-        scored.append((cosine(text_vec, embedding), str(candidate['concept_id']), candidate))
+        concept_score = cosine(text_vec, embedding)
+        best_misc = _best_misconception(
+            text_vec, candidate.get('misconceptions') or [])
+        misc_score = _misconception_score(text_vec, best_misc) if best_misc else None
+        # The concept score is the floor; the misconception score may lift it.
+        score = concept_score if misc_score is None else max(concept_score, misc_score)
+        scored.append((score, str(candidate['concept_id']), candidate, best_misc))
 
     if not scored:
         return {'status': 'no_match', 'score': None, 'candidates': []}
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    best_score, best_id, best_candidate = scored[0]
+    best_score, best_id, best_candidate, best_misconception = scored[0]
 
     if best_score < threshold:
         return {
@@ -96,12 +134,10 @@ def score_catalog_match(text_vec, candidates, threshold=None):
             'score': round(best_score, 4),
             'candidates': [
                 {'concept_id': cid, 'score': round(score, 4)}
-                for score, cid, _ in scored[:MAX_CANDIDATES_SHOWN]
+                for score, cid, _, _ in scored[:MAX_CANDIDATES_SHOWN]
             ],
         }
 
-    best_misconception = _best_misconception(
-        text_vec, best_candidate.get('misconceptions') or [])
     return {
         'status': 'matched',
         'concept_id': best_id,
@@ -110,7 +146,7 @@ def score_catalog_match(text_vec, candidates, threshold=None):
         'score': round(best_score, 4),
         'candidates': [
             {'concept_id': cid, 'score': round(score, 4)}
-            for score, cid, _ in scored[1:1 + MAX_CANDIDATES_SHOWN]
+            for score, cid, _, _ in scored[1:1 + MAX_CANDIDATES_SHOWN]
         ],
     }
 
@@ -173,9 +209,10 @@ def select_missing_concepts(shortlisted, student_vec, covered_threshold=None,
 # ---------------------------------------------------------------------------
 def _group_concepts(rows):
     """Rows `(concept_id, name, correct_conception, c_embedding, m_id, m_label,
-    m_embedding)` -> the candidate list the scorer expects."""
+    m_embedding, m_label_embedding)` -> the candidate list the scorer expects."""
     by_id = {}
-    for cid, name, correct_conception, c_embedding, m_id, m_label, m_embedding in rows:
+    for (cid, name, correct_conception, c_embedding,
+         m_id, m_label, m_embedding, m_label_embedding) in rows:
         key = str(cid)
         entry = by_id.get(key)
         if entry is None:
@@ -192,6 +229,7 @@ def _group_concepts(rows):
                 'id': str(m_id),
                 'label': m_label,
                 'embedding': _parse_vector(m_embedding),
+                'label_embedding': _parse_vector(m_label_embedding),
             })
     return list(by_id.values())
 
@@ -204,7 +242,7 @@ def load_topic_concepts(topic_id):
         cur.execute(
             """
             SELECT c.id, c.name, c.correct_conception, c.embedding::text,
-                   m.id, m.label, m.embedding::text
+                   m.id, m.label, m.embedding::text, m.label_embedding::text
             FROM concepts c
             LEFT JOIN misconceptions m ON m.concept_id = c.id
             WHERE c.topic_id = %s AND c.embedding IS NOT NULL
@@ -244,6 +282,29 @@ def narrow_candidates(concepts, concept_ids):
     return [c for c in concepts if c['concept_id'] in concept_ids]
 
 
+def catalog_absence_reason(topic_id, concepts):
+    """Why a mapping has nothing to score — a pure, DB-free classification.
+
+    Three degrade paths collapse to a `catalog_match` of `None` today, and the
+    Phase 345 task's verify step treats all of them as "nothing to map":
+
+    * `missing_topic` — the analysis has no topic at all (`question_sets.topic_id`
+      NULL), so there is no catalogue to consult;
+    * `topic_not_in_catalogue` — the topic exists but carries no embedded concept,
+      i.e. the question is outside the catalogue's topic scope (this is the path
+      `c05d46f6-…` hit: its topic is Termodinamika, which has 0 concepts);
+    * `None` — there is a candidate list, so the caller proceeds to score.
+
+    Kept pure and separate so a null is explainable (and testable) without a
+    database, rather than being an unexplained `None`.
+    """
+    if not topic_id:
+        return 'missing_topic'
+    if not concepts:
+        return 'topic_not_in_catalogue'
+    return None
+
+
 def build_catalog_artefacts(*, analysis_text, topic_id, question_version_id=None,
                             reference_vec=None, allow_missing=True,
                             match_threshold=None, covered_threshold=None):
@@ -256,15 +317,28 @@ def build_catalog_artefacts(*, analysis_text, topic_id, question_version_id=None
     qualifies. The vector is returned so the caller can see what was scored. A
     provider failure propagates as `EmbeddingError`; the caller decides how to
     degrade.
+
+    A null is **logged with its reason** (`catalog_absence_reason`) and never
+    silently swallowed: an unexplained `None` is what made the Step C.5 row look
+    like a bug.
     """
     concepts = load_topic_concepts(topic_id)
     if not concepts:
+        reason = catalog_absence_reason(topic_id, concepts)
+        logger.info(
+            'catalogue mapping has no candidates for topic=%s (%s)', topic_id, reason)
         return None, [], None
 
     text_vec = embed_text(analysis_text)
 
     concept_ids = question_version_concept_ids(question_version_id)
     candidates = narrow_candidates(concepts, concept_ids)
+    if not candidates:
+        # A question-version link that points outside its topic's concepts would
+        # narrow everything away; log it instead of abstaining silently.
+        logger.info(
+            'catalogue mapping narrowed every concept away for topic=%s '
+            '(question_version=%s)', topic_id, question_version_id)
     catalog_match = score_catalog_match(text_vec, candidates, match_threshold)
 
     missing = []

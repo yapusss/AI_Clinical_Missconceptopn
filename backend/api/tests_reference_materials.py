@@ -23,6 +23,7 @@ from api import reading_materials
 from api.models import ExamPackage
 from api.embeddings import answer_similarity, cosine
 from api.catalog_mapping import (
+    catalog_absence_reason,
     score_catalog_match,
     select_missing_concepts,
     shortlist_concepts,
@@ -54,6 +55,7 @@ from api.misconception_catalog import (
     catalog_keys,
     concept_embedding_text,
     misconception_embedding_text,
+    misconception_label_embedding_text,
     parse_review_rows,
     plan_catalog,
     split_misconception_cell,
@@ -2476,10 +2478,18 @@ class CatalogEmbeddingTextTests(SimpleTestCase):
             'Materi tersusun atas partikel\nPartikel diskrit',
         )
 
-    def test_misconception_text_is_the_label(self):
-        self.assertEqual(misconception_embedding_text('Air tidak mengandung hidrogen'),
-                         'Air tidak mengandung hidrogen')
-        self.assertEqual(misconception_embedding_text(''), '')
+    def test_misconception_text_extends_the_label_with_the_description(self):
+        self.assertEqual(
+            misconception_embedding_text('Air tidak mengandung hidrogen', 'Air = H2O'),
+            'Air tidak mengandung hidrogen\nAir = H2O',
+        )
+        # A row without a description degrades to the label.
+        self.assertEqual(misconception_embedding_text('Air = H2O', ''), 'Air = H2O')
+        self.assertEqual(misconception_embedding_text('', ''), '')
+
+    def test_label_text_is_the_label_only(self):
+        self.assertEqual(misconception_label_embedding_text('Air = H2O'), 'Air = H2O')
+        self.assertEqual(misconception_label_embedding_text(''), '')
 
     def test_hash_is_sha256_of_the_embedded_text(self):
         import hashlib
@@ -2493,10 +2503,15 @@ class CatalogEmbeddingTextTests(SimpleTestCase):
         before = catalog_content_hash(concept_embedding_text('K', 'C'))
         after = catalog_content_hash(concept_embedding_text('K', 'C2'))
         self.assertNotEqual(before, after)
-        # A misconception's hash is over its label, so a label edit moves it too.
+        # A misconception's hash is over its extended text, so a label OR a
+        # description edit moves it.
         self.assertNotEqual(
-            catalog_content_hash(misconception_embedding_text('label A')),
-            catalog_content_hash(misconception_embedding_text('label B')),
+            catalog_content_hash(misconception_embedding_text('label A', 'desc')),
+            catalog_content_hash(misconception_embedding_text('label B', 'desc')),
+        )
+        self.assertNotEqual(
+            catalog_content_hash(misconception_embedding_text('label A', 'desc 1')),
+            catalog_content_hash(misconception_embedding_text('label A', 'desc 2')),
         )
 
 
@@ -2591,6 +2606,71 @@ class CatalogMatchScoringTests(SimpleTestCase):
     def test_matched_concept_without_misconceptions_has_null_id(self):
         result = score_catalog_match(self.TEXT, [_candidate('c1', 0)], threshold=0.62)
         self.assertIsNone(result['misconception_id'])
+
+    # -- Step C: extended misconception embedding --------------------------
+
+    def test_misconception_uses_the_better_of_label_and_full_vectors(self):
+        # m-a's label is far but its full text is near; m-b is the reverse, and
+        # its full text wins. The max over both vectors picks each correctly.
+        candidates = [
+            _candidate('c1', 0, 'N', misconceptions=[
+                {'id': 'm-a', 'label': 'a', 'embedding': _vec(70), 'label_embedding': _vec(10)},
+                {'id': 'm-b', 'label': 'b', 'embedding': _vec(20), 'label_embedding': _vec(60)},
+            ]),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.99)
+        # m-a -> max(cos70=0.342, cos10=0.9848); m-b -> max(cos20=0.9397, cos60=0.5).
+        self.assertEqual(result['status'], 'matched')
+        self.assertEqual(result['misconception_id'], 'm-a')
+
+    def test_extended_misconception_can_lift_a_candidate_above_its_concept(self):
+        # The concept is far (cos 60 = 0.5) but its misconception is near (cos 5):
+        # the length fix lets the misconception carry the match.
+        candidates = [
+            _candidate('c1', 60, 'N', misconceptions=[
+                {'id': 'm1', 'label': 'l', 'embedding': _vec(5), 'label_embedding': None},
+            ]),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.99)
+        self.assertEqual(result['status'], 'matched')
+        self.assertEqual(result['score'], 0.9962)
+
+    def test_a_weak_misconception_never_lowers_the_concept_score(self):
+        candidates = [
+            _candidate('c1', 0, 'N', misconceptions=[
+                {'id': 'm1', 'label': 'l', 'embedding': _vec(90), 'label_embedding': _vec(90)},
+            ]),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.99)
+        self.assertEqual(result['score'], 1.0)
+
+    def test_misconception_without_any_embedding_is_still_a_concept_only_match(self):
+        candidates = [
+            _candidate('c1', 0, 'N', misconceptions=[
+                {'id': 'm1', 'label': 'l', 'embedding': None, 'label_embedding': None},
+            ]),
+        ]
+        result = score_catalog_match(self.TEXT, candidates, threshold=0.99)
+        self.assertEqual(result['status'], 'matched')
+        self.assertEqual(result['score'], 1.0)
+        self.assertIsNone(result['misconception_id'])
+
+
+class CatalogAbsenceReasonTests(SimpleTestCase):
+    """Step C.5: a null `catalog_match` is explainable, not silent."""
+
+    def test_missing_topic(self):
+        self.assertEqual(catalog_absence_reason(None, []), 'missing_topic')
+        self.assertEqual(catalog_absence_reason('', []), 'missing_topic')
+
+    def test_topic_not_in_catalogue(self):
+        self.assertEqual(
+            catalog_absence_reason('0b000000-0000-0000-0000-000000000001', []),
+            'topic_not_in_catalogue',
+        )
+
+    def test_no_reason_when_there_is_a_candidate(self):
+        self.assertIsNone(catalog_absence_reason('t1', [{'concept_id': 'c1'}]))
 
 
 def _concept(concept_id, angle, name=None):

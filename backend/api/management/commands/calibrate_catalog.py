@@ -33,6 +33,7 @@ from django.db import connection
 from api.catalog_mapping import (
     MAX_MISSING,
     _best_misconception,
+    _misconception_score,
     load_topic_concepts,
     narrow_candidates,
     question_version_concept_ids,
@@ -40,7 +41,7 @@ from api.catalog_mapping import (
     select_missing_concepts,
     shortlist_concepts,
 )
-from api.embeddings import cosine, embed_text
+from api.embeddings import embed_text
 from api.llm import load_context
 from api.management.commands.backfill_catalog_match import DEFAULT_LATEST_VALIDATIONS
 
@@ -213,8 +214,8 @@ class Command(BaseCommand):
             'candidates': (result or {}).get('candidates') or [],
             'misconception_label': best_misconception.get('label') if best_misconception else None,
             'misconception_score': (
-                round(cosine(text_vec, best_misconception['embedding']), 4)
-                if best_misconception and best_misconception.get('embedding') else None
+                round(_misconception_score(text_vec, best_misconception), 4)
+                if best_misconception else None
             ),
             'shortlisted': shortlisted,
             'text_vec': text_vec,

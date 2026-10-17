@@ -248,8 +248,24 @@ def concept_embedding_text(name, correct_conception):
     return f'{name}\n{correct_conception}'
 
 
-def misconception_embedding_text(label):
-    """The misconception's embedded text: its `label`, nothing else."""
+def misconception_embedding_text(label, description):
+    """`label + "\\n" + description` — the misconception's extended embedded text.
+
+    Step C (calibration): the Phase-3 vector was the label alone, so scoring a
+    long analysis against it depressed cosine for reasons unrelated to meaning.
+    The extended text is what `misconceptions.embedding` now holds; the label-only
+    vector is preserved in `misconceptions.label_embedding` so the scorer can take
+    the better of the two. A row without a description degrades to the label.
+    """
+    label = (label or '').strip()
+    description = (description or '').strip()
+    if description:
+        return f'{label}\n{description}'
+    return label
+
+
+def misconception_label_embedding_text(label):
+    """The misconception's label-only text — the preserved Phase-3 vector input."""
     return label or ''
 
 
