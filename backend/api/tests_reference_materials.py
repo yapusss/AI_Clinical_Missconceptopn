@@ -45,7 +45,6 @@ from api.management.commands import ingest_materials as ingest_cmd
 from api.management.commands.backfill_catalog_match import merge_catalog_artefacts
 from api.management.commands.backfill_evidence_spans import _as_dict, merge_evidence_span
 from api.materials_views import (
-    MATERIAL_UPLOAD_MAX_BYTES,
     ReadingMaterialFlagView,
     validate_material_upload,
 )
@@ -804,12 +803,15 @@ class MaterialUploadValidationTests(SimpleTestCase):
         self.assertIsNone(extension)
         self.assertIn('tidak ditemukan', error)
 
-    def test_size_cap(self):
-        extension, error = validate_material_upload('notes.pdf', MATERIAL_UPLOAD_MAX_BYTES + 1)
-        self.assertIsNone(extension)
-        self.assertIn('25MB', error)
-        extension, error = validate_material_upload('notes.pdf', MATERIAL_UPLOAD_MAX_BYTES)
+    def test_no_size_cap(self):
+        # User decision 2026-10-18: reference PDFs can be large — the 25 MB cap is
+        # gone. The only remaining size guard is an unreadable (None) upload.
+        extension, error = validate_material_upload('notes.pdf', 2 * 1024 * 1024 * 1024)
+        self.assertEqual(extension, '.pdf')
         self.assertIsNone(error)
+        extension, error = validate_material_upload('notes.pdf', None)
+        self.assertIsNone(extension)
+        self.assertIn('tidak dapat dibaca', error)
 
 
 class MaterialScopeTests(SimpleTestCase):
