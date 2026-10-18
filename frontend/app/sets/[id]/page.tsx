@@ -535,8 +535,8 @@ function AnswerSetContent() {
 
   return (
     <PageContainer>
-      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+      <div className="mb-5 flex flex-wrap items-center gap-3 max-[900px]:sticky max-[900px]:top-[72px] max-[900px]:z-30 max-[900px]:-mx-4 max-[900px]:border-b max-[900px]:border-outline-variant/30 max-[900px]:bg-[var(--bg-main)] max-[900px]:px-4 max-[900px]:py-2 max-[900px]:backdrop-blur lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
+        <div className="flex min-w-0 flex-1 flex-row items-center gap-3 sm:justify-end">
           {activeQuestion && (
             <span className="mr-auto font-display text-xl font-extrabold tracking-tight text-on-surface">
               Soal {activeQuestion.order_index}
@@ -564,7 +564,7 @@ function AnswerSetContent() {
             </div>
           )}
         </div>
-        <div className="flex w-full items-center rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-3.5 py-2">
+        <div className="flex w-auto shrink-0 items-center rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-3.5 py-2 lg:w-full">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-on-surface-variant">
               Soal selesai
@@ -603,7 +603,7 @@ function AnswerSetContent() {
                         ? "Batalkan tanda untuk dicek kembali"
                         : "Tandai untuk dicek kembali"
                     }
-                    className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg border transition-colors cursor-pointer ${
+                    className={`inline-flex size-9 max-sm:size-11 shrink-0 items-center justify-center rounded-lg border transition-colors cursor-pointer ${
                       currentAnswer.flagged
                         ? "border-rose-500/50 bg-rose-500/15 text-rose-700 dark:text-rose-400"
                         : "border-outline-variant/50 bg-surface-container-lowest text-on-surface-variant hover:border-rose-500/50 hover:text-rose-600 dark:hover:text-rose-400"
@@ -718,36 +718,38 @@ function AnswerSetContent() {
               </section>
 
               {/* Navigasi Soal Bawah */}
-              <div className="flex items-center justify-between pt-4 border-t border-outline-variant/30">
-                <button
-                  type="button"
-                  disabled={activeIndex === 0}
-                  onClick={() => {
-                    setError("");
-                    setActiveIndex((idx) => Math.max(0, idx - 1));
-                  }}
-                  className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-30 cursor-pointer"
-                >
-                  ← Soal Sebelumnya
-                </button>
+              <div className="flex flex-col gap-2 border-t border-outline-variant/30 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="order-2 flex gap-2 sm:contents">
+                  <button
+                    type="button"
+                    disabled={activeIndex === 0}
+                    onClick={() => {
+                      setError("");
+                      setActiveIndex((idx) => Math.max(0, idx - 1));
+                    }}
+                    className="btn-secondary flex-1 justify-center text-sm !py-2 max-sm:!py-2.5 !px-4 disabled:opacity-30 cursor-pointer max-sm:min-h-11 sm:order-1 sm:flex-none"
+                  >
+                    ← Soal Sebelumnya
+                  </button>
 
-                <span className="text-sm font-mono-ui text-on-surface-variant">
+                  <button
+                    type="button"
+                    onClick={handleNextOrFinish}
+                    className="btn-primary flex-1 justify-center text-sm !py-2.5 !px-6 cursor-pointer max-sm:min-h-11 sm:order-3 sm:flex-none"
+                  >
+                    {activeIndex === data.questions.length - 1 ? (
+                      <>
+                        Selesai &amp; Kumpulkan Semua <Send size={14} />
+                      </>
+                    ) : (
+                      <>Lanjut ke Soal Berikutnya →</>
+                    )}
+                  </button>
+                </div>
+
+                <span className="order-1 text-center text-sm font-mono-ui text-on-surface-variant sm:order-2">
                   Soal {activeIndex + 1} dari {data.questions.length}
                 </span>
-
-                <button
-                  type="button"
-                  onClick={handleNextOrFinish}
-                  className="btn-primary text-sm !py-2.5 !px-6 cursor-pointer"
-                >
-                  {activeIndex === data.questions.length - 1 ? (
-                    <>
-                      Selesai &amp; Kumpulkan Semua <Send size={14} />
-                    </>
-                  ) : (
-                    <>Lanjut ke Soal Berikutnya →</>
-                  )}
-                </button>
               </div>
             </div>
 
@@ -779,7 +781,7 @@ function AnswerSetContent() {
                           setError("");
                           setActiveIndex(idx);
                         }}
-                        className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm ${boxCls} ${
+                        className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm nav-dot ${boxCls} ${
                           isCurrent
                             ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
                             : "hover:border-primary/60"

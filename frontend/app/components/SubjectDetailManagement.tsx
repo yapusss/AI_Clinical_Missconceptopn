@@ -659,7 +659,7 @@ function LecturerWorkspace({
             />
           </div>
           {packages.length ? (
-            <div className="mt-5 overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
+            <div className="mt-5 table-scroll rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
               <table className="w-full text-left text-sm">
                 <thead className="bg-surface-container-low text-xs font-semibold uppercase text-on-surface-variant">
                   <tr>
@@ -995,7 +995,7 @@ function AdminTopics({
           className="form-input max-w-md"
         />
       </div>
-      <div className="mt-5 overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
+      <div className="mt-5 table-scroll rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
         <table className="w-full text-left text-sm">
           <thead className="bg-surface-container-low text-xs font-semibold uppercase text-on-surface-variant">
             <tr>

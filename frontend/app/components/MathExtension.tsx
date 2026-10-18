@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import {
   NodeViewWrapper,
@@ -8,7 +8,11 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import type { MathfieldElement } from "mathlive";
-import { loadMathLive } from "./mathLiveLoader";
+import {
+  hideMathKeyboard,
+  loadMathLive,
+  showMathKeyboard,
+} from "./mathLiveLoader";
 import StaticMath from "./StaticMath";
 import "mathlive/static.css";
 
@@ -22,6 +26,23 @@ declare module "@tiptap/core" {
 }
 
 /**
+ * Set right before inserting a node so the freshly mounted field opens the
+ * virtual keyboard. Module-level on purpose: the request originates from the
+ * toolbar click and is consumed by the node view that the insert creates.
+ */
+let openKeyboardOnNextField = false;
+
+export function requestMathKeyboardOnNextField() {
+  openKeyboardOnNextField = true;
+}
+
+function consumeKeyboardRequest(): boolean {
+  const requested = openKeyboardOnNextField;
+  openKeyboardOnNextField = false;
+  return requested;
+}
+
+/**
  * Live MathLive input used inside the editor. The `<math-field>` element is
  * created imperatively (rather than through JSX) so React never treats its
  * `value` as a controlled attribute and so the custom element only ever exists
@@ -30,15 +51,18 @@ declare module "@tiptap/core" {
 function MathFieldInput({
   value,
   onChange,
-  autoFocus = false,
+  autoOpenKeyboard = false,
 }: {
   value: string;
   onChange: (latex: string) => void;
-  autoFocus?: boolean;
+  autoOpenKeyboard?: boolean;
 }) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
   const fieldRef = useRef<MathfieldElement | null>(null);
   const onChangeRef = useRef(onChange);
+  // Read once on mount: the keyboard request applies to the insertion that
+  // created this field, not to later re-renders.
+  const autoOpenRef = useRef(autoOpenKeyboard);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -63,12 +87,26 @@ function MathFieldInput({
       host.appendChild(field);
       fieldRef.current = field;
 
-      if (autoFocus) requestAnimationFrame(() => field.focus());
+      if (autoOpenRef.current) {
+        // Focus after the element is connected, then ask MathLive to show its
+        // on-screen keyboard. The keyboard is a DOM panel, so this does not
+        // need to stay inside the original click gesture.
+        requestAnimationFrame(() => {
+          if (!field.isConnected) return;
+          field.focus();
+          void showMathKeyboard();
+          field.scrollIntoView({ block: "center", behavior: "smooth" });
+        });
+      }
 
       dispose = () => {
         field.removeEventListener("input", handleInput);
         field.remove();
         fieldRef.current = null;
+        // Only dismiss when no other formula field took over the keyboard.
+        if (!document.querySelector("math-field:focus-within")) {
+          hideMathKeyboard();
+        }
       };
     });
 
@@ -86,11 +124,24 @@ function MathFieldInput({
     if (field && field.value !== value) field.value = value;
   }, [value]);
 
-  return <span ref={hostRef} className="math-field-host" />;
+  return (
+    <span
+      ref={hostRef}
+      className="math-field-host"
+      // ProseMirror can select the atom before the inner field receives the
+      // pointer event; focusing here keeps taps (and the keyboard) working.
+      onPointerDown={() => fieldRef.current?.focus()}
+    />
+  );
 }
 
 function MathNodeView({ node, updateAttributes, editor }: NodeViewProps) {
   const latex = (node.attrs.latex as string) ?? "";
+  // Consumed once per node view instance: the request belongs to the insertion
+  // that created this node, not to subsequent re-renders.
+  const [autoOpenKeyboard] = useState(
+    () => editor.isEditable && consumeKeyboardRequest(),
+  );
 
   if (!editor.isEditable) {
     return (
@@ -104,8 +155,7 @@ function MathNodeView({ node, updateAttributes, editor }: NodeViewProps) {
     <NodeViewWrapper as="span" className="math-inline-node" contentEditable={false}>
       <MathFieldInput
         value={latex}
-        // A freshly inserted node is empty: open its keyboard straight away.
-        autoFocus={latex.length === 0 && editor.isFocused}
+        autoOpenKeyboard={autoOpenKeyboard}
         onChange={(next) => updateAttributes({ latex: next })}
       />
     </NodeViewWrapper>
@@ -155,7 +205,14 @@ export const MathExtension = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(MathNodeView);
+    return ReactNodeViewRenderer(MathNodeView, {
+      // Let pointer/click events reach the MathLive field. Without this,
+      // ProseMirror treats the tap as "select this atom" and the field never
+      // gets focus, so the on-screen keyboard never opens.
+      stopEvent: ({ event }) =>
+        event.target instanceof Element &&
+        event.target.closest("math-field") !== null,
+    });
   },
 
   addCommands() {

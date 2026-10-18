@@ -27,7 +27,7 @@ export default function RowMenu({ items, label = "Opsi" }: { items: RowMenuItem[
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-on-surface-variant transition-colors hover:border-primary hover:text-primary cursor-pointer"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-on-surface-variant transition-colors hover:border-primary hover:text-primary cursor-pointer row-menu-trigger"
         title={label}
         aria-label={label}
         aria-haspopup="menu"

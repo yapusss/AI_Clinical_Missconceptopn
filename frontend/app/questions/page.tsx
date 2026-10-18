@@ -211,7 +211,7 @@ export default function QuestionsPage() {
                 <button
                   type="button"
                   onClick={() => setOpenMenuId(menuOpen ? null : course.id)}
-                  className="absolute right-2 top-[104px] inline-flex size-8 cursor-pointer items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-on-surface-variant hover:border-primary hover:text-primary"
+                  className="absolute right-2 top-[104px] inline-flex size-8 cursor-pointer items-center justify-center rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-on-surface-variant hover:border-primary hover:text-primary row-menu-trigger"
                   title="Opsi mata kuliah"
                   aria-label={`Opsi ${course.name}`}
                   aria-haspopup="menu"

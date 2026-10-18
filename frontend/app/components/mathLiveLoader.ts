@@ -19,6 +19,27 @@ export function loadMathLive(): Promise<MathLiveModule> {
   return mathLivePromise;
 }
 
+/** True on phones/tablets (and any device without a precise pointer). */
+export function isCoarsePointer(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+}
+
+/**
+ * Open MathLive's on-screen keyboard. Safe to call on desktop: the keyboard is
+ * a DOM panel, no native input is involved.
+ */
+export async function showMathKeyboard(): Promise<void> {
+  await loadMathLive();
+  window.mathVirtualKeyboard?.show({ animate: true });
+}
+
+/** Dismiss the on-screen keyboard (no-op when it was never created). */
+export function hideMathKeyboard(): void {
+  if (typeof window === "undefined") return;
+  window.mathVirtualKeyboard?.hide({ animate: false });
+}
+
 /**
  * Convert a LaTeX string into static HTML markup (MathLive static renderer).
  * Returns an empty string for empty input or when the client runtime is not

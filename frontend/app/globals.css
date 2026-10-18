@@ -66,6 +66,11 @@
   --font-sans: var(--font-inter);
   --font-display: var(--font-pjs);
   --font-mono: var(--font-jbm);
+
+  /* MathLive's virtual keyboard defaults to z-index 105, which sits below the
+     mobile app header (160), nav overlay (170) and sidebar (180). Raise it so
+     the keyboard is never covered by the app chrome. */
+  --keyboard-zindex: 200;
 }
 
 /* Light Theme Overrides */
@@ -97,6 +102,13 @@ body {
   color: var(--text-main) !important;
   font-family: var(--font-sans);
   min-height: 100vh;
+  min-height: 100dvh;
+  /* Guard against a single wide child (long math, code, URLs) widening the
+     whole page on phones. `clip` keeps `position: sticky` working, unlike
+     `hidden`. */
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -732,6 +744,7 @@ math-field.math-field-input:focus-within {
   top: 12px;
   left: 12px;
   height: calc(100vh - 24px);
+  height: calc(100dvh - 24px);
   width: 232px;
   padding: 16px 12px;
   display: flex;
@@ -766,7 +779,7 @@ math-field.math-field-input:focus-within {
 
   .mobile-app-header {
     position: fixed;
-    top: 8px;
+    top: calc(8px + env(safe-area-inset-top, 0px));
     left: 8px;
     right: 8px;
     z-index: 160;
@@ -810,10 +823,10 @@ math-field.math-field-input:focus-within {
   }
 
   .mobile-menu-button {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     padding: 0;
-    flex: 0 0 40px;
+    flex: 0 0 44px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -846,6 +859,7 @@ math-field.math-field-input:focus-within {
     transform: translateX(calc(-100% - 24px));
     transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .app-sidebar-open {
@@ -855,8 +869,112 @@ math-field.math-field-input:focus-within {
   .app-main {
     width: 100%;
     margin-left: 0 !important;
-    padding: 96px 16px 28px !important;
+    padding: 96px 16px calc(28px + env(safe-area-inset-bottom, 0px)) !important;
     box-sizing: border-box;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Mobile compatibility layer
+   Shared, page-agnostic rules that keep wide content inside the viewport.
+   Desktop styles are untouched: everything here is gated by width or by
+   pointer type.
+--------------------------------------------------------------------------- */
+
+/* Wide data tables: scroll inside their card instead of crushing columns or
+   pushing the page sideways. Every table keeps its full desktop width on
+   tablets and up. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+@media (max-width: 900px) {
+  .table-scroll {
+    /* Small visual hint that the table can be swiped. */
+    scrollbar-width: thin;
+  }
+
+  /* Below the sidebar breakpoint, keep table columns readable instead of
+     crushing them. Above it, tables keep their normal responsive width. */
+  .table-scroll > table {
+    min-width: 640px;
+  }
+
+  /* Flex/grid children default to min-width:auto, which lets long words or
+     wide tables force the layout wider than the screen. */
+  .glass-card,
+  .glass-panel {
+    min-width: 0;
+  }
+
+  /* `.app-main` already provides the mobile gutter; avoid doubling it with
+     PageContainer's own padding and keep more width for content. */
+  .page-container {
+    padding-left: 0;
+    padding-right: 0;
+    padding-top: 12px;
+  }
+
+  .app-main {
+    overflow-wrap: break-word;
+  }
+}
+
+/* Touch ergonomics: comfortable tap targets and a 16px minimum font size on
+   form controls so phones do not zoom the viewport when a field is focused. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* contenteditable editors are inputs for zoom purposes: anything below 16px
+     makes iOS/Android zoom the whole viewport on focus. */
+  .rte-prosemirror {
+    font-size: 16px;
+  }
+
+  .rte-toolbar button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+
+@media (pointer: coarse) {
+  /* MathLive's on-screen keyboard must sit above the app chrome
+     (header 160 / overlay 170 / sidebar 180). */
+  math-virtual-keyboard {
+    z-index: var(--keyboard-zindex, 200);
+  }
+
+  .rte-toolbar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  math-field.math-field-input {
+    min-height: 44px;
+  }
+
+  /* Sidebar navigation rows become comfortable touch targets. */
+  .app-sidebar nav a {
+    min-height: 44px;
+  }
+
+  /* Question navigator dots (exam + review pages). */
+  .nav-dot {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Row action menus (list pages) stay tappable. */
+  .row-menu-trigger {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 
