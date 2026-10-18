@@ -15,7 +15,6 @@ import {
   ListOrdered,
   Quote,
   Redo2,
-  Sigma,
   Strikethrough,
   Undo2,
 } from "lucide-react";
@@ -247,7 +246,13 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
           label="Sisipkan formula matematika (fx)"
           onClick={insertMath}
         >
-          <Sigma size={16} />
+          <span
+            aria-hidden="true"
+            className="text-[15px] italic leading-none"
+            style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+          >
+            fx
+          </span>
         </ToolbarButton>
         <span className="mx-1 h-5 w-px self-center bg-outline-variant/50" />
         <ToolbarButton label="Urungkan" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>

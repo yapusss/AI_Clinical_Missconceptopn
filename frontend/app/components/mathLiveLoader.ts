@@ -11,10 +11,83 @@
 type MathLiveModule = typeof import("mathlive");
 
 let mathLivePromise: Promise<MathLiveModule> | null = null;
+let keyboardCustomized = false;
+
+/**
+ * Minimal structural view of MathLive's keyboard, used to rewrite the layout
+ * without depending on its internal (non-exported) layout types.
+ */
+type Keycap = {
+  latex?: string;
+  insert?: string;
+  label?: string;
+  tooltip?: string;
+  class?: string;
+  width?: number;
+  [key: string]: unknown;
+};
+
+type KeyboardLike = {
+  normalizedLayouts: Array<{
+    layers: Array<{ id?: string; rows: Array<Array<Keycap | string>> }>;
+    [key: string]: unknown;
+  }>;
+  layouts: unknown;
+};
+
+/** Keycap that inserts a two-slot fraction, drawn as the fraction template. */
+const FRACTION_KEY: Keycap = {
+  // `#@` marks the caret inside the numerator, `#?` the denominator slot.
+  // MathLive renders both as placeholder boxes on the key face.
+  latex: "\\frac{#@}{#?}",
+  tooltip: "Pecahan",
+};
+
+/**
+ * Swap `∀` for a fraction key, but only on the "123" (numeric) layer the user
+ * works from. Other layers keep their original symbol set.
+ */
+function customizeMathKeyboard() {
+  if (keyboardCustomized) return;
+  const keyboard = window.mathVirtualKeyboard as unknown as KeyboardLike | undefined;
+  if (!keyboard?.normalizedLayouts?.length) return;
+
+  try {
+    const layouts = keyboard.normalizedLayouts.map((layout) => {
+      const isNumericLayer =
+        layout.label === "123" || layout.tooltip === "keyboard.tooltip.numeric";
+      if (!isNumericLayer) return layout;
+
+      return {
+        ...layout,
+        layers: layout.layers.map((layer) => ({
+          ...layer,
+          rows: layer.rows.map((row) =>
+            row.map((key) =>
+              typeof key === "object" && key?.latex === "\\forall"
+                ? FRACTION_KEY
+                : key,
+            ),
+          ),
+        })),
+      };
+    });
+
+    keyboard.layouts = layouts;
+    keyboardCustomized = true;
+  } catch {
+    // A failed customization must never break formula input: keep the stock
+    // keyboard instead.
+    keyboard.layouts = ["default"];
+  }
+}
 
 export function loadMathLive(): Promise<MathLiveModule> {
   if (!mathLivePromise) {
-    mathLivePromise = import("mathlive");
+    mathLivePromise = import("mathlive").then((module) => {
+      customizeMathKeyboard();
+      return module;
+    });
   }
   return mathLivePromise;
 }

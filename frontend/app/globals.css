@@ -986,6 +986,33 @@ math-field.math-field-input:focus-within {
   }
 }
 
+/* Math always follows the theme's text color. On the dark theme MathLive's
+   default rendering is effectively black, which is unreadable on our cards. */
+math-field,
+.rte-content math-field,
+.math-static,
+math-field.math-field-input {
+  color: var(--text-main) !important;
+}
+
+/* Read-only static math can also arrive as raw markup (no math-field wrapper). */
+.math-static .ML__latex,
+.math-static .ML__base,
+.math-static .ML__cmr,
+.math-static .ML__mathit {
+  color: inherit !important;
+}
+
+/* Native widgets (scrollbars, form controls, UA-derived colors) follow the
+   active theme instead of always defaulting to the light scheme. */
+:root {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from {
