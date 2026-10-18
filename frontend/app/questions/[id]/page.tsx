@@ -195,6 +195,7 @@ export default function QuestionSetReviewPage({
     <PageContainer>
       {data && (
         <PageHeader
+          className="mb-4"
           title={data.title}
           description={
             data.description ||
@@ -202,19 +203,18 @@ export default function QuestionSetReviewPage({
           }
           icon={ClipboardList}
           eyebrow={
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary-fixed-dim bg-primary-fixed/60 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-primary">
               <GraduationCap size={14} /> Progres Mahasiswa
             </span>
           }
           action={
-            <div className="rounded-lg border border-outline-variant/40 bg-surface-container-low px-4 py-3 text-right text-xs text-on-surface-variant">
-              <div className="font-mono-ui font-bold text-primary">
+            <div className="inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-1 rounded-lg border border-outline-variant/40 bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
+              <span className="font-mono-ui font-bold text-primary">
                 {data.code}
-              </div>
-              <div>
-                {data.subject_name} · {data.published_question_count} soal
-                terbit
-              </div>
+              </span>
+              <span aria-hidden="true">•</span>
+              <span>{data.subject_name}</span>
+              <span>{data.published_question_count} soal terbit</span>
             </div>
           }
         />
@@ -226,7 +226,7 @@ export default function QuestionSetReviewPage({
         </p>
       ) : (
         data && (
-          <div className="mt-8 space-y-4">
+          <div className="mt-4 space-y-4">
             <div className="flex border-b border-outline-variant/40">
               {VALIDATION_TABS.map((tab) => {
                 const active = activeTab === tab.id;

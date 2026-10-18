@@ -1147,12 +1147,9 @@ export default function StudentPackageReviewPage({
             ) : (
               <section className="glass-panel rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-5 space-y-4">
                 <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
-                  <div className="flex items-center gap-2">
+                  <div>
                     <span className="font-mono-ui text-base font-bold text-primary">
                       Soal Nomor {activeQuestion.order_index}
-                    </span>
-                    <span className="text-xs text-on-surface-variant font-mono-ui">
-                      dari {data.questions.length} Soal
                     </span>
                   </div>
 

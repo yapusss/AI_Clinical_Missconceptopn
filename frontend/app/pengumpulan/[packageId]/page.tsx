@@ -206,12 +206,9 @@ function SubmissionPackageDetailPageContent() {
             <main className="flex-1 min-w-0 space-y-4">
               <section className="glass-panel overflow-hidden rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-6 space-y-5">
                 <div className="flex flex-col gap-2 border-b border-outline-variant/30 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2">
+                  <div>
                     <span className="font-mono-ui text-base font-bold text-primary">
                       Soal Nomor {activeQuestion.order_index}
-                    </span>
-                    <span className="text-sm font-mono-ui text-on-surface-variant">
-                      dari {group.questions.length} Soal
                     </span>
                   </div>
 
