@@ -149,12 +149,17 @@ const CATEGORY_TO_LEVEL: Record<string, number> = {
 // Skor butir bersifat biner: 100 hanya bila Modul A dan B sama-sama BENAR,
 // yang setara dengan level 4 (SC). Karena itu hanya [SC] yang konsisten dengan
 // keputusan "Benar"; kombinasi lain menulis final_percentage yang bertentangan
-// dengan final_tier_level (0% + level 4, atau 100% + level < 4). Periksa dan
-// peringatkan dosen — JANGAN blokir, karena koreksi dosen boleh parsial.
+// dengan final_tier_level (100% + level < 4). Periksa dan peringatkan dosen —
+// JANGAN blokir, karena koreksi dosen boleh parsial.
+//
+// Sengaja satu arah (keputusan pengguna 2026-10-18): hanya "Benar" + kategori
+// non-SC yang diperingatkan, karena itulah kombinasi yang menulis 100% dengan
+// level < 4. "Salah" + [SC] dibiarkan tersimpan tanpa peringatan — dosen boleh
+// mempertahankan diagnosis AI sambil menandai jawabannya salah.
 const isDraftContradictory = (draft: {
   isCorrect: boolean;
   finalCategory: string;
-}) => draft.isCorrect !== (draft.finalCategory === "SC");
+}) => draft.isCorrect && draft.finalCategory !== "SC";
 
 // Nilai awal satu percobaan: validasi yang sudah tersimpan bila ada, selain itu
 // rekomendasi AI. Satu sumber kebenaran untuk seeding draft dan untuk patch.
