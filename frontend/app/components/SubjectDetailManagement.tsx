@@ -473,10 +473,10 @@ export default function SubjectDetailManagement({
                 </span>
                 <span>
                   <span className="block font-semibold text-on-surface">
-                    Import Excel
+                    Import Soal
                   </span>
                   <span className="block text-xs text-on-surface-variant">
-                    Unggah banyak soal sekaligus dari template .xlsx.
+                    Unggah banyak soal sekaligus dari template Excel atau Word.
                   </span>
                 </span>
               </button>
