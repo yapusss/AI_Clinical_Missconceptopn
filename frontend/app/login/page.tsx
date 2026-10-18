@@ -29,8 +29,10 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) router.replace("/select-role");
-  }, [user, loading, router]);
+    // Skip while a submit is in flight: the submit handler performs the
+    // redirect itself, and two competing navigations can cancel each other.
+    if (!loading && user && !submitting) router.replace("/select-role");
+  }, [user, loading, submitting, router]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -44,19 +46,20 @@ export default function LoginPage() {
       } else {
         await login(identitas, kataSandi);
       }
-      router.push("/select-role");
+      // Hard navigation: guarantees the next page reads the freshly stored
+      // token, with no client router/navigation race.
+      window.location.assign("/select-role");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login gagal.");
-    } finally {
       setSubmitting(false);
     }
   }
 
   return (
     <div
-      className="app-shell"
+      className="app-shell login-shell"
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         background: "var(--bg-main)",
         alignItems: "center",
         justifyContent: "center",
@@ -234,6 +237,10 @@ export default function LoginPage() {
                 id="auth-email"
                 type="email"
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="next"
                 required
                 value={identitas}
                 onChange={(e) => setIdentitas(e.target.value)}
@@ -271,28 +278,49 @@ export default function LoginPage() {
                 id="auth-password"
                 type={showPassword ? "text" : "password"}
                 autoComplete={isRegister ? "new-password" : "current-password"}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="go"
                 required
                 value={kataSandi}
                 onChange={(e) => setKataSandi(e.target.value)}
                 placeholder="••••••••"
                 className="form-input"
-                style={{ paddingLeft: "2.4rem", paddingRight: "2.4rem" }}
+                style={{ paddingLeft: "2.4rem", paddingRight: "3.25rem" }}
               />
               <button
                 type="button"
-                aria-label="Tampilkan atau sembunyikan kata sandi"
-                onClick={() => setShowPassword(!showPassword)}
+                aria-label={
+                  showPassword
+                    ? "Sembunyikan kata sandi"
+                    : "Tampilkan kata sandi"
+                }
+                aria-pressed={showPassword}
+                onClick={(event) => {
+                  // Inside a <label>: stop the label from forwarding the tap to
+                  // the input, which otherwise steals focus from the toggle.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setShowPassword((visible) => !visible);
+                }}
                 style={{
                   position: "absolute",
-                  right: "6px",
+                  right: "2px",
                   top: "50%",
                   transform: "translateY(-50%)",
+                  width: "44px",
+                  height: "44px",
+                  zIndex: 2,
                   background: "transparent",
                   border: "none",
                   color: "var(--text-dim)",
                   cursor: "pointer",
-                  padding: "6px",
+                  padding: 0,
                   display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  touchAction: "manipulation",
                 }}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}

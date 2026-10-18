@@ -15,13 +15,17 @@ import {
   ListOrdered,
   Quote,
   Redo2,
-  Sigma,
   Strikethrough,
   Undo2,
 } from "lucide-react";
 import RichTextContent from "./RichTextContent";
 import ResizableImage from "./ResizableImage";
-import MathExtension from "./MathExtension";
+import MathExtension, { requestMathKeyboardOnNextField } from "./MathExtension";
+import {
+  hideMathKeyboard,
+  loadMathLive,
+  showMathKeyboard,
+} from "./mathLiveLoader";
 
 type Props = {
   value: string;
@@ -132,6 +136,14 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
     editor?.setEditable(!disabled);
   }, [editor, disabled]);
 
+  // Load the MathLive runtime while the editor is idle so pressing Σ can open
+  // the on-screen keyboard without waiting on a network chunk. Hides the
+  // keyboard when the editor leaves the page.
+  useEffect(() => {
+    void loadMathLive();
+    return () => hideMathKeyboard();
+  }, []);
+
   if (disabled) {
     return <RichTextContent html={value} className={className} />;
   }
@@ -174,9 +186,25 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
   }
 
   const insertMath = () => {
-    // MathLive renders the field and opens its own native virtual keyboard on
-    // focus, so the toolbar just drops an empty formula node at the caret.
+    // MathLive renders the field and opens its own virtual keyboard on focus.
+    // Flag the new node so its node view focuses and shows the keyboard, and
+    // repeat the focus/show here as a fallback in case React mounts the node
+    // view asynchronously.
+    requestMathKeyboardOnNextField();
     editor.chain().focus().insertMathField().run();
+
+    requestAnimationFrame(() => {
+      const fields = editor.view.dom.querySelectorAll<HTMLElement>("math-field");
+      // The node view normally handles this; as a fallback focus the newest
+      // still-empty field (the node this click just created).
+      const field = Array.from(fields)
+        .reverse()
+        .find((candidate) => !(candidate as unknown as { value: string }).value?.trim());
+      if (!field) return;
+      field.focus({ preventScroll: true });
+      void showMathKeyboard();
+      field.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
   };
 
   return (
@@ -218,7 +246,13 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
           label="Sisipkan formula matematika (fx)"
           onClick={insertMath}
         >
-          <Sigma size={16} />
+          <span
+            aria-hidden="true"
+            className="text-[15px] italic leading-none"
+            style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+          >
+            fx
+          </span>
         </ToolbarButton>
         <span className="mx-1 h-5 w-px self-center bg-outline-variant/50" />
         <ToolbarButton label="Urungkan" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>

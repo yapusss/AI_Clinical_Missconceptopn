@@ -206,16 +206,13 @@ function SubmissionPackageDetailPageContent() {
             <main className="flex-1 min-w-0 space-y-4">
               <section className="glass-panel overflow-hidden rounded-2xl border border-outline-variant/40 shadow-sm p-4 sm:p-6 space-y-5">
                 <div className="flex flex-col gap-2 border-b border-outline-variant/30 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2">
+                  <div>
                     <span className="font-mono-ui text-base font-bold text-primary">
                       Soal Nomor {activeQuestion.order_index}
                     </span>
-                    <span className="text-sm font-mono-ui text-on-surface-variant">
-                      dari {group.questions.length} Soal
-                    </span>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-on-surface-variant text-xs font-semibold uppercase tracking-wide">
                         Percobaan:
@@ -469,39 +466,41 @@ function SubmissionPackageDetailPageContent() {
                 )}
 
                 {/* Navigasi Soal Bawah */}
-                <footer className="mt-4 flex items-center justify-between border-t border-outline-variant/20 pt-4">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleSelectQuestion(Math.max(0, activeQuestionIdx - 1))
-                    }
-                    disabled={activeQuestionIdx === 0}
-                    className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-40 cursor-pointer"
-                  >
-                    <ChevronLeft size={15} />
-                    Soal Sebelumnya
-                  </button>
+                <footer className="mt-4 flex flex-col gap-2 border-t border-outline-variant/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="order-2 flex gap-2 sm:contents">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSelectQuestion(Math.max(0, activeQuestionIdx - 1))
+                      }
+                      disabled={activeQuestionIdx === 0}
+                      className="btn-secondary flex-1 justify-center text-sm !py-2 max-sm:!py-2.5 !px-4 disabled:opacity-40 cursor-pointer max-sm:min-h-11 sm:order-1 sm:flex-none"
+                    >
+                      <ChevronLeft size={15} />
+                      Soal Sebelumnya
+                    </button>
 
-                  <span className="text-sm font-mono-ui text-on-surface-variant font-semibold">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSelectQuestion(
+                          Math.min(
+                            group.questions.length - 1,
+                            activeQuestionIdx + 1,
+                          ),
+                        )
+                      }
+                      disabled={activeQuestionIdx === group.questions.length - 1}
+                      className="btn-secondary flex-1 justify-center text-sm !py-2 max-sm:!py-2.5 !px-4 disabled:opacity-40 cursor-pointer max-sm:min-h-11 sm:order-3 sm:flex-none"
+                    >
+                      Soal Selanjutnya
+                      <ChevronRight size={15} />
+                    </button>
+                  </div>
+
+                  <span className="order-1 text-center text-sm font-mono-ui text-on-surface-variant font-semibold sm:order-2">
                     Soal {activeQuestionIdx + 1} dari {group.questions.length}
                   </span>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleSelectQuestion(
-                        Math.min(
-                          group.questions.length - 1,
-                          activeQuestionIdx + 1,
-                        ),
-                      )
-                    }
-                    disabled={activeQuestionIdx === group.questions.length - 1}
-                    className="btn-secondary text-sm !py-2 !px-4 disabled:opacity-40 cursor-pointer"
-                  >
-                    Soal Selanjutnya
-                    <ChevronRight size={15} />
-                  </button>
                 </footer>
               </section>
             </main>
@@ -555,7 +554,7 @@ function SubmissionPackageDetailPageContent() {
                         key={q.question_id}
                         type="button"
                         onClick={() => handleSelectQuestion(idx)}
-                        className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm ${boxBorderCls} ${
+                        className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono-ui text-sm transition-all cursor-pointer shadow-sm nav-dot ${boxBorderCls} ${
                           isCurrent
                             ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
                             : "hover:border-primary/60"
