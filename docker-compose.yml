@@ -26,7 +26,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Host-side port only; containers still reach Postgres on 5432. On Windows,
+      # Hyper-V/WinNAT reserves blocks around the default 5432 (e.g. 5087-5557),
+      # which makes Docker fail with "socket ... forbidden by its access permissions".
+      # Override with DB_HOST_PORT if 55432 is ever reserved too.
+      - "${DB_HOST_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
       interval: 5s
