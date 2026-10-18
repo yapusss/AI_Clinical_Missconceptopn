@@ -1582,17 +1582,11 @@ export default function StudentPackageReviewPage({
                         />
                         </div>
 
-                        {/* Peringatan keputusan bertentangan — chip ringkas, tidak memblokir */}
+                        {/* Peringatan keputusan bertentangan — satu frasa, tidak memblokir */}
                         {currentDraft && isDraftContradictory(currentDraft) && (
                           <div className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
                             <AlertTriangle size={12} className="shrink-0" />
-                            <span>
-                              Kontradiktif:{" "}
-                              {currentDraft.isCorrect ? "Benar" : "Salah"} + [
-                              {currentDraft.finalCategory}] →{" "}
-                              {currentDraft.isCorrect ? "100%" : "0%"} · level{" "}
-                              {CATEGORY_TO_LEVEL[currentDraft.finalCategory] ?? 1}
-                            </span>
+                            <span>Keputusan bertentangan</span>
                           </div>
                         )}
 
@@ -1911,21 +1905,10 @@ export default function StudentPackageReviewPage({
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                 <span>
                   <strong>
-                    {contradictoryRows.length} keputusan kontradiktif
+                    {contradictoryRows.length} keputusan bertentangan
                   </strong>
                   {": "}
-                  {contradictoryRows
-                    .map(
-                      (r) =>
-                        `${r.label} · ${
-                          r.draft.isCorrect ? "Benar" : "Salah"
-                        } + [${r.draft.finalCategory}] → ${
-                          r.draft.isCorrect ? "100%" : "0%"
-                        } · level ${
-                          CATEGORY_TO_LEVEL[r.draft.finalCategory] ?? 1
-                        }`,
-                    )
-                    .join("; ")}
+                  {contradictoryRows.map((r) => r.label).join(", ")}
                 </span>
               </div>
             )}
