@@ -38,7 +38,6 @@ type Material = {
   file_name: string | null;
 };
 
-const MATERIAL_MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = [".pdf", ".md", ".markdown", ".txt"];
 
 const STATUS_META: Record<
@@ -174,10 +173,6 @@ export function ReferenceMaterials({
       setError("Hanya file PDF, MD, atau TXT yang diizinkan.");
       return;
     }
-    if (file.size > MATERIAL_MAX_BYTES) {
-      setError("Ukuran file maksimal 25MB.");
-      return;
-    }
 
     const form = new FormData();
     form.append("file", file);
@@ -284,7 +279,7 @@ export function ReferenceMaterials({
                 htmlFor="material-file"
                 className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-on-surface-variant"
               >
-                Berkas (PDF / MD / TXT, maks 25MB)
+                Berkas (PDF / MD / TXT)
               </label>
               <input
                 ref={fileInputRef}

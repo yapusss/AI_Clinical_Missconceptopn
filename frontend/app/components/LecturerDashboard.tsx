@@ -382,7 +382,7 @@ export default function LecturerDashboard({
             <CalendarClock size={20} className="text-primary" />
           </div>
           {dashboard.active_packages.length ? (
-            <div>
+            <div className="table-scroll">
               <table className="w-full table-fixed text-left text-sm">
                 <thead className="bg-surface-container-low text-xs uppercase text-on-surface-variant">
                   <tr>
@@ -438,7 +438,7 @@ export default function LecturerDashboard({
             <BookOpen size={20} className="text-primary" />
           </div>
           {dashboard.subjects.length ? (
-            <div>
+            <div className="table-scroll">
               <table className="w-full table-fixed text-left text-sm">
                 <thead className="bg-surface-container-low text-xs uppercase text-on-surface-variant">
                   <tr>

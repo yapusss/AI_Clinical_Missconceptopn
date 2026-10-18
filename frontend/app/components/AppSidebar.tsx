@@ -23,6 +23,7 @@ import {
 import { useAuth } from "./AuthProvider";
 import ThemeToggle from "./ThemeToggle";
 import Breadcrumb from "./Breadcrumb";
+import { hideMathKeyboard } from "./mathLiveLoader";
 
 type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 
@@ -84,13 +85,40 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
     if (storedRole) setSelectedRole(toAppRole(storedRole));
   }, [pathname]);
 
+  // Close the drawer on any navigation, including browser back/forward.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  // While the drawer is open: Escape closes it, and the page behind the
+  // overlay must not scroll on touch devices.
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "contain";
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscroll;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileNavOpen]);
+
   if (isPublic) {
     return <>{children}</>;
   }
 
   if (!mounted || loading) {
     return (
-      <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg-main)" }}>
+      <div style={{ display: "flex", minHeight: "100dvh", background: "var(--bg-main)" }}>
         <div style={{ flex: 1, padding: "24px 32px" }} />
       </div>
     );
@@ -123,8 +151,18 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
     void logout().then(() => router.replace("/login"));
   };
 
+  const toggleMobileNav = () => {
+    setMobileNavOpen((isOpen) => {
+      const next = !isOpen;
+      // Dismiss the formula keyboard first: it must never open underneath the
+      // drawer (its panel is fixed to the bottom of the viewport).
+      if (next) hideMathKeyboard();
+      return next;
+    });
+  };
+
   return (
-    <div className="app-shell" style={{ display: "flex", minHeight: "100vh", background: "var(--bg-main)" }}>
+    <div className="app-shell" style={{ display: "flex", minHeight: "100dvh", background: "var(--bg-main)" }}>
       <header className="mobile-app-header glass-panel">
         <div className="mobile-app-brand">
           <Building2 size={22} color="var(--primary)" />
@@ -136,8 +174,9 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
         <button
           type="button"
           className="mobile-menu-button"
-          onClick={() => setMobileNavOpen((isOpen) => !isOpen)}
+          onClick={toggleMobileNav}
           aria-expanded={mobileNavOpen}
+          aria-controls="app-sidebar"
           aria-label={mobileNavOpen ? "Tutup menu navigasi" : "Buka menu navigasi"}
         >
           {mobileNavOpen ? <X size={20} /> : <Menu size={20} />}
@@ -153,7 +192,7 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
         />
       )}
 
-      <aside className={`glass-panel app-sidebar ${mobileNavOpen ? "app-sidebar-open" : ""}`}>
+      <aside id="app-sidebar" className={`glass-panel app-sidebar ${mobileNavOpen ? "app-sidebar-open" : ""}`}>
         <div>
           <div
             style={{

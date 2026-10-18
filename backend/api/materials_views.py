@@ -28,9 +28,9 @@ from .views import is_lecturer_for_subject
 
 logger = logging.getLogger(__name__)
 
-# PDF/MD/TXT only, 25 MB — deliberately separate from MediaUploadView's 5 MB
-# image cap (do not reuse or modify that one).
-MATERIAL_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+# PDF/MD/TXT only. No size cap (user decision 2026-10-18): reference PDFs can be
+# large. Deliberately separate from MediaUploadView's 5 MB image cap — do not
+# reuse or modify that one.
 ALLOWED_MATERIAL_EXTENSIONS = {'.pdf', '.md', '.markdown', '.txt'}
 MIME_BY_EXTENSION = {
     '.pdf': 'application/pdf',
@@ -55,15 +55,18 @@ def _valid_uuid(value):
 def validate_material_upload(filename, size):
     """Return `(extension, error_message)`; `error_message` is None on success.
 
-    Pure helper (no request/DB) so the allow-list and size cap are unit-testable.
+    Pure helper (no request/DB) so the extension allow-list is unit-testable.
+    There is **no size cap**: any file size is accepted (the size argument is
+    kept for the caller's logging and for the `None` sanity check — a missing
+    size means the upload could not be read at all).
     """
     if not filename:
         return None, 'File tidak ditemukan.'
     extension = os.path.splitext(filename)[1].lower()
     if extension not in ALLOWED_MATERIAL_EXTENSIONS:
         return None, 'Hanya file PDF, MD, atau TXT yang diizinkan.'
-    if size is None or size > MATERIAL_UPLOAD_MAX_BYTES:
-        return None, 'Ukuran file maksimal 25MB.'
+    if size is None:
+        return None, 'File tidak dapat dibaca.'
     return extension, None
 
 

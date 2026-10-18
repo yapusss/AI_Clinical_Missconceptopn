@@ -149,8 +149,12 @@ const CATEGORY_TO_LEVEL: Record<string, number> = {
 // Skor butir bersifat biner: 100 hanya bila Modul A dan B sama-sama BENAR,
 // yang setara dengan level 4 (SC). Karena itu hanya [SC] yang konsisten dengan
 // keputusan "Benar"; kombinasi lain menulis final_percentage yang bertentangan
-// dengan final_tier_level (0% + level 4, atau 100% + level < 4). Periksa dan
-// peringatkan dosen — JANGAN blokir, karena koreksi dosen boleh parsial.
+// dengan final_tier_level (0% + level 4, atau 100% + level < 4).
+//
+// Tetap diperingatkan di KEDUA arah, tetapi ringkas: cukup chip
+// "Kontradiktif: Salah + [SC] → 0% · level 4" — penjelasan panjangnya yang
+// mengganggu, bukan peringatannya. Tidak pernah memblokir; koreksi dosen boleh
+// parsial dan kombinasi ini kadang disengaja.
 const isDraftContradictory = (draft: {
   isCorrect: boolean;
   finalCategory: string;
@@ -1575,32 +1579,11 @@ export default function StudentPackageReviewPage({
                         />
                         </div>
 
-                        {/* Peringatan keputusan bertentangan (tidak memblokir) */}
+                        {/* Peringatan keputusan bertentangan — satu frasa, tidak memblokir */}
                         {currentDraft && isDraftContradictory(currentDraft) && (
-                          <div className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                            <span>
-                              Keputusan{" "}
-                              <strong>
-                                {currentDraft.isCorrect ? "Benar" : "Salah"}
-                              </strong>{" "}
-                              hanya konsisten dengan diagnosis <strong>[SC]</strong>
-                              . Pilihan saat ini akan tersimpan sebagai skor{" "}
-                              <strong>
-                                {currentDraft.isCorrect ? "100%" : "0%"}
-                              </strong>{" "}
-                              dengan level{" "}
-                              <strong>
-                                {CATEGORY_TO_LEVEL[currentDraft.finalCategory] ?? 1}
-                              </strong>{" "}
-                              pada{" "}
-                              <span className="font-mono-ui">
-                                Soal {currentDraft.orderIndex} · Ke-
-                                {currentAttempt.attempt_no}
-                              </span>
-                              . Perbaiki salah satu, atau lanjutkan bila memang
-                              disengaja.
-                            </span>
+                          <div className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                            <AlertTriangle size={12} className="shrink-0" />
+                            <span>Keputusan bertentangan</span>
                           </div>
                         )}
 
@@ -1921,21 +1904,8 @@ export default function StudentPackageReviewPage({
                   <strong>
                     {contradictoryRows.length} keputusan bertentangan
                   </strong>
-                  : keputusan Benar hanya konsisten dengan diagnosis [SC].{" "}
-                  {contradictoryRows
-                    .map(
-                      (r) =>
-                        `${r.label} = ${
-                          r.draft.isCorrect ? "Benar" : "Salah"
-                        } + [${r.draft.finalCategory}] (${
-                          r.draft.isCorrect ? "100%" : "0%"
-                        } + level ${
-                          CATEGORY_TO_LEVEL[r.draft.finalCategory] ?? 1
-                        })`,
-                    )
-                    .join("; ")}
-                  . Masih dapat dikirim, tetapi periksa dulu agar skor akhir tidak
-                  keliru.
+                  {": "}
+                  {contradictoryRows.map((r) => r.label).join(", ")}
                 </span>
               </div>
             )}
