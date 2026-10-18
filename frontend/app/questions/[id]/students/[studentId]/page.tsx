@@ -238,7 +238,7 @@ const fmtDate = (val: string) => {
 };
 
 const fmtPct = (num: number) => {
-  return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
+  return num % 1 === 0 ? num.toFixed(0) : num.toFixed(1);
 };
 
 // Jam pengumpulan — dipakai hanya untuk memisahkan dua baris yang nomor soal +
