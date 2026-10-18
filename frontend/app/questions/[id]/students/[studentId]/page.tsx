@@ -149,17 +149,16 @@ const CATEGORY_TO_LEVEL: Record<string, number> = {
 // Skor butir bersifat biner: 100 hanya bila Modul A dan B sama-sama BENAR,
 // yang setara dengan level 4 (SC). Karena itu hanya [SC] yang konsisten dengan
 // keputusan "Benar"; kombinasi lain menulis final_percentage yang bertentangan
-// dengan final_tier_level (100% + level < 4). Periksa dan peringatkan dosen —
-// JANGAN blokir, karena koreksi dosen boleh parsial.
+// dengan final_tier_level (0% + level 4, atau 100% + level < 4).
 //
-// Sengaja satu arah (keputusan pengguna 2026-10-18): hanya "Benar" + kategori
-// non-SC yang diperingatkan, karena itulah kombinasi yang menulis 100% dengan
-// level < 4. "Salah" + [SC] dibiarkan tersimpan tanpa peringatan — dosen boleh
-// mempertahankan diagnosis AI sambil menandai jawabannya salah.
+// Tetap diperingatkan di KEDUA arah, tetapi ringkas: cukup chip
+// "Kontradiktif: Salah + [SC] → 0% · level 4" — penjelasan panjangnya yang
+// mengganggu, bukan peringatannya. Tidak pernah memblokir; koreksi dosen boleh
+// parsial dan kombinasi ini kadang disengaja.
 const isDraftContradictory = (draft: {
   isCorrect: boolean;
   finalCategory: string;
-}) => draft.isCorrect && draft.finalCategory !== "SC";
+}) => draft.isCorrect !== (draft.finalCategory === "SC");
 
 // Nilai awal satu percobaan: validasi yang sudah tersimpan bila ada, selain itu
 // rekomendasi AI. Satu sumber kebenaran untuk seeding draft dan untuk patch.
@@ -1583,31 +1582,16 @@ export default function StudentPackageReviewPage({
                         />
                         </div>
 
-                        {/* Peringatan keputusan bertentangan (tidak memblokir) */}
+                        {/* Peringatan keputusan bertentangan — chip ringkas, tidak memblokir */}
                         {currentDraft && isDraftContradictory(currentDraft) && (
-                          <div className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                          <div className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                            <AlertTriangle size={12} className="shrink-0" />
                             <span>
-                              Keputusan{" "}
-                              <strong>
-                                {currentDraft.isCorrect ? "Benar" : "Salah"}
-                              </strong>{" "}
-                              hanya konsisten dengan diagnosis <strong>[SC]</strong>
-                              . Pilihan saat ini akan tersimpan sebagai skor{" "}
-                              <strong>
-                                {currentDraft.isCorrect ? "100%" : "0%"}
-                              </strong>{" "}
-                              dengan level{" "}
-                              <strong>
-                                {CATEGORY_TO_LEVEL[currentDraft.finalCategory] ?? 1}
-                              </strong>{" "}
-                              pada{" "}
-                              <span className="font-mono-ui">
-                                Soal {currentDraft.orderIndex} · Ke-
-                                {currentAttempt.attempt_no}
-                              </span>
-                              . Perbaiki salah satu, atau lanjutkan bila memang
-                              disengaja.
+                              Kontradiktif:{" "}
+                              {currentDraft.isCorrect ? "Benar" : "Salah"} + [
+                              {currentDraft.finalCategory}] →{" "}
+                              {currentDraft.isCorrect ? "100%" : "0%"} · level{" "}
+                              {CATEGORY_TO_LEVEL[currentDraft.finalCategory] ?? 1}
                             </span>
                           </div>
                         )}
@@ -1927,23 +1911,21 @@ export default function StudentPackageReviewPage({
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                 <span>
                   <strong>
-                    {contradictoryRows.length} keputusan bertentangan
+                    {contradictoryRows.length} keputusan kontradiktif
                   </strong>
-                  : keputusan Benar hanya konsisten dengan diagnosis [SC].{" "}
+                  {": "}
                   {contradictoryRows
                     .map(
                       (r) =>
-                        `${r.label} = ${
+                        `${r.label} · ${
                           r.draft.isCorrect ? "Benar" : "Salah"
-                        } + [${r.draft.finalCategory}] (${
+                        } + [${r.draft.finalCategory}] → ${
                           r.draft.isCorrect ? "100%" : "0%"
-                        } + level ${
+                        } · level ${
                           CATEGORY_TO_LEVEL[r.draft.finalCategory] ?? 1
-                        })`,
+                        }`,
                     )
                     .join("; ")}
-                  . Masih dapat dikirim, tetapi periksa dulu agar skor akhir tidak
-                  keliru.
                 </span>
               </div>
             )}
