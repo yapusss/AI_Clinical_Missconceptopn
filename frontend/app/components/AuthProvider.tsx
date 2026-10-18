@@ -85,29 +85,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    fetch("/api/auth/me", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("unauthorized");
-        return res.json();
-      })
-      .then((data: User) => {
-        if (!cancelled) {
-          setUser(data);
-          setLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const loadMe = async (attempt = 0) => {
+      try {
+        const res = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        // A real authentication rejection invalidates the session …
+        if (res.status === 401 || res.status === 403) {
+          if (cancelled) return;
           clearStoredToken();
           setToken(null);
           setUser(null);
           setLoading(false);
+          return;
         }
-      });
+        if (!res.ok) throw new Error(`auth/me failed: ${res.status}`);
+        const data = (await res.json()) as User;
+        if (!cancelled) {
+          setUser(data);
+          setLoading(false);
+        }
+      } catch {
+        if (cancelled) return;
+        // … but a network hiccup, an aborted request or a dev-server restart
+        // must not sign the user out. Retry briefly, then keep the token.
+        if (attempt < 2) {
+          retryTimer = setTimeout(
+            () => void loadMe(attempt + 1),
+            700 * (attempt + 1),
+          );
+          return;
+        }
+        setLoading(false);
+      }
+    };
+
+    void loadMe();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [token]);
 
