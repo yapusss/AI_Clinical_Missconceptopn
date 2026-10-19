@@ -325,7 +325,17 @@ def _insert_document(subject_id, topic_id, uploaded_by, title, file_path, mime_t
 
 
 def _insert_chunks(document_id, subject_id, topic_id, chunks, vectors, batch_size) -> None:
-    """Bulk-insert chunk rows, one committed statement per batch."""
+    """Bulk-insert chunk rows, one committed statement per batch.
+
+    A re-ingest (retry of a FAILED document, or a re-run of a READY one) writes the
+    same `(document_id, chunk_index)` pairs again, which the `uq_doc_chunk_index`
+    constraint rejects — that is how "Proses ulang" failed with an IntegrityError
+    after a document had ever been chunked. Clear this document's old chunks first;
+    the delete and the inserts are in the same transaction, so a crash mid-way leaves
+    the document FAILED rather than half-chunked.
+    """
+    with connection.cursor() as cur:
+        cur.execute('DELETE FROM knowledge_chunks WHERE document_id = %s', [document_id])
     for start in range(0, len(chunks), batch_size):
         batch = chunks[start:start + batch_size]
         batch_vectors = vectors[start:start + batch_size]

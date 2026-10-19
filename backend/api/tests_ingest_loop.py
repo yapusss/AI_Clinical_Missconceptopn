@@ -207,3 +207,36 @@ class RetryFailedFlagTests(SimpleTestCase):
         with self.assertRaises(CommandError) as caught:
             ingest_cmd.Command().handle(**options)
         self.assertIn('--retry-failed', str(caught.exception))
+
+
+class ReingestChunkResetTests(SimpleTestCase):
+    """Re-ingesting a document must clear its old chunks first.
+
+    `uq_doc_chunk_index` is UNIQUE(document_id, chunk_index), so a retry of a
+    document that had ever been chunked hit an IntegrityError instead of
+    re-indexing — the lecturer's "Proses ulang" button was broken by exactly that.
+    """
+
+    def test_delete_runs_before_the_inserts(self):
+        from types import SimpleNamespace
+
+        cur = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=cur)
+        ctx.__exit__ = MagicMock(return_value=False)
+        chunk = SimpleNamespace(chunk_index=0, content='entropy', token_count=2, metadata={})
+
+        with patch.object(ingest_cmd, 'connection') as conn:
+            conn.cursor.return_value = ctx
+            ingest_cmd._insert_chunks(
+                'doc-1', 'subj-1', None, [chunk], [[0.1, 0.2]], 32,
+            )
+
+        calls = cur.execute.call_args_list
+        first_sql = calls[0].args[0].upper()
+        self.assertIn('DELETE FROM KNOWLEDGE_CHUNKS', first_sql)
+        self.assertEqual(calls[0].args[1], ['doc-1'])
+        self.assertTrue(
+            any('INSERT INTO KNOWLEDGE_CHUNKS' in call.args[0].upper() for call in calls),
+            'the insert must still run after the reset',
+        )

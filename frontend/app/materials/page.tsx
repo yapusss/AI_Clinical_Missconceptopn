@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   BookOpen,
   FileText,
+  Loader2,
   RefreshCw,
   RotateCcw,
   Trash2,
@@ -52,14 +53,14 @@ const STATUS_META: Record<
     hint: "Dokumen siap dipakai sebagai sumber referensi.",
   },
   PENDING: {
-    label: "PENDING",
+    label: "ANALYZING",
     cls: "badge-draft",
-    hint: "Menunggu antrean ingest; belum di-embed.",
+    hint: "Sedang diproses. Status berubah sendiri begitu dokumen siap.",
   },
   FAILED: {
     label: "FAILED",
     cls: "badge-revoked",
-    hint: "Ingest gagal; lihat pesan galat.",
+    hint: "Pemrosesan gagal; lihat pesan galat.",
   },
 };
 
@@ -361,10 +362,9 @@ export function ReferenceMaterials({
             </button>
 
             <p className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-[11px] leading-relaxed text-on-surface-variant">
-              Berkas disimpan dengan status <strong>PENDING</strong> terlebih dahulu.
-              Ekstraksi dan embedding dijalankan oleh poller{" "}
-              <code className="font-mono-ui">manage.py ingest_materials --pending</code>;
-              dokumen baru berstatus <strong>READY</strong> setelah antrean tersebut diproses.
+              Dokumen diproses otomatis setelah diunggah. Statusnya berubah sendiri
+              menjadi <strong>READY</strong> saat sudah bisa dipakai sebagai sumber
+              referensi.
             </p>
           </form>
         </section>
@@ -385,10 +385,9 @@ export function ReferenceMaterials({
               <p className="mb-4 flex items-start gap-2 rounded-lg border border-error/40 bg-error-container/20 p-3 text-[11px] leading-relaxed text-error">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                 <span>
-                  Proses ingest tidak berjalan (
-                  {ingestWorker === "missing" ? "worker tidak ditemukan" : "worker tidak aktif"}
-                  ), jadi dokumen akan tetap PENDING tanpa diproses. Hubungi admin
-                  sebelum materi ini diandalkan.
+                  Pemrosesan dokumen sedang tidak berjalan, jadi dokumen baru akan
+                  tetap berstatus <strong>ANALYZING</strong> tanpa selesai. Hubungi
+                  admin sebelum materi ini diandalkan.
                 </span>
               </p>
             )}
@@ -425,7 +424,14 @@ export function ReferenceMaterials({
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <span className={`badge ${meta.cls}`} title={meta.hint}>
-                            {meta.label}
+                            {item.ingest_status === "PENDING" ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Loader2 size={11} className="animate-spin" />
+                                {meta.label}
+                              </span>
+                            ) : (
+                              meta.label
+                            )}
                           </span>
                           {item.ingest_status !== "READY" && (
                             <button
@@ -436,8 +442,8 @@ export function ReferenceMaterials({
                               aria-label={`Proses ulang ${item.title}`}
                               title={
                                 item.ingest_status === "FAILED"
-                                  ? "Proses ulang: jalankan lagi ingest berkas ini"
-                                  : "Antrekan ulang berkas ini bila statusnya tidak berubah"
+                                  ? "Proses ulang dokumen ini"
+                                  : "Proses ulang bila dokumen tidak selesai diproses"
                               }
                             >
                               <RotateCcw
@@ -460,15 +466,17 @@ export function ReferenceMaterials({
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono-ui text-[11px] text-on-surface-variant">
-                        <span>chunk: {item.chunk_count ?? "—"}</span>
+                        <span>segmen: {item.chunk_count ?? "—"}</span>
                         <span>diunggah: {fmtDate(item.created_at)}</span>
                       </div>
 
                       {item.ingest_status === "PENDING" && (
-                        <p className="mt-2 rounded border border-outline-variant/30 bg-surface-container-lowest p-2 text-[11px] leading-relaxed text-on-surface-variant">
-                          Menunggu antrean ingest — status ini berubah sendiri begitu
-                          berkas selesai diproses. Bila tetap PENDING, tekan tombol proses
-                          ulang.
+                        <p
+                          role="status"
+                          className="mt-2 flex items-center gap-1.5 rounded border border-outline-variant/30 bg-surface-container-lowest p-2 text-[11px] leading-relaxed text-on-surface-variant"
+                        >
+                          <Loader2 size={12} className="animate-spin text-primary" />
+                          Sedang menganalisis dokumen…
                         </p>
                       )}
 
