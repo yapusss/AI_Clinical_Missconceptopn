@@ -69,6 +69,17 @@ for i in $(seq 1 12); do
 done
 echo "${cfg_probe:-PROBE FAILED - backend did not answer; check 'docker compose logs backend'}"
 
+# Schema state, the same way as the provider config: "DEPLOY OK" with an unapplied
+# migration is how a feature ships without its column (a cancelled run can leave the
+# migration table and the code out of step, and the next deploy then reports
+# "No migrations to apply").
+docker compose exec -T backend python manage.py migrate --check </dev/null 2>&1 | tail -2 \
+  && echo "migrations: all applied" \
+  || echo "migrations: CHECK FAILED - unapplied migrations exist (see above)"
+docker compose exec -T postgres psql -U appuser -d appdb -tAc \
+  "SELECT 'llm_analyses.lecturer_note column: '||count(*) FROM information_schema.columns WHERE table_name='llm_analyses' AND column_name='lecturer_note';" \
+  </dev/null 2>/dev/null || true
+
 # A live inference call, not just settings: "key set, model right" says nothing about
 # whether this host can actually reach the provider, and the difference between config
 # and connectivity has already cost one debugging session. One tiny JSON call (~20
