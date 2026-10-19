@@ -79,25 +79,57 @@ echo "${cfg_probe:-PROBE FAILED - backend did not answer; check 'docker compose 
 llm_smoke=''
 for i in $(seq 1 2); do
   llm_smoke=$(docker compose exec -T backend python manage.py shell 2>&1 <<'PY'
+from django.conf import settings as s
 from api.llm import _call_llm_json, get_active_model_identifier
-candidates = [get_active_model_identifier(), 'deepseek-v4.1-flash', 'deepseek-v4-pro', 'glm-5.3']
-seen = []
+active = get_active_model_identifier()
+env_model = s.LLM_MODEL
+candidates = []
+for m in (active, env_model, 'deepseek-v4-pro', 'glm-5.3'):
+    if m and m not in candidates:
+        candidates.append(m)
+results = {}
 for m in candidates:
-    if m in seen:
-        continue
-    seen.append(m)
     try:
         d = _call_llm_json('Balas hanya JSON.', 'Balas JSON: {"ok": true}', m)
+        results[m] = 'OK'
         print('llm smoke:', m, 'OK ->', d)
-        break
     except Exception as e:
+        results[m] = 'FAILED'
         print('llm smoke:', m, 'FAILED ->', type(e).__name__, str(e)[:160])
+print('llm smoke summary: active=%s active_ok=%d env=%s env_ok=%d' % (
+    active, 1 if results.get(active) == 'OK' else 0,
+    env_model, 1 if results.get(env_model) == 'OK' else 0))
 PY
 ) && break
   echo "llm smoke attempt $i/2 did not run; retrying in 5s"
   sleep 5
 done
-echo "${llm_smoke:-llm smoke: DID NOT RUN - check 'docker compose logs backend'}" | tail -5
+echo "${llm_smoke:-llm smoke: DID NOT RUN - check 'docker compose logs backend'}" | tail -6
+
+# Reconcile a stale DB pin. `get_active_model_identifier()` prefers the admin-approved
+# model in ai_runtime_settings over LLM_MODEL, so changing the env alone leaves the
+# pipeline asking for a model the new provider does not serve — production sat like that
+# requesting `openai/gpt-oss-20b` from OpenCode Go and answering every analysis with
+# 400 'Model is unavailable'. Only acts when the pinned model is *unreachable* and the
+# deployed one works, and says so, so an admin's deliberate choice is never overridden.
+smoke_summary=$(printf '%s\n' "$llm_smoke" | grep -a 'llm smoke summary' | tail -1)
+active_ok=$(printf '%s' "$smoke_summary" | sed -n 's/.*active_ok=\([01]\).*/\1/p')
+env_ok=$(printf '%s' "$smoke_summary" | sed -n 's/.*env_ok=\([01]\).*/\1/p')
+env_model=$(printf '%s' "$smoke_summary" | sed -n 's/.*env=\([^ ]*\) env_ok.*/\1/p')
+if [ "${active_ok:-1}" = "0" ] && [ "${env_ok:-0}" = "1" ] && [ -n "${env_model:-}" ]; then
+  echo "llm: DB-pinned model is unreachable but the deployed model works - activating $env_model"
+  docker compose exec -T backend python manage.py set_active_model "$env_model" </dev/null 2>&1 | tail -3 || true
+  docker compose exec -T backend python manage.py shell </dev/null <<'PY' 2>&1 | tail -2
+from api.llm import _call_llm_json, get_active_model_identifier
+m = get_active_model_identifier()
+try:
+    print('llm smoke after reconcile:', m, 'OK ->', _call_llm_json('Balas hanya JSON.', 'Balas JSON: {"ok": true}', m))
+except Exception as e:
+    print('llm smoke after reconcile:', m, 'FAILED ->', type(e).__name__, str(e)[:160])
+PY
+else
+  echo "llm: ACTIVE model usable (active_ok=${active_ok:-?} env_ok=${env_ok:-?}) - nothing to reconcile"
+fi
 docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT 'knowledge_chunks: '||count(*)||' rows / '||count(embedding)||' embedded' FROM knowledge_chunks;" </dev/null 2>/dev/null || true
 
 # Workers: NO LONGER started here. Since migration 0029 the backend supervises the
