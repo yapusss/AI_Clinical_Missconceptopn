@@ -68,6 +68,27 @@ for i in $(seq 1 12); do
   sleep 5
 done
 echo "${cfg_probe:-PROBE FAILED - backend did not answer; check 'docker compose logs backend'}"
+
+# A live inference call, not just settings: "key set, model right" says nothing about
+# whether this host can actually reach the provider, and the difference between config
+# and connectivity has already cost one debugging session. One tiny JSON call (~20
+# tokens) per deploy; the failure text lands in the deploy log instead of prod only.
+llm_smoke=''
+for i in $(seq 1 2); do
+  llm_smoke=$(docker compose exec -T backend python manage.py shell 2>&1 <<'PY'
+from api.llm import _call_llm_json, get_active_model_identifier
+m = get_active_model_identifier()
+try:
+    d = _call_llm_json('Balas hanya JSON.', 'Balas JSON: {"ok": true}', m)
+    print('llm smoke: OK ->', d)
+except Exception as e:
+    print('llm smoke: FAILED ->', type(e).__name__, str(e)[:220])
+PY
+) && break
+  echo "llm smoke attempt $i/2 did not run; retrying in 5s"
+  sleep 5
+done
+echo "${llm_smoke:-llm smoke: DID NOT RUN - check 'docker compose logs backend'}" | tail -3
 docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT 'knowledge_chunks: '||count(*)||' rows / '||count(embedding)||' embedded' FROM knowledge_chunks;" </dev/null 2>/dev/null || true
 
 # Workers: NO LONGER started here. Since migration 0029 the backend supervises the

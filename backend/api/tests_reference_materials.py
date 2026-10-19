@@ -2304,14 +2304,25 @@ class AnalysisRetryCapTests(SimpleTestCase):
         self.assertIn("ORDER BY (s.status = 'ANALYSIS_FAILED'), s.submitted_at", src,
                       'a failing row must not be the permanent head of the queue')
 
-    def test_both_branches_bind_the_cap(self):
+    def test_rejected_rows_are_claimable_without_a_cap(self):
+        """A lecturer's reject must always schedule a re-analysis.
+
+        This branch used to be capped by `count(llm_analyses) < max_runs`. Every
+        successful analysis writes such a row and a reject clears none, so any
+        submission that had already been analysed three times ignored the "Tolak &
+        analisis ulang" click entirely — indistinguishable from a broken button, and
+        reported as one. There is no loop to guard against: claiming moves the row out
+        of REJECTED (PENDING_VALIDATION, ANALYSIS_FAILED, or SUBMITTED on a transient
+        failure), and the lecturer's click is its own rate limit.
+        """
         import inspect
 
         from api.management.commands.analyze_submissions import Command
         src = inspect.getsource(Command._claim_next)
-        self.assertIn('llm_analyses', src, 'the REJECTED branch still caps by analyses')
-        self.assertEqual(src.count('%s'), 2,
-                         'each capped branch binds max_runs')
+        self.assertIn("OR s.status = 'REJECTED'", src,
+                      'the REJECTED branch must be claimable unconditionally')
+        self.assertEqual(src.count('%s'), 1,
+                         'only the retry branch binds max_runs now')
 
     def test_failure_procedure_increments_the_counter(self):
         from pathlib import Path

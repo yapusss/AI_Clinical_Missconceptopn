@@ -134,11 +134,15 @@ class Command(BaseCommand):
                                 s.status IN ('SUBMITTED', 'ANALYSIS_FAILED')
                                 AND s.analysis_attempts < %s
                             )
-                            OR (
-                                s.status = 'REJECTED'
-                                AND (SELECT count(*) FROM llm_analyses la
-                                     WHERE la.submission_id = s.id) < %s
-                            )
+                            -- A lecturer's reject ("Tolak & analisis ulang") is an
+                            -- explicit request, so it is claimable unconditionally.
+                            -- It used to be capped by `count(llm_analyses) < max_runs`,
+                            -- which silently did nothing for any submission that had
+                            -- already been analysed three times — every analysis writes
+                            -- a row and a reject never clears them. No loop risk: the
+                            -- claim moves the row out of REJECTED (PENDING_VALIDATION,
+                            -- ANALYSIS_FAILED or, on a transient failure, SUBMITTED).
+                            OR s.status = 'REJECTED'
                           )
                     -- Fresh work first: a row that keeps failing sorts last instead of
                     -- being the permanent head of the queue.
@@ -148,7 +152,7 @@ class Command(BaseCommand):
                 )
                 RETURNING id;
                 """,
-                [max_runs, max_runs],
+                [max_runs],
             )
             row = cur.fetchone()
         return str(row[0]) if row else None
