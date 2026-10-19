@@ -523,7 +523,7 @@ function SubmissionPackageDetailPageContent() {
                             ) : (
                               <FileDown size={16} />
                             )}
-                            Unduh Materi Bacaan (PDF)
+                            Unduh Materi Bacaan Paket Ini (PDF)
                           </button>
                         </div>
 

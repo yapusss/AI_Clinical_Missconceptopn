@@ -39,7 +39,7 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --quiet -r requirements.txt
-          python manage.py test api.tests_question_bank api.tests_worker_supervisor api.tests_reference_materials
+          python manage.py test api.tests_question_bank api.tests_worker_supervisor api.tests_reference_materials api.tests_material_file api.tests_reading_material_export
 
       - uses: actions/setup-node@v4
         with:
