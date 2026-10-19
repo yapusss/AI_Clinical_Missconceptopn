@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, FileArchive, FileSpreadsheet, FileUp } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, FileUp } from "lucide-react";
 import AppSelect from "./AppSelect";
 import ConfirmDialog from "./ConfirmDialog";
 import FeedbackModal from "./FeedbackModal";
@@ -21,6 +21,30 @@ type PendingPackage = {
   questions: unknown[];
 };
 
+type SubQuestionWarning = {
+  groups: { number: string; labels: string[] }[];
+  blank_number_rows: number;
+  total_rows: number;
+  total_numbers: number;
+};
+
+function subQuestionDescription(warning: SubQuestionWarning) {
+  const parts: string[] = [];
+  if (warning.groups.length > 0) {
+    const detail = warning.groups
+      .map((group) => `nomor ${group.number} (${group.labels.join(", ")})`)
+      .join(", ");
+    parts.push(`Dokumen ini memiliki sub-soal pada ${detail}.`);
+  }
+  if (warning.blank_number_rows > 0) {
+    parts.push(`${warning.blank_number_rows} baris tidak memiliki nomor soal.`);
+  }
+  parts.push(
+    `Setiap baris tetap diimpor sebagai soal terpisah, sehingga totalnya menjadi ${warning.total_rows} soal (nomor unik: ${warning.total_numbers}).`,
+  );
+  return parts.join(" ");
+}
+
 export default function QuestionBankImport({
   token,
   subjectId,
@@ -37,7 +61,7 @@ export default function QuestionBankImport({
   const fixedSubject = Boolean(subjectId);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState(subjectId ?? "");
-  const [importMode, setImportMode] = useState<"standard" | "bundle">("standard");
+  const [importMode, setImportMode] = useState<"standard" | "word">("standard");
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -46,6 +70,9 @@ export default function QuestionBankImport({
   const [detectedTopicName, setDetectedTopicName] = useState("");
   const [pendingPackageData, setPendingPackageData] =
     useState<PendingPackage | null>(null);
+  const [pendingNewTopic, setPendingNewTopic] = useState(false);
+  const [subQuestionWarning, setSubQuestionWarning] =
+    useState<SubQuestionWarning | null>(null);
 
   useEffect(() => {
     if (subjectId) {
@@ -89,6 +116,35 @@ export default function QuestionBankImport({
       document.body.removeChild(a);
     } catch {
       setError("Terjadi error saat mengunduh template Excel.");
+    }
+  }
+
+  async function downloadWordTemplate() {
+    setError("");
+    if (!selectedSubjectId) {
+      setError("Tolong pilih mata kuliah terlebih dahulu.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/question-import-template?document=docx&subject_id=${selectedSubjectId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `template-instrumen-tes.docx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      setError("Terjadi error saat mengunduh template Word.");
     }
   }
 
@@ -141,14 +197,41 @@ export default function QuestionBankImport({
     }
   }
 
+  function proceedWithPackage(pkg: PendingPackage, newTopic: boolean) {
+    if (newTopic) {
+      setShowNewTopicConfirm(true);
+      return;
+    }
+    sessionStorage.setItem("imported_package", JSON.stringify(pkg));
+    window.location.href = "/questions/create";
+  }
+
+  function handleAcceptSubQuestions() {
+    const pkg = pendingPackageData;
+    setSubQuestionWarning(null);
+    if (!pkg) return;
+    proceedWithPackage(pkg, pendingNewTopic);
+  }
+
+  function handleCancelSubQuestions() {
+    setSubQuestionWarning(null);
+    setPendingPackageData(null);
+    setPendingNewTopic(false);
+    setError("Impor dibatalkan karena sub-soal tidak disetujui.");
+  }
+
   async function upload(event: React.FormEvent) {
     event.preventDefault();
     if (!file) {
       setError(
-        importMode === "bundle"
-          ? "Silakan pilih atau tarik file ZIP bundle terlebih dahulu."
+        importMode === "word"
+          ? "Silakan pilih atau tarik file Word (.docx) terlebih dahulu."
           : "Silakan pilih atau tarik file Excel terlebih dahulu.",
       );
+      return;
+    }
+    if (importMode === "word" && !file.name.toLowerCase().endsWith(".docx")) {
+      setError("Mode Word hanya menerima file .docx.");
       return;
     }
     setBusy(true);
@@ -175,22 +258,23 @@ export default function QuestionBankImport({
         throw new Error(data.detail || "Terjadi error saat memproses file.");
       }
 
-      if (data.new_topic_detected) {
-        setDetectedTopicName(data.detected_topic_name);
-        setPendingPackageData(data.package);
-        setShowNewTopicConfirm(true);
+      const pkg: PendingPackage | undefined = data.package;
+      if (!pkg || !(pkg.questions?.length > 0)) {
+        throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
+      }
+
+      const newTopic = Boolean(data.new_topic_detected);
+      setDetectedTopicName(data.detected_topic_name ?? "");
+      setPendingPackageData(pkg);
+      setPendingNewTopic(newTopic);
+
+      // Sub-soal diperiksa lebih dulu, topik baru menyusul setelah disetujui.
+      if (data.sub_question_warning) {
+        setSubQuestionWarning(data.sub_question_warning);
         return;
       }
 
-      if (data.package && data.package.questions?.length > 0) {
-        sessionStorage.setItem(
-          "imported_package",
-          JSON.stringify(data.package),
-        );
-        window.location.href = "/questions/create";
-      } else {
-        throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
-      }
+      proceedWithPackage(pkg, newTopic);
     } catch (caught) {
       const msg =
         caught instanceof Error
@@ -207,7 +291,7 @@ export default function QuestionBankImport({
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-outline-variant/30 pb-3">
         <div className="flex items-center gap-2 text-on-surface">
           <FileSpreadsheet size={20} className="text-primary shrink-0" />
-          <h3 className="font-semibold text-sm">Impor Bank Soal Excel</h3>
+          <h3 className="font-semibold text-sm">Impor Bank Soal</h3>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -247,7 +331,14 @@ export default function QuestionBankImport({
             onClick={downloadTemplate}
             className="btn-secondary text-xs flex items-center gap-1.5 shrink-0"
           >
-            <Download size={14} /> Unduh Template Excel
+            <Download size={14} /> Template Excel
+          </button>
+          <button
+            type="button"
+            onClick={downloadWordTemplate}
+            className="btn-secondary text-xs flex items-center gap-1.5 shrink-0"
+          >
+            <Download size={14} /> Template Word
           </button>
         </div>
       </div>
@@ -267,9 +358,9 @@ export default function QuestionBankImport({
               setFile(null);
               setError("");
             }}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+            className={`import-mode-tab flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
               importMode === "standard"
-                ? "bg-primary text-on-primary shadow-sm"
+                ? "bg-primary shadow-sm"
                 : "text-on-surface-variant hover:bg-surface-container"
             }`}
           >
@@ -278,30 +369,33 @@ export default function QuestionBankImport({
           <button
             type="button"
             role="tab"
-            aria-selected={importMode === "bundle"}
+            aria-selected={importMode === "word"}
             onClick={() => {
-              setImportMode("bundle");
+              setImportMode("word");
               setFile(null);
               setError("");
             }}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-              importMode === "bundle"
-                ? "bg-primary text-on-primary shadow-sm"
+            className={`import-mode-tab flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              importMode === "word"
+                ? "bg-primary shadow-sm"
                 : "text-on-surface-variant hover:bg-surface-container"
             }`}
           >
-            <FileArchive size={15} /> Bundle Soal Bergambar (.zip)
+            <FileText size={15} /> Instrumen Word (.docx)
           </button>
         </div>
 
-        {importMode === "bundle" && (
+        {importMode === "word" && (
           <p className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2.5 text-xs leading-relaxed text-on-surface-variant">
-            Kemas file Excel dan folder <span className="font-semibold text-on-surface">images/</span> Anda
-            ke dalam satu file .zip. Di dalam Excel, sertakan tag{" "}
+            Unggah file Word instrumen TOPIK (.docx). Topik dibaca otomatis dari baris{" "}
+            <span className="font-semibold text-on-surface">Topik:</span> di bagian atas
+            dokumen, dan rumus Word (Equation) maupun rumus LaTeX seperti{" "}
             <code className="rounded bg-surface-container px-1 py-0.5 font-mono-ui text-[11px] text-primary">
-              [img:nama_file.png]
+              $v = \frac{"{s}{t}"}$
             </code>{" "}
-            pada teks pertanyaan atau alasan.
+            ikut terbaca. Gambar di dalam tabel disimpan otomatis. Gunakan{" "}
+            <span className="font-semibold text-on-surface">Template Word</span> di atas
+            agar nama kolomnya sesuai.
           </p>
         )}
 
@@ -328,8 +422,8 @@ export default function QuestionBankImport({
           <input
             type="file"
             accept={
-              importMode === "bundle"
-                ? ".zip,application/zip"
+              importMode === "word"
+                ? ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 : ".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             }
             onChange={(e) => {
@@ -360,8 +454,8 @@ export default function QuestionBankImport({
           ) : (
             <div className="space-y-1">
               <p className="font-semibold text-sm text-on-surface">
-                {importMode === "bundle"
-                  ? "Tarik & lepas file ZIP bundle (.zip) di sini"
+                {importMode === "word"
+                  ? "Tarik & lepas file Word (.docx) di sini"
                   : "Tarik & lepas file Excel (.xlsx) di sini"}
               </p>
               <p className="text-xs text-on-surface-variant">
@@ -381,9 +475,19 @@ export default function QuestionBankImport({
       </form>
 
       <ConfirmDialog
+        open={Boolean(subQuestionWarning)}
+        title="Peringatan: Sub-Soal Terdeteksi"
+        description={
+          subQuestionWarning ? subQuestionDescription(subQuestionWarning) : ""
+        }
+        confirmLabel="Ya, Lanjutkan Impor"
+        onCancel={handleCancelSubQuestions}
+        onConfirm={handleAcceptSubQuestions}
+      />
+      <ConfirmDialog
         open={showNewTopicConfirm}
         title="Peringatan: Topik Baru Terdeteksi"
-        description={`Peringatan: ada topik baru "${detectedTopicName}" pada file Excel. Apakah Anda ingin menambahkannya ke mata kuliah ini?`}
+        description={`Peringatan: ada topik baru "${detectedTopicName}" pada file yang diunggah. Apakah Anda ingin menambahkannya ke mata kuliah ini?`}
         confirmLabel="Ya, Tambahkan Topik"
         onCancel={() => {
           setShowNewTopicConfirm(false);

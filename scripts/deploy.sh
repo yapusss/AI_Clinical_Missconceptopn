@@ -55,6 +55,12 @@ if ! docker compose exec -T frontend wget -q -O - --timeout=5 http://127.0.0.1:3
   exit 1
 fi
 
+# Embeddings key + chunk count: retrieval embeds the QUESTION at analysis time, so
+# a missing EMBEDDINGS_API_KEY silently yields zero chunks with NULL grounding
+# (non-fatal by design). State the container's view on every deploy.
+docker compose exec -T backend python -c "from django.conf import settings as s; print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>/dev/null || true
+docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT 'knowledge_chunks: '||count(*)||' rows / '||count(embedding)||' embedded' FROM knowledge_chunks;" </dev/null 2>/dev/null || true
+
 # Workers: NO LONGER started here. Since migration 0029 the backend supervises both
 # loops itself (api/worker_supervisor.py, spawned from ApiConfig.ready()), so the
 # `worker` container this step used to start would be a SECOND analysis worker polling

@@ -161,7 +161,7 @@ const isDraftContradictory = (draft: {
 }) => draft.isCorrect !== (draft.finalCategory === "SC");
 
 // Nilai awal satu percobaan: validasi yang sudah tersimpan bila ada, selain itu
-// rekomendasi AI. Satu sumber kebenaran untuk seeding draft dan untuk patch.
+// rekomendasi AI. Satu sumber kebenaran untuk pra-isi formulir dan untuk patch.
 const draftBaseValues = (analysis: NonNullable<AttemptItem["analysis"]>) => {
   const v = analysis.validation;
   const score =
@@ -438,7 +438,6 @@ export default function StudentPackageReviewPage({
   useEffect(() => {
     if (!currentAttempt || !currentAttempt.analysis) return;
     const a = currentAttempt.analysis;
-    const v = a.validation;
     const savedDraft = drafts[a.id];
 
     let nextIsCorrect: boolean;
@@ -459,29 +458,6 @@ export default function StudentPackageReviewPage({
     setShowAiDetails(false);
     setIsUnlocked(false);
 
-    // Draft otomatis terbentuk begitu soal dibuka (tanpa perlu klik), memakai
-    // nilai awal/rekomendasi AI. Soal yang sudah tervalidasi TIDAK di-seed —
-    // koreksi hanya lewat "Buka Kunci" lalu edit.
-    if (!savedDraft && !v && activeQuestion) {
-      const analysisId = a.id;
-      setDrafts((prev) => {
-        if (prev[analysisId]) return prev;
-        const next: Record<string, ValidationDraft> = {
-          ...prev,
-          [analysisId]: {
-            questionId: activeQuestion.question_id,
-            orderIndex: activeQuestion.order_index,
-            isCorrect: nextIsCorrect,
-            finalCategory: nextCategory,
-            mode: "new",
-            touched: false,
-            updatedAt: new Date().toISOString(),
-          },
-        };
-        persistDrafts(setId, studentId, next);
-        return next;
-      });
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAttempt]);
 
@@ -528,8 +504,9 @@ export default function StudentPackageReviewPage({
           finalCategory: nextCategory,
           mode: isAlreadyValidated ? "correction" : "new",
           touched: true,
-          // AI seeds the draft, but only an explicit Benar/Salah click counts
-          // as a lecturer decision for the question-list status.
+          // Hanya tiga kontrol eksplisit (Benar, Salah, kategori) dan tombol
+          // "Gunakan Rekomendasi AI" yang menulis draft; decisionTouched
+          // menyala saat klik Benar/Salah.
           decisionTouched:
             prev[analysisId]?.decisionTouched || patch.isCorrect !== undefined,
           updatedAt: new Date().toISOString(),
@@ -683,41 +660,6 @@ export default function StudentPackageReviewPage({
     () => finalizeRows.filter((r) => r.contradictory),
     [finalizeRows],
   );
-
-  // Analisis AI dihitung sebagai draft sejak awal (touched=false) sehingga dosen
-  // dapat langsung "Selesai Evaluasi" tanpa membuka/mengubah tiap soal.
-  useEffect(() => {
-    if (!data) return;
-    setDrafts((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const q of data.questions) {
-        const att = latestAttemptOf(q);
-        const an = att?.analysis;
-        if (
-          att?.status === "PENDING_VALIDATION" &&
-          an &&
-          !an.validation &&
-          !next[an.id]
-        ) {
-          next[an.id] = {
-            questionId: q.question_id,
-            orderIndex: q.order_index,
-            isCorrect: Number(an.percentage_correct) >= 99.9,
-            finalCategory: an.four_tier_category ?? "LK",
-            mode: "new",
-            touched: false,
-            decisionTouched: false,
-            updatedAt: new Date().toISOString(),
-          };
-          changed = true;
-        }
-      }
-      if (changed) persistDrafts(setId, studentId, next);
-      return changed ? next : prev;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
 
   type SummaryRow = {
     idx: number;

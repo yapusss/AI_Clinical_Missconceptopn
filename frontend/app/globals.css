@@ -121,6 +121,10 @@ input, select, textarea, button {
   font-family: inherit;
 }
 
+button.import-mode-tab[aria-selected="true"] {
+  color: #ffffff;
+}
+
 select option {
   background-color: #0f172a !important;
   color: #f8fafc !important;
@@ -697,6 +701,18 @@ math-field.math-field-input:focus-within {
 .math-inline-node.is-selected {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+math-field.math-field-input::part(menu-toggle),
+math-field.math-field-input::part(virtual-keyboard-toggle) {
+  display: none;
+}
+
+math-field.math-field-input:focus-within::part(menu-toggle),
+math-field.math-field-input:focus-within::part(virtual-keyboard-toggle),
+math-field.math-field-input.ML__focused::part(menu-toggle),
+math-field.math-field-input.ML__focused::part(virtual-keyboard-toggle) {
+  display: flex;
 }
 
 /* Read-only math inside stored content (validation / history screens) */

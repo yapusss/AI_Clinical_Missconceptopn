@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import tempfile
 import uuid
 import zipfile
 from django.conf import settings
@@ -28,6 +29,13 @@ from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissio
 
 from .authentication import TokenAuthentication
 from .reading_materials import enqueue_reading_material, lecturer_category
+from .docx_template import build_instrument_template
+from .question_bank import (
+    cell_to_paragraphs,
+    detect_sub_questions,
+    needs_rich_html,
+    parse_instrument_docx,
+)
 from .models import (
     AuthToken,
     AiModelChange,
@@ -1145,6 +1153,165 @@ def is_lecturer_for_subject(user, subject_id):
 
 IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'short_answer', 'alasan'}
 
+# 'No Soal' header spellings the template, Excel sheets and CSV files may use.
+IMPORT_ORDER_LABEL_KEYS = {
+    'ORDER_INDEX', 'NOMOR_SOAL', 'NO_SOAL', 'NO SOAL', 'NO. SOAL', 'NO',
+}
+
+
+def _import_row_label(raw):
+    """Raw 'No Soal' text of an import row, whatever header spelling it used."""
+    for key, value in (raw or {}).items():
+        if str(key).strip().upper() in IMPORT_ORDER_LABEL_KEYS and str(value).strip():
+            return str(value)
+    return ''
+DOCX_IMPORT_MAX_BYTES = 25 * 1024 * 1024
+
+
+def _resolve_import_subject(request):
+    """Subject chosen by the lecturer, else the first one they may import into."""
+    subject_id = request.data.get('subject_id')
+    if subject_id:
+        subject = Subject.objects.filter(pk=subject_id).first()
+        if subject:
+            return subject
+    if request.user.is_superuser:
+        return Subject.objects.filter(is_active=True).first()
+    user_subjects = UserSubjectRole.objects.filter(
+        user=request.user, role=UserSubjectRole.Role.LECTURER
+    ).values_list('subject_id', flat=True)
+    return Subject.objects.filter(id__in=user_subjects, is_active=True).first()
+
+
+def _read_docx_instrument(upload):
+    """Parse a TOPIK .docx upload into `(declared_topic, rows)`.
+
+    The parser needs a path (a .docx is a zip), so the upload is spooled to a
+    temporary file. The docx limit is 25 MB because TOPIK 2 carries enough figures
+    to exceed the 10 MB Excel cap.
+    """
+    if getattr(upload, 'size', 0) > DOCX_IMPORT_MAX_BYTES:
+        raise ValueError('File Word maksimal 25 MB. Kompres gambar di dalam dokumen '
+                         'lalu coba lagi.')
+    if hasattr(upload, 'seek'):
+        upload.seek(0)
+    suffix = os.path.splitext(getattr(upload, 'name', '') or '')[1].lower() or '.docx'
+    handle, path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(handle, 'wb') as temp:
+            for chunk in upload.chunks():
+                temp.write(chunk)
+        return parse_instrument_docx(path)
+    except ValueError as exc:
+        raise ValueError(f'File Word tidak dapat dibaca: {exc}') from exc
+    except Exception as exc:
+        raise ValueError('File Word tidak dapat dibaca. Pastikan file .docx valid '
+                         'dan memiliki tabel instrumen.') from exc
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _docx_import_response(request, upload):
+    """Preview a TOPIK .docx as the package shape `/questions/create` expects.
+
+    The topic is always the one declared in the document (the lecturer's topic
+    selection is ignored for Word imports). A topic that does not exist yet is
+    reported so the UI can ask before creating it.
+    """
+    subject = _resolve_import_subject(request)
+    if not subject:
+        return Response(
+            {'detail': 'Mata kuliah tidak ditemukan atau Anda belum memiliki akses '
+                       'ke mata kuliah terkait.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        declared_topic, rows = _read_docx_instrument(upload)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    topic_name = (declared_topic or '').strip()
+    if not topic_name:
+        return Response(
+            {'detail': 'Topik tidak ditemukan di dalam file Word. Tambahkan baris '
+                       '"Topik: ..." di bagian atas dokumen.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    matched_topic = Topic.objects.filter(subject=subject, name__iexact=topic_name).first()
+
+    questions, skipped = [], 0
+    order_labels = []
+    for row in rows:
+        soal = (row.get('soal') or '').strip()
+        if not soal:
+            skipped += 1
+            continue
+        order_labels.append(row.get('no_soal') or '')
+        images = []
+        for image in row.get('images') or []:
+            extension = os.path.splitext(image['name'])[1].lower() or '.png'
+            saved = default_storage.save(
+                f'uploads/question-bank/{uuid.uuid4().hex}{extension}',
+                ContentFile(image['data']),
+            )
+            images.append(f"{settings.MEDIA_URL.rstrip('/')}/{saved.lstrip('/')}")
+
+        prompt = soal
+        if needs_rich_html(soal) or images:
+            prompt = cell_to_paragraphs(soal)
+            prompt += ''.join(
+                f'<p><img src="{url}" style="max-width:100%;height:auto;" /></p>'
+                for url in images
+            )
+        short_answer = (row.get('jawaban') or '').strip()
+        alasan = (row.get('alasan') or '').strip()
+        if needs_rich_html(short_answer):
+            short_answer = cell_to_paragraphs(short_answer)
+        if needs_rich_html(alasan):
+            alasan = cell_to_paragraphs(alasan)
+        questions.append({
+            'prompt': prompt,
+            'short_answer': short_answer,
+            'alasan': alasan,
+        })
+
+    if not questions:
+        return Response(
+            {'detail': 'Tidak ada butir soal yang dapat dibaca dari file Word.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    basename = os.path.basename(getattr(upload, 'name', '') or '')
+    code_match = re.search(r'topik\s*[\(\-]?\s*(\d+)', basename, re.IGNORECASE)
+    code = (request.data.get('code') or (
+        f'FIS-TOPIK-{code_match.group(1)}' if code_match
+        else f'IMP-{uuid.uuid4().hex[:6].upper()}'
+    )).strip().upper()
+    title = (request.data.get('title') or topic_name).strip()
+    description = (request.data.get('description')
+                   or f'Diimpor dari {basename}').strip()
+
+    return Response({
+        'new_topic_detected': matched_topic is None,
+        'detected_topic_name': topic_name,
+        'skipped_rows': skipped,
+        'sub_question_warning': detect_sub_questions(order_labels),
+        'package': {
+            'subject_id': str(subject.id),
+            'topic_id': str(matched_topic.id) if matched_topic else None,
+            'topic_name': topic_name,
+            'code': code,
+            'title': title,
+            'description': description,
+            'questions': questions,
+        },
+    }, status=status.HTTP_200_OK)
+
 
 def _normalize_import_row(raw):
     return {
@@ -1434,6 +1601,10 @@ class QuestionImportCreateView(APIView):
         if not file_obj:
             return Response({'detail': 'File wajib diunggah.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        filename = (getattr(file_obj, 'name', '') or '').lower()
+        if filename.endswith('.docx'):
+            return _docx_import_response(request, file_obj)
+
         subject = None
         subject_id = request.data.get('subject_id')
         if subject_id:
@@ -1510,9 +1681,11 @@ class QuestionImportCreateView(APIView):
         description = (request.data.get('description') or first_data.get('description') or '').strip()
 
         questions_payload = []
+        order_labels = []
         for r in parsed_rows:
             raw = r['raw_data']
             if raw.get('prompt') and raw.get('short_answer'):
+                order_labels.append(_import_row_label(raw))
                 prompt_text = raw.get('prompt', '')
                 image_url = raw.get('image_url', '')
                 if image_url:
@@ -1532,6 +1705,7 @@ class QuestionImportCreateView(APIView):
         return Response({
             'new_topic_detected': new_topic_detected,
             'detected_topic_name': detected_topic_name,
+            'sub_question_warning': detect_sub_questions(order_labels),
             'package': {
                 'subject_id': str(subject.id),
                 'topic_id': str(matched_topic.id) if matched_topic else None,
@@ -1558,6 +1732,16 @@ class QuestionImportTemplateView(APIView):
 
         if not target_subject:
             target_subject = Subject(name="Physics", slug="physics")
+
+        if (request.query_params.get('document') or '').lower() == 'docx':
+            response = HttpResponse(
+                build_instrument_template(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            response["Content-Disposition"] = (
+                'attachment; filename="template-instrumen-tes.docx"'
+            )
+            return response
 
         workbook = Workbook()
         ws = workbook.active
