@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  CalendarDays,
   ChevronRight,
   ClipboardList,
   Save,
@@ -81,8 +80,6 @@ export default function ExamPackageForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const opensAtInput = useRef<HTMLInputElement>(null);
-  const closesAtInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!packageId) setCode(generatedCode());
@@ -279,21 +276,12 @@ export default function ExamPackageForm({
                   </label>
                   <div className="relative">
                     <input
-                      ref={opensAtInput}
                       id="opens-at"
                       type="datetime-local"
                       value={opensAt}
                       onChange={(event) => setOpensAt(event.target.value)}
-                      className="form-input datetime-input pr-12"
+                      className="form-input datetime-input"
                     />
-                    <button
-                      type="button"
-                      aria-label="Pilih waktu buka"
-                      onClick={() => opensAtInput.current?.showPicker()}
-                      className="absolute inset-y-0 right-0 grid w-11 place-items-center text-primary transition-colors hover:text-primary-hover"
-                    >
-                      <CalendarDays size={18} />
-                    </button>
                   </div>
                 </div>
                 <div>
@@ -305,21 +293,12 @@ export default function ExamPackageForm({
                   </label>
                   <div className="relative">
                     <input
-                      ref={closesAtInput}
                       id="closes-at"
                       type="datetime-local"
                       value={closesAt}
                       onChange={(event) => setClosesAt(event.target.value)}
-                      className="form-input datetime-input pr-12"
+                      className="form-input datetime-input"
                     />
-                    <button
-                      type="button"
-                      aria-label="Pilih waktu tutup"
-                      onClick={() => closesAtInput.current?.showPicker()}
-                      className="absolute inset-y-0 right-0 grid w-11 place-items-center text-primary transition-colors hover:text-primary-hover"
-                    >
-                      <CalendarDays size={18} />
-                    </button>
                   </div>
                 </div>
                 <div>

@@ -413,13 +413,11 @@ textarea.form-input {
 }
 
 /* Native calendar icons do not inherit input text color. */
+/* `color-scheme` only picks the native picker's palette. The browser's own calendar
+   indicator is the ONE affordance now — the custom calendar button that used to sit on
+   top of it is gone, so do not hide the native glyph again. */
 .datetime-input {
   color-scheme: dark;
-}
-
-.datetime-input::-webkit-calendar-picker-indicator {
-  opacity: 0;
-  pointer-events: none;
 }
 
 [data-theme="light"] .datetime-input {
