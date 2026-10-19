@@ -87,6 +87,10 @@ const fmtPct = (num: number) => {
   return num % 1 === 0 ? num.toFixed(0) : num.toFixed(1);
 };
 
+// Reading material appears only after the backend worker has written it; the student
+// surface polls this often while a row is still PENDING/STALE (see hasPendingMaterial).
+const PENDING_MATERIAL_POLL_MS = 4000;
+
 const SCORE_POLICY_LABEL: Record<string, string> = {
   HIGHEST: "Nilai Tertinggi",
   AVERAGE: "Nilai Rata-rata",
@@ -197,6 +201,32 @@ function SubmissionPackageDetailPageContent() {
       ),
     [group],
   );
+
+  // Reading material is written by a background worker (5 s drain loop + a ~15–20 s
+  // model call). A PENDING/STALE row is served as `{'status': ...}`, so the card says
+  // "sedang disiapkan…" — but nothing pushes the READY row to the client. Without this
+  // poll the student had to reload by hand to ever see the material appear.
+  const hasPendingMaterial = useMemo(
+    () =>
+      !!group &&
+      group.questions.some((question) =>
+        question.attempts.some((attempt) => {
+          const status = attempt.evaluation?.reading_material?.status;
+          return (
+            attempt.status === "VALIDATED" &&
+            (status === "PENDING" || status === "STALE")
+          );
+        }),
+      ),
+    [group],
+  );
+
+  useEffect(() => {
+    if (!hasPendingMaterial) return;
+    // `load` never re-arms the full-page spinner, so this refresh is silent.
+    const timer = window.setInterval(() => void load(), PENDING_MATERIAL_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [hasPendingMaterial, load]);
 
   const handleDownloadPdf = async () => {
     if (!packageId || downloading) return;
