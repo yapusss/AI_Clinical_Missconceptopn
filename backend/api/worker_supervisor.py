@@ -63,19 +63,44 @@ _state = {
 def worker_commands():
     """The background workers to keep alive, as `(name, argv after manage.py)`.
 
-    Both are long-running `--loop` drains; `analyze_submissions` moves submissions
+    All three are long-running `--loop` drains; `analyze_submissions` moves submissions
     through the analysis pipeline, `drain_reading_materials` turns PENDING/STALE
-    material into READY (and rides the C2 reference-embedding sweep on every tick).
+    material into READY (and rides the C2 reference-embedding sweep on every tick),
+    and `ingest_materials --pending` is the ONLY thing that turns an uploaded reference
+    document from PENDING into READY. Without it an upload sits at PENDING forever:
+    nothing else in the stack drains `knowledge_documents`.
     """
     return [
         ('analysis', ['analyze_submissions', '--loop']),
         ('materials', ['drain_reading_materials', '--loop']),
+        ('ingest', ['ingest_materials', '--pending', '--loop']),
     ]
 
 
 def _llm_key_is_real():
     key = (getattr(settings, 'LLM_API_KEY', '') or '').strip()
     return bool(key) and key != 'local-llama-cpp'
+
+
+def _embeddings_key_is_real():
+    key = (getattr(settings, 'EMBEDDINGS_API_KEY', '') or '').strip()
+    return bool(key)
+
+
+def worker_skip_reason(name):
+    """`reason` when `name` must NOT be spawned right now, else `None`.
+
+    One worker needs a key the others do not: `ingest_materials` embeds chunks, and it
+    marks a document FAILED on ANY exception — while `_select_pending()` only ever picks
+    `PENDING` rows, so nothing retries a FAILED one. A drain running without an
+    embeddings key would therefore burn every upload to FAILED, permanently. Leaving
+    them PENDING (still retryable by the next tick once the key exists) is the better
+    failure. The reason lands in the supervisor heartbeat, so "why is nothing being
+    ingested" is answerable from `worker_heartbeats`.
+    """
+    if name == 'ingest' and not _embeddings_key_is_real():
+        return 'EMBEDDINGS_API_KEY is not set (uploads stay PENDING until it is)'
+    return None
 
 
 def should_supervise(argv=None):
@@ -176,7 +201,12 @@ def _run():
     interval = float(getattr(settings, 'WORKER_SUPERVISOR_INTERVAL', 10.0))
     while True:
         error = None
+        skipped = {}
         for name, argv in worker_commands():
+            reason = worker_skip_reason(name)
+            if reason:
+                skipped[name] = reason
+                continue
             try:
                 _ensure_alive(name, argv)
             except Exception as e:  # noqa: BLE001
@@ -191,6 +221,7 @@ def _run():
                 {
                     'state': 'running',
                     'last_error': error,
+                    'skipped': skipped,
                     'children': {
                         name: (proc.pid if proc.poll() is None else None)
                         for name, proc in _state['children'].items()

@@ -73,12 +73,39 @@ class ShouldSuperviseTests(SimpleTestCase):
 
 class WorkerCommandTests(SimpleTestCase):
 
-    def test_supervises_both_loop_workers(self):
+    def test_supervises_all_three_loop_workers(self):
         commands = dict(worker_supervisor.worker_commands())
-        self.assertEqual(sorted(commands), ['analysis', 'materials'])
+        self.assertEqual(sorted(commands), ['analysis', 'ingest', 'materials'])
         for name, argv in commands.items():
             self.assertIn('--loop', argv, name)
             self.assertFalse(argv[0].startswith('manage.py'), name)
+
+    def test_the_upload_queue_is_drained_by_a_supervised_worker(self):
+        # Nothing else in the stack drains `knowledge_documents`: without this worker an
+        # uploaded reference document stays PENDING forever (the bug this guards).
+        argv = dict(worker_supervisor.worker_commands())['ingest']
+        self.assertEqual(argv, ['ingest_materials', '--pending', '--loop'])
+
+
+class WorkerSkipReasonTests(SimpleTestCase):
+    """The ingest drain must not run without an embeddings key."""
+
+    @override_settings(EMBEDDINGS_API_KEY='sk-or-a-real-looking-key')
+    def test_ingest_runs_when_the_embeddings_key_is_set(self):
+        self.assertIsNone(worker_supervisor.worker_skip_reason('ingest'))
+
+    @override_settings(EMBEDDINGS_API_KEY='')
+    def test_ingest_is_skipped_without_an_embeddings_key(self):
+        # ingest marks a document FAILED on any exception and only PENDING rows are
+        # retried, so running keyless would burn every upload permanently.
+        reason = worker_supervisor.worker_skip_reason('ingest')
+        self.assertIsNotNone(reason)
+        self.assertIn('EMBEDDINGS_API_KEY', reason)
+
+    @override_settings(EMBEDDINGS_API_KEY='')
+    def test_the_keyless_gate_applies_to_ingest_only(self):
+        for name in ('analysis', 'materials'):
+            self.assertIsNone(worker_supervisor.worker_skip_reason(name))
 
 
 class SpawnTests(SimpleTestCase):

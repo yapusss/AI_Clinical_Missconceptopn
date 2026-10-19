@@ -26,6 +26,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
 from api.embeddings import EmbeddingError, embed_texts, vector_literal
+from api.worker_health import record_heartbeat, supervisor_gone
 from api.reading_materials import mark_stale_for_subject
 
 logger = logging.getLogger(__name__)
@@ -525,6 +526,18 @@ class Command(BaseCommand):
         with its error and the run (or loop) continues with the next.
         """
         while True:
+            # Liveness (same contract as the other two loops): a drain that is not
+            # running is indistinguishable from a queue that is empty, and PENDING
+            # uploads piling up is exactly how that looked before.
+            record_heartbeat(
+                'ingest',
+                {'mode': 'loop' if options['loop'] else 'once'},
+            )
+            if options['loop'] and supervisor_gone():
+                self.stderr.write(
+                    '[ingest] supervisor gone; exiting (a backend restart starts a fresh worker)'
+                )
+                return
             pending = _select_pending()
             if not pending:
                 self.stdout.write('Nothing pending.')

@@ -57,11 +57,20 @@ fi
 
 # Embeddings key + chunk count: retrieval embeds the QUESTION at analysis time, so
 # a missing EMBEDDINGS_API_KEY silently yields zero chunks with NULL grounding
-# (non-fatal by design). State the container's view on every deploy.
-docker compose exec -T backend python -c "from django.conf import settings as s; print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>/dev/null || true
+# (non-fatal by design). State the container's view on every deploy. Retried: this
+# runs seconds after `docker compose up -d`, and the first attempt used to fail
+# against a backend container that was still starting — the error went to /dev/null
+# and the deploy log simply omitted the line, which reads exactly like "key set".
+emb_probe=''
+for i in $(seq 1 12); do
+  emb_probe=$(docker compose exec -T backend python -c "from django.conf import settings as s; print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
+  echo "waiting for backend to report embeddings config ($i/12)..."
+  sleep 5
+done
+echo "${emb_probe:-embeddings: PROBE FAILED - backend did not answer; check 'docker compose logs backend'}"
 docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT 'knowledge_chunks: '||count(*)||' rows / '||count(embedding)||' embedded' FROM knowledge_chunks;" </dev/null 2>/dev/null || true
 
-# Workers: NO LONGER started here. Since migration 0029 the backend supervises both
+# Workers: NO LONGER started here. Since migration 0029 the backend supervises the
 # loops itself (api/worker_supervisor.py, spawned from ApiConfig.ready()), so the
 # `worker` container this step used to start would be a SECOND analysis worker polling
 # the same queue. Claims are idempotent (FOR UPDATE SKIP LOCKED) so it was safe, just
@@ -83,18 +92,18 @@ for i in $(seq 1 24); do
   worker_rows=$(docker compose exec -T postgres psql -U appuser -d appdb -tAc \
     "SELECT count(*) FROM worker_heartbeats WHERE last_seen_at > now() - interval '60 seconds'" </dev/null 2>/dev/null || echo 0)
   worker_rows=$(echo "${worker_rows:-0}" | tr -d '[:space:]')
-  if [ "${worker_rows:-0}" -ge 3 ]; then
+  if [ "${worker_rows:-0}" -ge 4 ]; then
     echo "workers: ${worker_rows} fresh heartbeats"
     break
   fi
   echo "waiting for worker heartbeats ($i/24)..."
   sleep 5
 done
-if [ "${worker_rows:-0}" -lt 3 ]; then
-  echo "workers: WARNING - fewer than 3 fresh heartbeats (expected analysis, materials, supervisor)"
-  echo "         check AUTO_WORKER / the LLM key, and: docker compose logs backend"
+if [ "${worker_rows:-0}" -lt 4 ]; then
+  echo "workers: WARNING - fewer than 4 fresh heartbeats (expected analysis, materials, ingest, supervisor)"
+  echo "         check AUTO_WORKER / the LLM key / EMBEDDINGS_API_KEY, and: docker compose logs backend"
   docker compose exec -T postgres psql -U appuser -d appdb -c \
-    "SELECT worker_name, pid, loop_count, now() - last_seen_at AS age, detail_json->>'last_error' AS err FROM worker_heartbeats ORDER BY worker_name" </dev/null 2>/dev/null || true
+    "SELECT worker_name, pid, loop_count, now() - last_seen_at AS age, detail_json->>'last_error' AS err, detail_json->>'skipped' AS skipped FROM worker_heartbeats ORDER BY worker_name" </dev/null 2>/dev/null || true
 fi
 
 docker image prune -f || true
