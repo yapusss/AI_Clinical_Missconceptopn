@@ -3,6 +3,8 @@ name: Deploy to VPS (SSH via Cloudflare Tunnel)
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +12,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Gate: nothing reaches the VPS unless the build is provably sound. Kept inside the
+  # deploy workflow (not a separate ci.yml) because this repo has no branch protection --
+  # a separate workflow would run and be ignored. `needs:` is the only mechanism here
+  # that actually blocks a deploy.
+  #
+  # Why exactly these checks: `manage.py test api` CANNOT pass in this repo (the domain
+  # tables are unmanaged V2 SQL, so the auto-created test DB has no `users` table). The
+  # three modules below are SimpleTestCase -- DB-free and secret-free, verified by running
+  # them with every DB_*/LLM_*/EMBEDDINGS_* variable unset: 246 tests, OK.
+  # `next build` alone is NOT a type check -- Next transpiles without type-checking, which
+  # is how a ReferenceError once shipped past a green build (2026-10-17). tsc runs separately.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Backend tests (DB-free, no secrets)
+        working-directory: backend
+        run: |
+          python -m pip install --quiet -r requirements.txt
+          python manage.py test api.tests_question_bank api.tests_worker_supervisor api.tests_reference_materials
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend typecheck, then build
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx next build
+
   deploy:
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
