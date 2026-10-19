@@ -13,6 +13,7 @@ import AppSelect from "../components/AppSelect";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
 import FeedbackModal from "../components/FeedbackModal";
+import RichTextContent from "../components/RichTextContent";
 
 type BankSet = {
   id: string;
@@ -21,6 +22,7 @@ type BankSet = {
   topic_name?: string | null;
   latest_versions: {
     question_id: string;
+    prompt: string;
     prompt_preview: string;
     is_published: boolean;
   }[];
@@ -74,6 +76,9 @@ export default function ExamPackageForm({
   const [password, setPassword] = useState("");
   const [questionIds, setQuestionIds] = useState<string[]>([]);
   const [collapsedTopics, setCollapsedTopics] = useState<string[]>([]);
+  const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const opensAtInput = useRef<HTMLInputElement>(null);
@@ -499,31 +504,66 @@ export default function ExamPackageForm({
                     </button>
                     {!collapsed && (
                       <div className="divide-y divide-outline-variant/30">
-                        {group.questions.map((question) => (
-                          <label
+                        {group.questions.map((question) => {
+                          const expanded =
+                            expandedQuestionId === question.question_id;
+                          return (
+                          <div
                             key={question.question_id}
-                            className="flex cursor-pointer gap-3 p-4 hover:bg-surface-container"
+                            className="bg-surface-container-lowest"
                           >
-                            <input
-                              type="checkbox"
-                              checked={questionIds.includes(
-                                question.question_id,
-                              )}
-                              onChange={() =>
-                                toggleQuestion(question.question_id)
-                              }
-                              className="mt-1 size-4 accent-primary"
-                            />
-                            <span>
-                              <span className="block text-xs font-semibold text-primary">
-                                {question.setTitle}
-                              </span>
-                              <span className="text-sm">
-                                {question.prompt_preview}
-                              </span>
-                            </span>
-                          </label>
-                        ))}
+                            <div className="flex items-start gap-3 p-4 hover:bg-surface-container">
+                              <label className="flex min-w-0 flex-1 cursor-pointer gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={questionIds.includes(
+                                    question.question_id,
+                                  )}
+                                  onChange={() =>
+                                    toggleQuestion(question.question_id)
+                                  }
+                                  className="mt-1 size-4 shrink-0 accent-primary"
+                                />
+                                <span className="min-w-0">
+                                  <span className="block text-xs font-semibold text-primary">
+                                    {question.setTitle}
+                                  </span>
+                                  <span className="block text-sm text-on-surface">
+                                    {question.prompt_preview}
+                                  </span>
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedQuestionId((current) =>
+                                    current === question.question_id
+                                      ? null
+                                      : question.question_id,
+                                  )
+                                }
+                                aria-expanded={expanded}
+                                className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                              >
+                                {expanded ? "Tutup detail" : "Lihat detail"}
+                                <ChevronRight
+                                  size={14}
+                                  className={expanded ? "rotate-90" : ""}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            </div>
+                            {expanded && (
+                              <div className="border-t border-outline-variant/30 bg-surface-container-low px-11 py-4">
+                                <RichTextContent
+                                  html={question.prompt}
+                                  className="text-sm leading-relaxed text-on-surface"
+                                />
+                              </div>
+                            )}
+                          </div>
+                          );
+                        })}
                       </div>
                     )}
                   </section>
@@ -563,13 +603,24 @@ export default function ExamPackageForm({
                 </dd>
               </div>
             </dl>
-            <ol className="mt-5 list-decimal space-y-3 pl-5">
-              {questionIds.map((id) => (
-                <li key={id}>
-                  {questions.find((question) => question.question_id === id)
-                    ?.prompt_preview || "Soal terpilih"}
-                </li>
-              ))}
+            <ol className="mt-5 list-decimal space-y-4 pl-5">
+              {questionIds.map((id) => {
+                const question = questions.find(
+                  (item) => item.question_id === id,
+                );
+                return (
+                  <li key={id} className="pl-1">
+                    {question?.prompt ? (
+                    <RichTextContent
+                      html={question.prompt}
+                      className="text-sm leading-relaxed text-on-surface"
+                    />
+                    ) : (
+                      "Soal terpilih"
+                    )}
+                  </li>
+                );
+              })}
             </ol>
             {!questionIds.length && (
               <p className="mt-4 text-sm text-error">

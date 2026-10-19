@@ -1857,6 +1857,7 @@ class QuestionListCreateView(APIView):
                         'question_id': str(question.id),
                         'order_index': question.order_index,
                         'version_number': v.version_number,
+                        'prompt': v.prompt,
                         'prompt_preview': plain_text_preview(v.prompt, 160),
                         'is_published': v.is_published,
                     })

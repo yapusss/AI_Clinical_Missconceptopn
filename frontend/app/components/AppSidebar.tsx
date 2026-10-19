@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -24,6 +25,8 @@ import { useAuth } from "./AuthProvider";
 import ThemeToggle from "./ThemeToggle";
 import Breadcrumb from "./Breadcrumb";
 import { hideMathKeyboard } from "./mathLiveLoader";
+import unsLogo from "../../assets/UNS-LOGO.png";
+import ubdLogo from "../../assets/Universiti_Brunei_Darussalam_logo.png";
 
 type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 
@@ -244,6 +247,26 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
               );
             })}
           </nav>
+        </div>
+
+        <div
+          style={{
+            marginTop: "auto",
+            marginBottom: "12px",
+            padding: "12px",
+            borderRadius: "var(--radius-sm)",
+            background: "transparent",
+            border: "1px solid var(--border-color)",
+            boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "14px",
+          }}
+          aria-label="Logo institusi"
+        >
+          <Image src={unsLogo} alt="Universitas Sebelas Maret" width={42} height={42} style={{ width: "42px", height: "42px", objectFit: "contain" }} />
+          <Image src={ubdLogo} alt="Universiti Brunei Darussalam" width={42} height={42} style={{ width: "42px", height: "42px", objectFit: "contain" }} />
         </div>
 
         <div

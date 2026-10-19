@@ -17,6 +17,7 @@ import ListToolbar from "./ListToolbar";
 import PageContainer from "./PageContainer";
 import PageHeader from "./PageHeader";
 import FeedbackModal from "./FeedbackModal";
+import AppMultiSelect from "./AppMultiSelect";
 
 type Lecturer = { id: string; full_name: string; email: string };
 type Subject = {
@@ -460,32 +461,23 @@ export default function AdminSubjectManagement({
                   <UsersRound size={18} className="text-primary" />
                   Dosen pengampu
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {lecturers.map((lecturer) => (
-                    <label
-                      key={lecturer.id}
-                      className="flex items-center gap-2 rounded-lg border border-outline-variant/40 p-3 text-sm text-on-surface"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={form.lecturer_ids.includes(lecturer.id)}
-                        onChange={() =>
-                          setForm((current) => ({
-                            ...current,
-                            lecturer_ids: current.lecturer_ids.includes(
-                              lecturer.id,
-                            )
-                              ? current.lecturer_ids.filter(
-                                  (id) => id !== lecturer.id,
-                                )
-                              : [...current.lecturer_ids, lecturer.id],
-                          }))
-                        }
-                      />
-                      {lecturer.full_name}
-                    </label>
-                  ))}
-                </div>
+                <AppMultiSelect
+                  value={form.lecturer_ids}
+                  onValueChange={(lecturer_ids) =>
+                    setForm((current) => ({ ...current, lecturer_ids }))
+                  }
+                  options={lecturers.map((lecturer) => ({
+                    value: lecturer.id,
+                    label: lecturer.full_name,
+                  }))}
+                  placeholder="Pilih dosen pengampu"
+                  ariaLabel="Pilih dosen pengampu"
+                  clearLabel="Hapus dosen pengampu"
+                  selectedCountLabel="dosen dipilih"
+                  searchable
+                  searchPlaceholder="Cari nama dosen..."
+                  className="w-full"
+                />
               </section>
             )}
           </div>

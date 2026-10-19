@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
-  Building2,
   Eye,
   EyeOff,
   Lock,
   UserRound,
 } from "lucide-react";
+import unsLogo from "../../assets/UNS-LOGO.png";
+import ubdLogo from "../../assets/Universiti_Brunei_Darussalam_logo.png";
 
 import { useAuth } from "../components/AuthProvider";
 import ThemeToggle from "../components/ThemeToggle";
@@ -87,19 +89,27 @@ export default function LoginPage() {
             marginBottom: "1.25rem",
           }}
         >
-          <div
-            style={{
-              width: "52px",
-              height: "52px",
-              borderRadius: "var(--radius-md)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "var(--gradient-primary)",
-              color: "#ffffff",
-            }}
-          >
-            <Building2 size={28} />
+          <div className="flex items-center gap-4" aria-label="Logo institusi">
+            <Image
+              src={unsLogo}
+              alt="Universitas Sebelas Maret"
+              width={56}
+              height={56}
+              className="h-14 w-14 object-contain"
+              priority
+            />
+            <span
+              className="h-9 w-px bg-outline-variant/50"
+              aria-hidden="true"
+            />
+            <Image
+              src={ubdLogo}
+              alt="Universiti Brunei Darussalam"
+              width={44}
+              height={56}
+              className="h-14 w-11 object-contain"
+              priority
+            />
           </div>
         </div>
         <h1
