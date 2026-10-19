@@ -21,6 +21,30 @@ type PendingPackage = {
   questions: unknown[];
 };
 
+type SubQuestionWarning = {
+  groups: { number: string; labels: string[] }[];
+  blank_number_rows: number;
+  total_rows: number;
+  total_numbers: number;
+};
+
+function subQuestionDescription(warning: SubQuestionWarning) {
+  const parts: string[] = [];
+  if (warning.groups.length > 0) {
+    const detail = warning.groups
+      .map((group) => `nomor ${group.number} (${group.labels.join(", ")})`)
+      .join(", ");
+    parts.push(`Dokumen ini memiliki sub-soal pada ${detail}.`);
+  }
+  if (warning.blank_number_rows > 0) {
+    parts.push(`${warning.blank_number_rows} baris tidak memiliki nomor soal.`);
+  }
+  parts.push(
+    `Setiap baris tetap diimpor sebagai soal terpisah, sehingga totalnya menjadi ${warning.total_rows} soal (nomor unik: ${warning.total_numbers}).`,
+  );
+  return parts.join(" ");
+}
+
 export default function QuestionBankImport({
   token,
   subjectId,
@@ -46,6 +70,9 @@ export default function QuestionBankImport({
   const [detectedTopicName, setDetectedTopicName] = useState("");
   const [pendingPackageData, setPendingPackageData] =
     useState<PendingPackage | null>(null);
+  const [pendingNewTopic, setPendingNewTopic] = useState(false);
+  const [subQuestionWarning, setSubQuestionWarning] =
+    useState<SubQuestionWarning | null>(null);
 
   useEffect(() => {
     if (subjectId) {
@@ -170,6 +197,29 @@ export default function QuestionBankImport({
     }
   }
 
+  function proceedWithPackage(pkg: PendingPackage, newTopic: boolean) {
+    if (newTopic) {
+      setShowNewTopicConfirm(true);
+      return;
+    }
+    sessionStorage.setItem("imported_package", JSON.stringify(pkg));
+    window.location.href = "/questions/create";
+  }
+
+  function handleAcceptSubQuestions() {
+    const pkg = pendingPackageData;
+    setSubQuestionWarning(null);
+    if (!pkg) return;
+    proceedWithPackage(pkg, pendingNewTopic);
+  }
+
+  function handleCancelSubQuestions() {
+    setSubQuestionWarning(null);
+    setPendingPackageData(null);
+    setPendingNewTopic(false);
+    setError("Impor dibatalkan karena sub-soal tidak disetujui.");
+  }
+
   async function upload(event: React.FormEvent) {
     event.preventDefault();
     if (!file) {
@@ -208,22 +258,23 @@ export default function QuestionBankImport({
         throw new Error(data.detail || "Terjadi error saat memproses file.");
       }
 
-      if (data.new_topic_detected) {
-        setDetectedTopicName(data.detected_topic_name);
-        setPendingPackageData(data.package);
-        setShowNewTopicConfirm(true);
+      const pkg: PendingPackage | undefined = data.package;
+      if (!pkg || !(pkg.questions?.length > 0)) {
+        throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
+      }
+
+      const newTopic = Boolean(data.new_topic_detected);
+      setDetectedTopicName(data.detected_topic_name ?? "");
+      setPendingPackageData(pkg);
+      setPendingNewTopic(newTopic);
+
+      // Sub-soal diperiksa lebih dulu, topik baru menyusul setelah disetujui.
+      if (data.sub_question_warning) {
+        setSubQuestionWarning(data.sub_question_warning);
         return;
       }
 
-      if (data.package && data.package.questions?.length > 0) {
-        sessionStorage.setItem(
-          "imported_package",
-          JSON.stringify(data.package),
-        );
-        window.location.href = "/questions/create";
-      } else {
-        throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
-      }
+      proceedWithPackage(pkg, newTopic);
     } catch (caught) {
       const msg =
         caught instanceof Error
@@ -423,6 +474,16 @@ export default function QuestionBankImport({
         </button>
       </form>
 
+      <ConfirmDialog
+        open={Boolean(subQuestionWarning)}
+        title="Peringatan: Sub-Soal Terdeteksi"
+        description={
+          subQuestionWarning ? subQuestionDescription(subQuestionWarning) : ""
+        }
+        confirmLabel="Ya, Lanjutkan Impor"
+        onCancel={handleCancelSubQuestions}
+        onConfirm={handleAcceptSubQuestions}
+      />
       <ConfirmDialog
         open={showNewTopicConfirm}
         title="Peringatan: Topik Baru Terdeteksi"

@@ -449,3 +449,54 @@ def row_problems(row):
     if not row['alasan'].strip():
         bad.append('alasan kosong')
     return bad
+
+
+# A 'No Soal' cell like `5.1` or `5-2` means question 5 was written across
+# several table rows.
+SUBOAL_LABEL_RE = re.compile(r'^\s*(\d+)\s*[.\-–—]\s*(.+?)\s*$')
+
+
+def detect_sub_questions(labels):
+    """Describe rows whose 'No Soal' does not map 1:1 onto a question number.
+
+    The instruments are numbered 1..N, but nothing stops a question from spanning
+    several table rows: TOPIK 1 writes question 5 as `5.1` and `5.2`, repeats the
+    number in `18` and `18.2`, and may leave a row's number blank. Every row still
+    becomes its own question, so the importer reports it and lets the lecturer
+    decide, rather than silently importing more questions than the numbering says.
+
+    `labels` is the raw 'No Soal' text of every row that becomes a question, in
+    document order. Returns `None` when the numbering is clean.
+    """
+    grouped, order, blank = {}, [], 0
+    for raw in labels:
+        label = (raw or '').strip()
+        if not label:
+            blank += 1
+            continue
+        # Excel stores whole numbers as `5`, but a text cell can read `5.0`.
+        plain = re.match(r'^(\d+)\s*[.,]\s*0+$', label)
+        if plain:
+            # `5.0` is question 5, never a sub-question.
+            number = plain.group(1)
+        else:
+            match = SUBOAL_LABEL_RE.match(label)
+            number = match.group(1) if match else label
+        if number not in grouped:
+            grouped[number] = []
+            order.append(number)
+        grouped[number].append(label)
+
+    groups = [
+        {'number': number, 'labels': grouped[number]}
+        for number in order
+        if len(grouped[number]) > 1
+    ]
+    if not groups and not blank:
+        return None
+    return {
+        'groups': groups,
+        'blank_number_rows': blank,
+        'total_rows': len(labels),
+        'total_numbers': len(order),
+    }

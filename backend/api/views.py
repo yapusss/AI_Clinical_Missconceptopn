@@ -30,7 +30,12 @@ from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissio
 from .authentication import TokenAuthentication
 from .reading_materials import enqueue_reading_material, lecturer_category
 from .docx_template import build_instrument_template
-from .question_bank import cell_to_paragraphs, needs_rich_html, parse_instrument_docx
+from .question_bank import (
+    cell_to_paragraphs,
+    detect_sub_questions,
+    needs_rich_html,
+    parse_instrument_docx,
+)
 from .models import (
     AuthToken,
     AiModelChange,
@@ -1147,6 +1152,19 @@ def is_lecturer_for_subject(user, subject_id):
 
 
 IMPORT_REQUIRED_COLUMNS = {'order_index', 'prompt', 'short_answer', 'alasan'}
+
+# 'No Soal' header spellings the template, Excel sheets and CSV files may use.
+IMPORT_ORDER_LABEL_KEYS = {
+    'ORDER_INDEX', 'NOMOR_SOAL', 'NO_SOAL', 'NO SOAL', 'NO. SOAL', 'NO',
+}
+
+
+def _import_row_label(raw):
+    """Raw 'No Soal' text of an import row, whatever header spelling it used."""
+    for key, value in (raw or {}).items():
+        if str(key).strip().upper() in IMPORT_ORDER_LABEL_KEYS and str(value).strip():
+            return str(value)
+    return ''
 DOCX_IMPORT_MAX_BYTES = 25 * 1024 * 1024
 
 
@@ -1227,11 +1245,13 @@ def _docx_import_response(request, upload):
     matched_topic = Topic.objects.filter(subject=subject, name__iexact=topic_name).first()
 
     questions, skipped = [], 0
+    order_labels = []
     for row in rows:
         soal = (row.get('soal') or '').strip()
         if not soal:
             skipped += 1
             continue
+        order_labels.append(row.get('no_soal') or '')
         images = []
         for image in row.get('images') or []:
             extension = os.path.splitext(image['name'])[1].lower() or '.png'
@@ -1280,6 +1300,7 @@ def _docx_import_response(request, upload):
         'new_topic_detected': matched_topic is None,
         'detected_topic_name': topic_name,
         'skipped_rows': skipped,
+        'sub_question_warning': detect_sub_questions(order_labels),
         'package': {
             'subject_id': str(subject.id),
             'topic_id': str(matched_topic.id) if matched_topic else None,
@@ -1660,9 +1681,11 @@ class QuestionImportCreateView(APIView):
         description = (request.data.get('description') or first_data.get('description') or '').strip()
 
         questions_payload = []
+        order_labels = []
         for r in parsed_rows:
             raw = r['raw_data']
             if raw.get('prompt') and raw.get('short_answer'):
+                order_labels.append(_import_row_label(raw))
                 prompt_text = raw.get('prompt', '')
                 image_url = raw.get('image_url', '')
                 if image_url:
@@ -1682,6 +1705,7 @@ class QuestionImportCreateView(APIView):
         return Response({
             'new_topic_detected': new_topic_detected,
             'detected_topic_name': detected_topic_name,
+            'sub_question_warning': detect_sub_questions(order_labels),
             'package': {
                 'subject_id': str(subject.id),
                 'topic_id': str(matched_topic.id) if matched_topic else None,

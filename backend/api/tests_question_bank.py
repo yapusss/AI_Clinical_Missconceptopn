@@ -15,6 +15,7 @@ from api.question_bank import (
     cell_to_html,
     cell_to_paragraphs,
     detect_document_topic,
+    detect_sub_questions,
     has_math,
     needs_rich_html,
     parse_instrument_docx,
@@ -85,6 +86,49 @@ class CellHtmlTests(SimpleTestCase):
         )
         self.assertTrue(needs_rich_html('satu\ndua'))
         self.assertFalse(needs_rich_html('satu dua'))
+
+
+class SubQuestionDetectionTests(SimpleTestCase):
+    def test_sequential_numbering_is_clean(self):
+        self.assertIsNone(detect_sub_questions(['1', '2', '3', '4']))
+
+    def test_decimal_and_repeated_numbers_are_grouped(self):
+        # TOPIK 1: question 5 is written as 5.1/5.2 and question 18 repeats.
+        labels = ['1', '2', '3', '4', '5.1', '5.2', '6']
+        labels += [str(n) for n in range(7, 18)]
+        labels += ['18', '18.2'] + [str(n) for n in range(19, 51)]
+
+        warning = detect_sub_questions(labels)
+
+        self.assertEqual(warning['total_rows'], 52)
+        self.assertEqual(warning['total_numbers'], 50)
+        self.assertEqual(warning['blank_number_rows'], 0)
+        self.assertEqual(
+            warning['groups'],
+            [
+                {'number': '5', 'labels': ['5.1', '5.2']},
+                {'number': '18', 'labels': ['18', '18.2']},
+            ],
+        )
+
+    def test_repeated_number_and_blank_rows_warn(self):
+        warning = detect_sub_questions(['1', '7', '7', ''])
+        self.assertEqual(warning['groups'], [{'number': '7', 'labels': ['7', '7']}])
+        self.assertEqual(warning['blank_number_rows'], 1)
+
+    def test_dash_separator_counts_as_sub_question(self):
+        warning = detect_sub_questions(['1', '5-1', '5-2'])
+        self.assertEqual(
+            warning['groups'], [{'number': '5', 'labels': ['5-1', '5-2']}]
+        )
+        self.assertEqual(warning['total_numbers'], 2)
+
+    def test_whole_number_from_a_text_cell_is_not_a_sub_question(self):
+        # A lone `5.0` is question 5, so the numbering stays clean...
+        self.assertIsNone(detect_sub_questions(['1', '2', '5.0']))
+        # ...but it still collides with a plain `5` on another row.
+        warning = detect_sub_questions(['1', '5', '5.0'])
+        self.assertEqual(warning['groups'], [{'number': '5', 'labels': ['5', '5.0']}])
 
 
 class TopicDetectionTests(SimpleTestCase):
