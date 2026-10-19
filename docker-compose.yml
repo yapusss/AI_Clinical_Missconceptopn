@@ -14,6 +14,17 @@ x-backend-env: &backend-env
   LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
   LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
   LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
+  # Embeddings provider — SEPARATE from the LLM provider (OpenRouter, not Groq).
+  # This key embeds the *query* at analysis time (retrieval) and the student's
+  # answers (answer_similarity). Without it both degrade to NULL silently, even if
+  # knowledge_chunks is fully populated. Values come from the shell/.env at deploy
+  # time (scripts/deploy.sh exports them) — being named here is what forwards them
+  # into the container; an .env entry alone would NOT reach Django.
+  EMBEDDINGS_BASE_URL: ${EMBEDDINGS_BASE_URL:-https://openrouter.ai/api/v1}
+  EMBEDDINGS_API_KEY: ${EMBEDDINGS_API_KEY:-}
+  EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-openai/text-embedding-3-small}
+  # MUST match the knowledge_chunks.embedding vector(1536) column.
+  EMBEDDINGS_DIMENSIONS: ${EMBEDDINGS_DIMENSIONS:-1536}
 
 services:
   postgres:
