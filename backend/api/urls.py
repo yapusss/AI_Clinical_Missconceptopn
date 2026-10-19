@@ -9,6 +9,7 @@ from .materials_views import (
 from .validation_views import (
     ModelMetricsView,
     QuestionVersionMisconceptionLinkView,
+    SubmissionReanalyzeView,
     ValidationDetailView,
     ValidationQueueView,
     ValidationSubmitView,
@@ -122,5 +123,8 @@ urlpatterns = [
     path('validations/tiers', ValidationTiersView.as_view(), name='validation-tiers'),
     path('validations/<uuid:analysis_id>', ValidationDetailView.as_view(), name='validation-detail'),
     path('validations/<uuid:analysis_id>/submit', ValidationSubmitView.as_view(), name='validation-submit'),
+    # Recovery path for an inference that failed: re-arms the submission so the analysis
+    # worker claims it again, and re-queues the reading material that failed with it.
+    path('submissions/<uuid:pk>/reanalyze', SubmissionReanalyzeView.as_view(), name='submission-reanalyze'),
     path('metrics/model', ModelMetricsView.as_view(), name='model-metrics'),
 ]

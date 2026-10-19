@@ -344,6 +344,10 @@ export default function StudentPackageReviewPage({
   const [showFinalizeDetail, setShowFinalizeDetail] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState("");
+  const [reanalyzing, setReanalyzing] = useState(false);
+  // 'alive' | 'stale' | 'missing' from the reanalyze response: a re-armed submission
+  // only progresses if the analysis worker is actually running.
+  const [analysisWorker, setAnalysisWorker] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"SUMMARY" | "DETAIL">("SUMMARY");
   const [summaryPage, setSummaryPage] = useState(1);
 
@@ -898,6 +902,32 @@ export default function StudentPackageReviewPage({
       setError(err instanceof Error ? err.message : "Gagal menolak analisis.");
     } finally {
       setRejecting(false);
+    }
+  };
+
+  const handleReanalyze = async () => {
+    if (!currentAttempt?.submission_id || reanalyzing) return;
+    setReanalyzing(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiFetch<{
+        analysis_worker?: string;
+        reading_materials_requeued?: number;
+      }>(`/submissions/${currentAttempt.submission_id}/reanalyze`, {
+        method: "POST",
+      });
+      setAnalysisWorker(result.analysis_worker ?? null);
+      await load();
+      setNotice(
+        "Analisis ulang dijadwalkan. Status butir ini akan berubah setelah worker selesai.",
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal menjadwalkan analisis ulang.",
+      );
+    } finally {
+      setReanalyzing(false);
     }
   };
 
@@ -1618,8 +1648,32 @@ export default function StudentPackageReviewPage({
                     {currentAttempt?.status === "ANALYZING"
                       ? "Model AI sedang menganalisis tanggapan ini."
                       : currentAttempt?.status === "ANALYSIS_FAILED"
-                        ? "Analisis AI mengalami kendala dan dijadwalkan ulang oleh sistem."
+                        ? "Analisis AI gagal dan tidak dicoba lagi otomatis setelah batas percobaan tercapai."
                         : "Belum ada analisis AI yang tersedia untuk divalidasi pada butir soal ini."}
+
+                    {currentAttempt?.status === "ANALYSIS_FAILED" && (
+                      <div className="mt-3 flex flex-col items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleReanalyze()}
+                          disabled={reanalyzing}
+                          className="btn-secondary inline-flex items-center gap-1.5 !py-2 !px-3.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <RotateCcw
+                            size={13}
+                            className={reanalyzing ? "animate-spin" : ""}
+                          />
+                          {reanalyzing ? "Menjadwalkan..." : "Proses ulang analisis"}
+                        </button>
+                        {analysisWorker && analysisWorker !== "alive" && (
+                          <p className="text-[11px] leading-relaxed text-error">
+                            Worker analisis tidak berjalan (
+                            {analysisWorker === "missing" ? "tidak ditemukan" : "tidak aktif"}
+                            ) — submission akan tetap tertahan sampai worker hidup.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

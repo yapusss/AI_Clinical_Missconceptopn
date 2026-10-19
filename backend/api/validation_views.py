@@ -43,6 +43,7 @@ from .reading_materials import (
 )
 from .serializers import ValidationSubmitSerializer
 from .views import is_lecturer_for_subject, plain_text_preview
+from .worker_health import worker_status
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,108 @@ def _scope_filter(user):
         return Q()
     ids = _lecturer_subject_ids(user)
     return Q(subject_id__in=ids) if ids else Q(pk__in=[])
+
+
+# The lecturer's only recovery path for an inference that died. ANALYSIS_FAILED is
+# terminal for the worker — `_claim_next()` requires `analysis_attempts < LLM_MAX_RUNS`
+# and counts attempts, not analysis rows — so once the attempts run out the review
+# page's "dijadwalkan ulang oleh sistem" is simply untrue. SUBMITTED/ANALYZING are
+# already queued or running, and PENDING_VALIDATION/VALIDATED have an analysis to
+# review, which is what "Tolak" is for.
+REANALYZABLE_STATUSES = ('ANALYSIS_FAILED',)
+
+# The supervisor ticks every 10s and each worker heartbeats on every tick, so an older
+# heartbeat means nothing will consume the queue and a retry would look like a no-op.
+ANALYSIS_WORKER_STALE_SECONDS = 30
+
+
+def _analysis_worker_state():
+    """`'alive' | 'stale' | 'missing'` for the analysis drain."""
+    rows = worker_status('analysis')
+    if not rows:
+        return 'missing'
+    try:
+        age = float(rows[0].get('age_seconds'))
+    except (TypeError, ValueError):
+        return 'stale'
+    return 'alive' if age <= ANALYSIS_WORKER_STALE_SECONDS else 'stale'
+
+
+class SubmissionReanalyzeView(APIView):
+    """Re-arm one submission whose AI analysis failed (lecturer-scoped).
+
+    Nothing is analysed inside the request: the row goes back to `SUBMITTED` with a
+    fresh attempt counter and the supervised analysis worker picks it up, so the
+    response is `202` and reports whether that worker is actually running.
+
+    A failed analysis also leaves its reading material `FAILED`, and that drain only
+    ever selects `PENDING`/`STALE` — so the same action re-queues those rows too.
+    Without that a lecturer fixes the analysis and still sees "no Materi Bacaan".
+    """
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        with connection.cursor() as cur:
+            cur.execute(
+                'SELECT subject_id, question_version_id, status, analysis_attempts '
+                'FROM submissions WHERE id = %s',
+                [str(pk)],
+            )
+            row = cur.fetchone()
+        if row is None:
+            return Response(
+                {'detail': 'Submission tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        subject_id, question_version_id, current, attempts = row
+        if not is_lecturer_for_subject(request.user, str(subject_id)):
+            return Response(
+                {'detail': 'Anda tidak mengajar mata kuliah ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if current not in REANALYZABLE_STATUSES:
+            return Response(
+                {
+                    'detail': f'Submission berstatus {current}; hanya analisis yang gagal '
+                              'dapat dijalankan ulang.'
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute(
+                    """UPDATE submissions
+                       SET status = 'SUBMITTED', analysis_attempts = 0
+                       WHERE id = %s""",
+                    [str(pk)],
+                )
+                cur.execute(
+                    """UPDATE generated_reading_materials
+                       SET status = 'PENDING', error = NULL, attempts = 0
+                       WHERE question_version_id = %s AND status = 'FAILED'""",
+                    [str(question_version_id)],
+                )
+                materials_requeued = cur.rowcount
+
+        logger.info(
+            'Submission %s re-queued for analysis by user %s (was ANALYSIS_FAILED after %s attempt(s))',
+            pk, request.user.id, attempts,
+        )
+
+        return Response(
+            {
+                'id': str(pk),
+                'status': 'SUBMITTED',
+                'analysis_attempts': 0,
+                'previous_attempts': attempts,
+                'reading_materials_requeued': materials_requeued,
+                'analysis_worker': _analysis_worker_state(),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 def _reference_document_ids(references) -> list[str]:
