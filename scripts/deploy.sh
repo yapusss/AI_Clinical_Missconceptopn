@@ -61,13 +61,13 @@ fi
 # runs seconds after `docker compose up -d`, and the first attempt used to fail
 # against a backend container that was still starting — the error went to /dev/null
 # and the deploy log simply omitted the line, which reads exactly like "key set".
-emb_probe=''
+cfg_probe=''
 for i in $(seq 1 12); do
-  emb_probe=$(docker compose exec -T backend python manage.py shell -c "from django.conf import settings as s; print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
-  echo "waiting for backend to report embeddings config ($i/12)..."
+  cfg_probe=$(docker compose exec -T backend python manage.py shell -c "from django.conf import settings as s; print('llm:', 'key set' if s.LLM_API_KEY and s.LLM_API_KEY != 'local-llama-cpp' else 'KEY MISSING', '| model:', s.LLM_MODEL, '| base:', s.LLM_BASE_URL, '| headers:', ','.join(sorted(s.LLM_EXTRA_HEADERS)) or 'none'); print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
+  echo "waiting for backend to report its provider config ($i/12)..."
   sleep 5
 done
-echo "${emb_probe:-embeddings: PROBE FAILED - backend did not answer; check 'docker compose logs backend'}"
+echo "${cfg_probe:-PROBE FAILED - backend did not answer; check 'docker compose logs backend'}"
 docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT 'knowledge_chunks: '||count(*)||' rows / '||count(embedding)||' embedded' FROM knowledge_chunks;" </dev/null 2>/dev/null || true
 
 # Workers: NO LONGER started here. Since migration 0029 the backend supervises the

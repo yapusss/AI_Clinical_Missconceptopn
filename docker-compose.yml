@@ -8,12 +8,18 @@ x-backend-env: &backend-env
   DB_PASSWORD: apppassword
   REDIS_URL: redis://valkey:6379
   # LLM provider — real values come from the shell/.env at deploy time
-  # (scripts/deploy.sh exports them; never commit the key itself).
-  LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
+  # (scripts/deploy.sh exports them; never commit the key itself). Production runs
+  # OpenCode Go (deepseek-v4.1-flash); Groq's 8k-tokens/minute tier could not survive
+  # a grounded prompt (the reference block alone is ~3.9k tokens).
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://opencode.ai/inference/go/v1}
   LLM_API_KEY: ${LLM_API_KEY:-local-llama-cpp}
-  LLM_MODEL: ${LLM_MODEL:-openai/gpt-oss-20b}
-  LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
+  LLM_MODEL: ${LLM_MODEL:-deepseek-v4.1-flash}
+  LLM_TIMEOUT: ${LLM_TIMEOUT:-120}
   LLM_MAX_RUNS: ${LLM_MAX_RUNS:-3}
+  # Provider-required headers. Named here for the same reason as the keys above:
+  # compose only forwards variables it names, so an .env entry alone would NOT reach
+  # Django and OpenCode Go rejects the call.
+  LLM_EXTRA_HEADERS_JSON: ${LLM_EXTRA_HEADERS_JSON:-}
   # Embeddings provider — SEPARATE from the LLM provider (OpenRouter, not Groq).
   # This key embeds the *query* at analysis time (retrieval) and the student's
   # answers (answer_similarity). Without it both degrade to NULL silently, even if
