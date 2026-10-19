@@ -351,24 +351,47 @@ export default function StudentPackageReviewPage({
   const [activeTab, setActiveTab] = useState<"SUMMARY" | "DETAIL">("SUMMARY");
   const [summaryPage, setSummaryPage] = useState(1);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
     if (!setId || !studentId) return;
-    setFetching(true);
-    setError("");
+    if (!silent) setFetching(true);
+    if (!silent) setError("");
     try {
       const res = await apiFetch<PackageReview>(
         `/${examPackage ? "exam-packages" : "questions"}/${setId}/students/${studentId}/review`,
       );
       setData(res);
-      setDrafts(readDrafts(setId, studentId));
+      // A background poll must not clobber a draft the lecturer is editing.
+      if (!silent) setDrafts(readDrafts(setId, studentId));
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Gagal memuat review paket.",
-      );
+      if (!silent) {
+        setError(
+          caught instanceof Error ? caught.message : "Gagal memuat review paket.",
+        );
+      }
     } finally {
-      setFetching(false);
+      if (!silent) setFetching(false);
     }
   }, [setId, studentId, examPackage]);
+
+  // The analysis worker flips SUBMITTED → ANALYZING → PENDING_VALIDATION on its own tick,
+  // so after "Tolak & analisis ulang" or "Proses ulang analisis" the result arrives with
+  // nobody reloading the page. Silent so the poll never flashes a spinner or resets an
+  // in-progress validation draft.
+  const analysisInFlight = useMemo(() => {
+    const attempts = (data?.questions ?? []).flatMap((q) => q.attempts ?? []);
+    return attempts.some(
+      (a) => a.status === "SUBMITTED" || a.status === "ANALYZING",
+    );
+  }, [data]);
+
+  useEffect(() => {
+    if (!analysisInFlight) return;
+    const timer = setInterval(() => {
+      void load({ silent: true });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [analysisInFlight, load]);
 
   useEffect(() => {
     if (loading) return;

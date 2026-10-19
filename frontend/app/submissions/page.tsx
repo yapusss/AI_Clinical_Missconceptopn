@@ -103,6 +103,25 @@ export default function SubmissionsPage() {
     };
   }, [user, token, loading, router]);
 
+  const anyInFlight = rows.some(
+    (r) => r.status === "SUBMITTED" || r.status === "ANALYZING",
+  );
+
+  useEffect(() => {
+    // The analysis worker finishes on its own tick, so rows would otherwise keep showing
+    // "Dikirim" / "Menganalisis" until someone reloads the page. Silent: the list keeps
+    // the last good payload if a poll fails, and no spinner is flashed.
+    if (!anyInFlight || !token) return;
+    const timer = setInterval(() => {
+      apiFetch<{ submissions: SubmissionRow[] }>("/lecturer/submissions")
+        .then((d) => setRows(d.submissions))
+        .catch(() => {
+          /* transient poll failure: keep the rows we already have */
+        });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [anyInFlight, token]);
+
   function toggle(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
