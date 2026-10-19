@@ -381,7 +381,7 @@ function SubmissionPackageDetailPageContent() {
                     <div className="space-y-3">
                       <div className="grid grid-cols-1 gap-3">
                         <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
-                          <span className="text-xs font-bold uppercase tracking-wide text-on-surface-variant">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-on-surface-variant">
                             1. Jawaban singkat
                           </span>
                           <MathContent
@@ -389,7 +389,7 @@ function SubmissionPackageDetailPageContent() {
                               currentAttempt.tier1_answer ||
                               currentAttempt.answer_text
                             }
-                            className="mt-1 text-base font-semibold text-on-surface"
+                            className="block mt-1 text-base font-semibold text-on-surface"
                             highlightQuote={tier1Highlight?.quote}
                           />
                         </div>
@@ -408,7 +408,7 @@ function SubmissionPackageDetailPageContent() {
                         </div>
 
                         <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3">
-                          <span className="text-xs font-bold uppercase tracking-wide text-on-surface-variant">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-on-surface-variant">
                             3. Alasan jawaban
                           </span>
                           <MathContent
@@ -416,7 +416,7 @@ function SubmissionPackageDetailPageContent() {
                               currentAttempt.tier3_reason ||
                               currentAttempt.answer_text
                             }
-                            className="mt-1 text-base text-on-surface leading-relaxed"
+                            className="block mt-1 text-base text-on-surface leading-relaxed"
                             highlightQuote={tier3Highlight?.quote}
                           />
                         </div>
@@ -505,27 +505,6 @@ function SubmissionPackageDetailPageContent() {
                             currentAttempt.evaluation?.missing_concepts ?? []
                           }
                         />
-
-                        <div className="flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => void handleDownloadPdf()}
-                            disabled={!canDownloadPdf || downloading}
-                            title={
-                              canDownloadPdf
-                                ? undefined
-                                : "Materi bacaan tersedia setelah dosen memvalidasi jawaban Anda."
-                            }
-                            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {downloading ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : (
-                              <FileDown size={16} />
-                            )}
-                            Unduh Materi Bacaan Paket Ini (PDF)
-                          </button>
-                        </div>
 
                         {currentAttempt.evaluation.validator_name && (
                           <p className="text-xs text-on-surface-variant">
@@ -683,6 +662,27 @@ function SubmissionPackageDetailPageContent() {
                   {fmtPct(group.overall_score ?? 0)}
                 </span>
               </div>
+
+              {/* 3. SATU TOMBOL UNDUH UNTUK SELURUH PAKET (di bawah kartu nilai).
+                  Satu PDF berisi semua soal yang materinya sudah tervalidasi dosen. */}
+              <button
+                type="button"
+                onClick={() => void handleDownloadPdf()}
+                disabled={!canDownloadPdf || downloading}
+                title={
+                  canDownloadPdf
+                    ? "Unduh satu PDF berisi materi bacaan semua soal tervalidasi"
+                    : "Materi bacaan tersedia setelah dosen memvalidasi jawaban Anda."
+                }
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:text-white"
+              >
+                {downloading ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <FileDown size={16} />
+                )}
+                Unduh Materi Bacaan
+              </button>
             </aside>
           </div>
         </div>
