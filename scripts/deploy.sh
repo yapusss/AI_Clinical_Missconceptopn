@@ -63,7 +63,7 @@ fi
 # and the deploy log simply omitted the line, which reads exactly like "key set".
 emb_probe=''
 for i in $(seq 1 12); do
-  emb_probe=$(docker compose exec -T backend python -c "from django.conf import settings as s; print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
+  emb_probe=$(docker compose exec -T backend python manage.py shell -c "from django.conf import settings as s; print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
   echo "waiting for backend to report embeddings config ($i/12)..."
   sleep 5
 done
