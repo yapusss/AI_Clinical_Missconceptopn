@@ -94,7 +94,8 @@ class RenderReadingPdfTests(SimpleTestCase):
         empty['sources'] = []
         pdf_bytes = render_reading_pdf(IDENTITY, [empty])
         text, _ = _extract(pdf_bytes)
-        self.assertIn('SUMBER MATERI', text)
+        # A heading with nothing under it reads like a bug, so the empty case omits it.
+        self.assertNotIn('SUMBER MATERI', text)
 
     def test_latin1_trap_em_dash_and_curly_quotes_do_not_raise(self):
         section = dict(SECTION_ONE)

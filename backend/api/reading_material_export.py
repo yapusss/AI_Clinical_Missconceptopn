@@ -340,8 +340,11 @@ def _header_block(writer, identity):
         ('Percobaan', identity.get('attempt_no')),
         ('Diunduh', identity.get('generated_at')),
     )
+    # An empty value prints as `Label :` and reads like a bug — drop the row.
     for label, value in rows:
-        writer.paragraph(f'{label} : {value if value is not None else ""}', gap_after=1.5)
+        if value is None or str(value).strip() == '':
+            continue
+        writer.paragraph(f'{label} : {value}', gap_after=1.5)
     writer.rule()
 
 
@@ -362,13 +365,13 @@ def render_reading_pdf(identity, sections) -> bytes:
         writer.heading(f'SOAL {order}', 15, gap_before=10, gap_after=5)
         writer.paragraph(section.get('prompt') or '', gap_after=5)
 
-        writer.heading('MATERI BACAAN', 12, gap_before=3, gap_after=3)
+        writer.heading('MATERI', 12, gap_before=3, gap_after=3)
         _render_markdown(writer, section.get('content_md') or '')
 
-        writer.heading('SUMBER MATERI', 12, gap_before=5, gap_after=3)
-        for source in section.get('sources') or []:
-            if not isinstance(source, dict):
-                continue
+        sources = [s for s in (section.get('sources') or []) if isinstance(s, dict)]
+        if sources:
+            writer.heading('SUMBER MATERI', 12, gap_before=5, gap_after=3)
+        for source in sources:
             title = _latin(source.get('document_title') or '').strip()
             page = source.get('page')
             line = title
@@ -446,16 +449,22 @@ def collect_export_sections(student, package_id):
         # A package the student never submitted to is not theirs.
         return None, []
 
-    latest_by_version = {}
+    # Per question: the newest attempt the LECTURER actually validated, not merely
+    # the newest attempt. A student who retried after a validation still gets the
+    # material that was approved for them, instead of a 409 that contradicts the
+    # card they are looking at.
+    validated_by_version = {}
     for submission in submissions:
-        latest_by_version.setdefault(submission.question_version_id, submission)
+        if submission.status != 'VALIDATED':
+            continue
+        validated_by_version.setdefault(submission.question_version_id, submission)
 
     sections = []
     included_attempts = []
 
     for item in items:
-        submission = latest_by_version.get(item.question_version_id)
-        if submission is None or submission.status != 'VALIDATED':
+        submission = validated_by_version.get(item.question_version_id)
+        if submission is None:
             continue
 
         analysis = LlmAnalysis.objects.filter(
