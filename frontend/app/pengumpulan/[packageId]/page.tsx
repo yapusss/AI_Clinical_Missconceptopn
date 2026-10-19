@@ -9,8 +9,10 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FileDown,
   GraduationCap,
   Lightbulb,
+  Loader2,
   MessageSquare,
   PenLine,
   XCircle,
@@ -24,7 +26,7 @@ import ReadingMaterial from "../../components/ReadingMaterial";
 import RichTextContent from "../../components/RichTextContent";
 import MathContent from "../../components/MathContent";
 import FeedbackModal from "../../components/FeedbackModal";
-import { apiFetch } from "../../lib/api";
+import { apiFetch, getApiBase, getAuthToken } from "../../lib/api";
 import {
   fmtDate,
   getSemanticStatus,
@@ -36,32 +38,46 @@ import {
 const errMsg = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
 
+const filenameFromDisposition = (header: string | null) => {
+  if (!header) return null;
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1].trim());
+    } catch {
+      return utf8[1].trim();
+    }
+  }
+  const plain = header.match(/filename="?([^";]+)"?/i);
+  return plain?.[1]?.trim() ?? null;
+};
+
 const STUDENT_FRIENDLY_CATEGORIES: Record<
   string,
   { label: string; desc: string; cardCls: string }
 > = {
   SC: {
-    label: "Paham Konsep Utuh",
+    label: "Paham Konsep",
     desc: "Anda memahami konsep dan alasan ilmiah dengan konsisten dan tepat.",
     cardCls: "diag-card-sc",
   },
   LK: {
-    label: "Perlu Penguatan Konsep",
+    label: "Kurang Pengetahuan",
     desc: "Pengetahuan konsep masih perlu diperdalam atau diperkuat agar Anda lebih yakin.",
     cardCls: "diag-card-lk",
   },
   FN: {
-    label: "Penalaran Tepat, Perlu Perbaikan Kesimpulan",
+    label: "Kesimpulan Salah, Penalaran Tepat",
     desc: "Alasan atau penalaran ilmiah Anda sudah baik, namun perhatikan kembali kesimpulan akhirnya.",
     cardCls: "diag-card-fn",
   },
   FP: {
-    label: "Perlu Penyelarasan Konsep & Alasan",
+    label: "Kesimpulan Benar, Alasan Salah",
     desc: "Kesimpulan jawaban benar, tetapi alasan yang digunakan masih memiliki celah pemahaman konsep.",
     cardCls: "diag-card-fp",
   },
   MSC: {
-    label: "Perlu Rekonstruksi Konsep",
+    label: "Miskonsepsi",
     desc: "Terdapat miskonsepsi konsep yang perlu diperbaiki melalui pendalaman materi yang tepat.",
     cardCls: "diag-card-msc",
   },
@@ -95,6 +111,7 @@ function SubmissionPackageDetailPageContent() {
   const [group, setGroup] = useState<StudentPackageGroup | null>(null);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
 
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
   const [selectedAttemptByQuestion, setSelectedAttemptByQuestion] = useState<
@@ -167,6 +184,58 @@ function SubmissionPackageDetailPageContent() {
       : null;
   const tier1Highlight = evidenceSpan?.field === "tier1" ? evidenceSpan : null;
   const tier3Highlight = evidenceSpan?.field === "tier3" ? evidenceSpan : null;
+
+  const canDownloadPdf = useMemo(
+    () =>
+      !!group &&
+      group.questions.some((question) =>
+        question.attempts.some(
+          (attempt) =>
+            attempt.status === "VALIDATED" &&
+            attempt.evaluation?.reading_material?.status === "READY",
+        ),
+      ),
+    [group],
+  );
+
+  const handleDownloadPdf = async () => {
+    if (!packageId || downloading) return;
+    setDownloading(true);
+    try {
+      const token = getAuthToken();
+      const response = await fetch(
+        `${getApiBase()}/student/submission-packages/${packageId}/reading-material.pdf`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
+          detail?: string;
+        };
+        throw new Error(
+          body.detail ?? "Gagal mengunduh materi bacaan. Silakan coba lagi.",
+        );
+      }
+
+      const blob = await response.blob();
+      const filename =
+        filenameFromDisposition(response.headers.get("Content-Disposition")) ??
+        `Materi-Bacaan-${group?.code ?? "Paket"}.pdf`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const handleSelectQuestion = (idx: number) => {
     setActiveQuestionIdx(idx);
@@ -436,6 +505,27 @@ function SubmissionPackageDetailPageContent() {
                             currentAttempt.evaluation?.missing_concepts ?? []
                           }
                         />
+
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => void handleDownloadPdf()}
+                            disabled={!canDownloadPdf || downloading}
+                            title={
+                              canDownloadPdf
+                                ? undefined
+                                : "Materi bacaan tersedia setelah dosen memvalidasi jawaban Anda."
+                            }
+                            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {downloading ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <FileDown size={16} />
+                            )}
+                            Unduh Materi Bacaan (PDF)
+                          </button>
+                        </div>
 
                         {currentAttempt.evaluation.validator_name && (
                           <p className="text-xs text-on-surface-variant">
