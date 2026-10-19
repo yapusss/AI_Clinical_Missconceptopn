@@ -63,7 +63,7 @@ fi
 # and the deploy log simply omitted the line, which reads exactly like "key set".
 cfg_probe=''
 for i in $(seq 1 12); do
-  cfg_probe=$(docker compose exec -T backend python manage.py shell -c "from django.conf import settings as s; print('llm:', 'key set' if s.LLM_API_KEY and s.LLM_API_KEY != 'local-llama-cpp' else 'KEY MISSING', '| model:', s.LLM_MODEL, '| base:', s.LLM_BASE_URL, '| headers:', ','.join(sorted(s.LLM_EXTRA_HEADERS)) or 'none'); print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
+  cfg_probe=$(docker compose exec -T backend python manage.py shell -c "from django.conf import settings as s; from api.llm import get_active_model_identifier as g; print('llm:', 'key set' if s.LLM_API_KEY and s.LLM_API_KEY != 'local-llama-cpp' else 'KEY MISSING', '| base:', s.LLM_BASE_URL, '| env model:', s.LLM_MODEL, '| ACTIVE model (what the pipeline uses):', g(), '| headers:', ','.join(sorted(s.LLM_EXTRA_HEADERS)) or 'none'); print('embeddings:', 'key set' if s.EMBEDDINGS_API_KEY else 'KEY MISSING', '| model:', s.EMBEDDINGS_MODEL, '| dims:', s.EMBEDDINGS_DIMENSIONS)" </dev/null 2>&1) && break
   echo "waiting for backend to report its provider config ($i/12)..."
   sleep 5
 done
@@ -80,7 +80,7 @@ llm_smoke=''
 for i in $(seq 1 2); do
   llm_smoke=$(docker compose exec -T backend python manage.py shell 2>&1 <<'PY'
 from api.llm import _call_llm_json, get_active_model_identifier
-candidates = [get_active_model_identifier(), 'deepseek-v4-pro', 'glm-5.3', 'kimi-k2.6']
+candidates = [get_active_model_identifier(), 'deepseek-v4.1-flash', 'deepseek-v4-pro', 'glm-5.3']
 seen = []
 for m in candidates:
     if m in seen:
