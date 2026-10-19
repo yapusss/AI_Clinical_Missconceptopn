@@ -383,12 +383,23 @@ def _resolve_stored_path(file_path: str) -> str:
     return os.path.join(str(settings.MEDIA_ROOT), file_path)
 
 
-def _select_pending() -> list[tuple]:
+def _select_pending(include_failed: bool = False) -> list[tuple]:
+    """Rows for the drain, oldest first.
+
+    `include_failed` exists because a document whose ingest raised is marked FAILED
+    and nothing else ever picks it up again: the uploaded file is still on disk, so
+    recovering it must not require a re-upload. The default predicate is unchanged
+    so existing callers see exactly the rows they saw before.
+    """
+    predicate = (
+        "ingest_status IN ('PENDING', 'FAILED')" if include_failed
+        else "ingest_status = 'PENDING'"
+    )
     with connection.cursor() as cur:
         cur.execute(
-            """SELECT id, subject_id, topic_id, title, file_path, mime_type
+            f"""SELECT id, subject_id, topic_id, title, file_path, mime_type
                FROM knowledge_documents
-               WHERE ingest_status = 'PENDING' AND file_path IS NOT NULL
+               WHERE {predicate} AND file_path IS NOT NULL
                ORDER BY created_at"""
         )
         return cur.fetchall()
@@ -416,7 +427,13 @@ class Command(BaseCommand):
         parser.add_argument('--limit-pages', default=None, help='Restrict to pages "A-B" (1-based)')
         parser.add_argument('--batch-size', type=int, default=64, help='Embed/insert batch size')
         parser.add_argument('--pending', action='store_true',
-                            help='Ingest every PENDING uploaded document once, then exit')
+                            help='Ingest every PENDING uploaded document once, then exit '
+                                 '(add --retry-failed to also recover documents already '
+                                 'marked FAILED, without re-uploading them)')
+        parser.add_argument('--retry-failed', action='store_true',
+                            help='With --pending: also re-ingest documents marked FAILED '
+                                 '(the uploaded file is still on disk, so no re-upload is '
+                                 'needed)')
         parser.add_argument('--loop', action='store_true',
                             help='With --pending: keep draining every --interval seconds')
         parser.add_argument('--interval', type=int, default=10,
@@ -427,6 +444,10 @@ class Command(BaseCommand):
             level=logging.INFO,
             format='%(asctime)s %(levelname)s %(name)s: %(message)s',
         )
+        if options['retry_failed'] and not (options['pending'] or options['loop']):
+            # Silently ignoring it would look like the FAILED documents were retried
+            # when nothing was drained at all — the failure mode this flag exists for.
+            raise CommandError('--retry-failed is only meaningful with --pending.')
         if options['pending'] or options['loop']:
             self._drain(options)
             return
@@ -524,6 +545,9 @@ class Command(BaseCommand):
 
         Per-document failure isolation: one corrupt document is marked FAILED
         with its error and the run (or loop) continues with the next.
+
+        With `--retry-failed` the selection also includes FAILED rows, so an
+        upload that failed earlier can be recovered in place.
         """
         while True:
             # Liveness (same contract as the other two loops): a drain that is not
@@ -538,7 +562,9 @@ class Command(BaseCommand):
                     '[ingest] supervisor gone; exiting (a backend restart starts a fresh worker)'
                 )
                 return
-            pending = _select_pending()
+            # `.get` keeps direct callers that predate the flag (and the option dicts
+            # in older tests) working unchanged.
+            pending = _select_pending(options.get('retry_failed', False))
             if not pending:
                 self.stdout.write('Nothing pending.')
                 if not options['loop']:
