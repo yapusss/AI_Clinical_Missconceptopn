@@ -64,13 +64,13 @@ def _scope_filter(user):
     return Q(subject_id__in=ids) if ids else Q(pk__in=[])
 
 
-# The lecturer's only recovery path for an inference that died. ANALYSIS_FAILED is
-# terminal for the worker — `_claim_next()` requires `analysis_attempts < LLM_MAX_RUNS`
-# and counts attempts, not analysis rows — so once the attempts run out the review
-# page's "dijadwalkan ulang oleh sistem" is simply untrue. SUBMITTED/ANALYZING are
-# already queued or running, and PENDING_VALIDATION/VALIDATED have an analysis to
-# review, which is what "Tolak" is for.
-REANALYZABLE_STATUSES = ('ANALYSIS_FAILED',)
+# Statuses whose analysis the lecturer may re-run from the review page.
+# ANALYSIS_FAILED is the dead-end this action exists for; PENDING_VALIDATION/VALIDATED
+# are "Tolak & analisis ulang" — the lecturer is criticising an analysis that exists and
+# wants another one, which must not be written as a *validation* (that is what made a
+# rejected item look validated and then refused once the re-analysis failed).
+# SUBMITTED/ANALYZING are excluded: already queued or running.
+REANALYZABLE_STATUSES = ('ANALYSIS_FAILED', 'PENDING_VALIDATION', 'VALIDATED', 'REJECTED')
 
 # The supervisor ticks every 10s and each worker heartbeats on every tick, so an older
 # heartbeat means nothing will consume the queue and a retry would look like a no-op.
@@ -90,15 +90,27 @@ def _analysis_worker_state():
 
 
 class SubmissionReanalyzeView(APIView):
-    """Re-arm one submission whose AI analysis failed (lecturer-scoped).
+    """Re-run the AI analysis for one submission (lecturer-scoped).
 
-    Nothing is analysed inside the request: the row goes back to `SUBMITTED` with a
-    fresh attempt counter and the supervised analysis worker picks it up, so the
-    response is `202` and reports whether that worker is actually running.
+    Serves both halves of the review page:
+    - **Proses ulang analisis** on a submission whose inference died (`ANALYSIS_FAILED`
+      is terminal for the worker: `_claim_next()` requires `analysis_attempts <
+      LLM_MAX_RUNS`), which is why the old "dijadwalkan ulang oleh sistem" was untrue.
+    - **Tolak & analisis ulang** on an analysis the lecturer rejects. That used to be
+      written through `sp_validate_analysis(REJECTED)`, i.e. as a *validation* record: the
+      item then looked validated, and once the re-analysis failed the submission sat at
+      `ANALYSIS_FAILED` where the validation endpoint refuses it
+      ("Submission dalam status ANALYSIS_FAILED; tidak dapat divalidasi"). Re-analysis is
+      a request to run the model again, not a review decision.
 
-    A failed analysis also leaves its reading material `FAILED`, and that drain only
-    ever selects `PENDING`/`STALE` — so the same action re-queues those rows too.
-    Without that a lecturer fixes the analysis and still sees "no Materi Bacaan".
+    Nothing is analysed inside the request; the row goes back to `SUBMITTED` with a fresh
+    attempt counter, so the response is `202` and reports whether the worker is running.
+    An optional `notes` becomes `llm_analyses.lecturer_note` on the analysis being
+    criticised, which the prompts surface as "[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]".
+
+    A failed run also leaves its reading material `FAILED`, and that drain only selects
+    `PENDING`/`STALE` — so the same action re-queues those rows too. Without that a
+    lecturer fixes the analysis and still sees "no Materi Bacaan".
     """
 
     authentication_classes = [TokenAuthentication]
@@ -134,6 +146,20 @@ class SubmissionReanalyzeView(APIView):
 
         with transaction.atomic():
             with connection.cursor() as cur:
+                # The lecturer's reason lands on the analysis being criticised, which is
+                # what `load_context` reads for "[CATATAN DOSEN PADA ANALISIS SEBELUMNYA]".
+                # It must not become a `validations` row: that record is what marks an
+                # item reviewed, and writing it here made a rejected item look validated.
+                note = (request.data.get('notes') or '').strip() if hasattr(request, 'data') else ''
+                note_saved = False
+                if note:
+                    cur.execute(
+                        """UPDATE llm_analyses
+                           SET lecturer_note = %s
+                           WHERE submission_id = %s AND is_current = TRUE""",
+                        [note[:2000], str(pk)],
+                    )
+                    note_saved = cur.rowcount > 0
                 cur.execute(
                     """UPDATE submissions
                        SET status = 'SUBMITTED', analysis_attempts = 0
@@ -149,8 +175,8 @@ class SubmissionReanalyzeView(APIView):
                 materials_requeued = cur.rowcount
 
         logger.info(
-            'Submission %s re-queued for analysis by user %s (was ANALYSIS_FAILED after %s attempt(s))',
-            pk, request.user.id, attempts,
+            'Submission %s re-queued for analysis by user %s (was %s after %s attempt(s), note=%s)',
+            pk, request.user.id, current, attempts, 'yes' if note_saved else 'no',
         )
 
         return Response(
@@ -158,7 +184,9 @@ class SubmissionReanalyzeView(APIView):
                 'id': str(pk),
                 'status': 'SUBMITTED',
                 'analysis_attempts': 0,
+                'previous_status': current,
                 'previous_attempts': attempts,
+                'note_saved': note_saved,
                 'reading_materials_requeued': materials_requeued,
                 'analysis_worker': _analysis_worker_state(),
             },

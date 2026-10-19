@@ -869,8 +869,10 @@ export default function StudentPackageReviewPage({
     );
   };
 
-  // Tolak & Re-analisis: LANGSUNG kirim REJECTED untuk soal aktif (tidak di-draft),
-  // sehingga analisis ulang AI segera terjadwal untuk butir ini.
+  // Tolak & Re-analisis: a re-analysis *request*, not a review decision. It used to POST
+  // `validations/<id>/submit {status: REJECTED}`, which wrote a validation record — so the
+  // item looked validated, and if the follow-up analysis failed the submission sat at
+  // ANALYSIS_FAILED where the validation endpoint then refuses it.
   const handleRejectNow = async () => {
     if (!currentAttempt?.analysis || rejecting) return;
     if (!notes.trim()) {
@@ -882,10 +884,14 @@ export default function StudentPackageReviewPage({
     setError("");
     setNotice("");
     try {
-      await apiFetch(`/validations/${currentAttempt.analysis.id}/submit`, {
-        method: "POST",
-        body: JSON.stringify({ status: "REJECTED", notes: notes.trim() }),
-      });
+      const result = await apiFetch<{ analysis_worker?: string; note_saved?: boolean }>(
+        `/submissions/${currentAttempt.submission_id}/reanalyze`,
+        {
+          method: "POST",
+          body: JSON.stringify({ notes: notes.trim() }),
+        },
+      );
+      setAnalysisWorker(result.analysis_worker ?? null);
       const aid = currentAttempt.analysis.id;
       setDrafts((prev) => {
         const next = { ...prev };
@@ -897,7 +903,9 @@ export default function StudentPackageReviewPage({
       setNotes("");
       setIsUnlocked(false);
       await load();
-      setNotice("Ditolak — analisis ulang AI dijadwalkan untuk soal ini.");
+      setNotice(
+        "Ditolak — analisis ulang AI dijadwalkan. Catatan Anda dipakai sebagai panduan analisis berikutnya.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal menolak analisis.");
     } finally {

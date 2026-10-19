@@ -52,7 +52,9 @@ class SubmissionReanalyzeTests(SimpleTestCase):
     def _row(self, status='ANALYSIS_FAILED', attempts=3):
         return (uuid.UUID(SUBJECT_ID), uuid.UUID(VERSION_ID), status, attempts)
 
-    def _post(self, row, materials_requeued=2):
+    def _post(self, row, materials_requeued=2, data=None):
+        if data is not None:
+            self.request.data = data
         with patch.object(vv, 'connection') as conn, \
                 patch.object(vv, 'transaction') as txn, \
                 patch.object(vv, '_analysis_worker_state', return_value='alive'):
@@ -74,15 +76,22 @@ class SubmissionReanalyzeTests(SimpleTestCase):
             response = self._post(self._row())
         self.assertEqual(response.status_code, 403)
 
-    def test_analysed_submission_is_conflict_and_untouched(self):
-        # A row with an analysis to review belongs to "Tolak", not here: re-arming it
-        # would throw away an analysis the lecturer can still validate.
+    def test_analysis_awaiting_review_can_be_rejected_into_a_reanalysis(self):
+        # "Tolak & analisis ulang": the analysis exists, the lecturer criticises it. This
+        # must not go through the validation endpoint — that wrote a validations row (so
+        # the item looked validated) and left ANALYSIS_FAILED unvalidatable afterwards.
         with _ALLOWED:
             response = self._post(self._row(status='PENDING_VALIDATION', attempts=1))
-        self.assertEqual(response.status_code, 409)
-        # Only the ownership SELECT ran: no UPDATE, nothing re-armed.
-        self.assertEqual(len(self.cursor.execute.call_args_list), 1)
-        self.assertIn('SELECT subject_id', self.cursor.execute.call_args_list[0].args[0])
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data['previous_status'], 'PENDING_VALIDATION')
+
+    def test_a_submission_already_in_the_queue_is_conflict(self):
+        for status in ('SUBMITTED', 'ANALYZING'):
+            with _ALLOWED:
+                response = self._post(self._row(status=status, attempts=0))
+            self.assertEqual(response.status_code, 409, status)
+            # Only the ownership SELECT ran: nothing re-armed behind the worker's back.
+            self.assertEqual(len(self.cursor.execute.call_args_list), 1)
 
     def test_failed_submission_is_rearmed_and_materials_requeued(self):
         with _ALLOWED:
@@ -117,3 +126,33 @@ class SubmissionReanalyzeTests(SimpleTestCase):
         update_params = self.cursor.execute.call_args_list[1].args[1]
         self.assertEqual(update_params, [SUBMISSION_ID])
         self.assertIn('analysis_attempts = 0', self.cursor.execute.call_args_list[1].args[0])
+
+    def test_a_notes_payload_lands_on_the_analysis_being_criticised(self):
+        # The rejection reason is prompt guidance ("[CATATAN DOSEN PADA ANALISIS
+        # SEBELUMNYA]"), stored on the analysis — never as a `validations` row, which is
+        # what made a rejected item look validated.
+        with _ALLOWED:
+            response = self._post(
+                self._row(status='PENDING_VALIDATION', attempts=1),
+                data={'notes': '  Tier 3 salah: gaya gesek dianggap gaya aktif  '},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.data['note_saved'])
+        statements = [call.args[0] for call in self.cursor.execute.call_args_list]
+        self.assertIn('UPDATE llm_analyses', statements[1])
+        self.assertIn('lecturer_note', statements[1])
+        self.assertEqual(
+            self.cursor.execute.call_args_list[1].args[1],
+            ['Tier 3 salah: gaya gesek dianggap gaya aktif', SUBMISSION_ID],
+        )
+        self.assertFalse(any('validations' in s for s in statements),
+                         're-analysis must not write a validation record')
+        self.assertIn("SET status = 'SUBMITTED', analysis_attempts = 0", statements[2])
+
+    def test_no_notes_means_no_analysis_write(self):
+        with _ALLOWED:
+            response = self._post(self._row(status='ANALYSIS_FAILED', attempts=3), data={})
+        self.assertFalse(response.data['note_saved'])
+        self.assertNotIn('UPDATE llm_analyses',
+                         [call.args[0] for call in self.cursor.execute.call_args_list])

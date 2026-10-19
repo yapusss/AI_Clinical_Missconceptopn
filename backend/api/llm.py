@@ -318,7 +318,8 @@ def load_context(submission_id: str) -> FourTierContext:
 
         cur.execute(
             """
-            SELECT COALESCE(v.notes, ''), COALESCE(a.explanation, '')
+            SELECT COALESCE(NULLIF(a.lecturer_note, ''), v.notes, ''),
+                   COALESCE(a.explanation, '')
             FROM llm_analyses a
             LEFT JOIN validations v ON v.analysis_id = a.id
             WHERE a.submission_id = %s
