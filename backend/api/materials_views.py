@@ -11,11 +11,14 @@ all writes here are raw SQL (no ORM `save()` / `delete()`).
 
 import logging
 import os
+import urllib.parse
 import uuid
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import connection
+from django.http import FileResponse
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -23,6 +26,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .authentication import TokenAuthentication
+from .material_access import may_view, resolve_document_file
 from .models import UserSubjectRole
 from .views import is_lecturer_for_subject
 from .worker_health import worker_status
@@ -419,3 +423,111 @@ class ReadingMaterialFlagView(APIView):
             'category': updated[6],
         })
 
+
+class _BoundedReader:
+    """A read-limited view of an open file, so a 206 streams exactly the slice."""
+
+    def __init__(self, path, start, length):
+        self._file = open(path, 'rb')
+        self._file.seek(start)
+        self._remaining = length
+
+    def read(self, size=-1):
+        if self._remaining <= 0:
+            return b''
+        if size is None or size < 0:
+            size = self._remaining
+        chunk = self._file.read(min(size, self._remaining))
+        self._remaining -= len(chunk)
+        return chunk
+
+    def close(self):
+        self._file.close()
+
+
+def _parse_byte_range(header, total):
+    """`(start, end)` for one satisfiable range, `'unsatisfiable'`, or None.
+
+    None also means "ignore": a missing header, a syntactically broken one, or a
+    multi-range request all fall back to serving the whole file.
+    """
+    if not header or not header.startswith('bytes='):
+        return None
+    spec = header[len('bytes='):].strip()
+    if ',' in spec:
+        return None
+    try:
+        first, _, last = spec.partition('-')
+        if first == '':
+            suffix = int(last)
+            if suffix <= 0:
+                return 'unsatisfiable'
+            start, end = max(total - suffix, 0), total - 1
+        else:
+            start = int(first)
+            end = int(last) if last else total - 1
+    except ValueError:
+        return None
+    if start >= total or start > end:
+        return 'unsatisfiable'
+    return start, min(end, total - 1)
+
+
+class MaterialFileView(APIView):
+    """Stream one reference document's bytes to a user allowed to read it (W1).
+
+    `resolve_document_file` decides whether there is anything to serve and where it
+    lives (path always from the DB, never the client); `may_view` decides who may
+    read it. The frontend loads the response as a blob, so the bytes stay same-origin
+    to the app and the token never lands in an iframe URL.
+    """
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        resolved = resolve_document_file(pk)
+        if resolved is None:
+            return Response({'detail': 'Dokumen tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        path, meta = resolved
+
+        if not may_view(request.user, pk):
+            return Response(
+                {'detail': 'Anda tidak memiliki akses ke dokumen ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # One dev document is markdown: degrade to a clean 404 rather than a frame
+        # the browser cannot render.
+        if meta['mime_type'] != 'application/pdf':
+            return Response(
+                {'detail': 'Berkas ini tidak dapat ditampilkan sebagai PDF.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        total = path.stat().st_size
+        parsed = _parse_byte_range(request.headers.get('Range'), total)
+        if parsed == 'unsatisfiable':
+            response = Response(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+            response['Content-Range'] = f'bytes */{total}'
+        elif parsed is not None:
+            start, end = parsed
+            response = FileResponse(
+                _BoundedReader(path, start, end - start + 1),
+                status=status.HTTP_206_PARTIAL_CONTENT,
+                content_type='application/pdf',
+            )
+            response['Content-Range'] = f'bytes {start}-{end}/{total}'
+            response['Content-Length'] = str(end - start + 1)
+        else:
+            response = FileResponse(open(path, 'rb'), content_type='application/pdf')
+
+        # Titles carry `&`, `/`, `—`: plain `filename=` mangles them, so use the
+        # RFC 5987 form with everything percent-encoded.
+        title = meta['title'] or path.name
+        response['Content-Disposition'] = "inline; filename*=UTF-8''" + urllib.parse.quote(title, safe='')
+        response['Cache-Control'] = 'private, max-age=300'
+        response['Accept-Ranges'] = 'bytes'
+        # The blob path never frames the API, so keep the default DENY.
+        response['X-Frame-Options'] = settings.X_FRAME_OPTIONS
+        return response

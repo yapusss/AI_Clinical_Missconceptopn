@@ -1,5 +1,6 @@
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { BookMarked, Loader2 } from "lucide-react";
+import { BookMarked, BookOpen, Loader2 } from "lucide-react";
 
 import type {
   EvidenceSpan,
@@ -8,6 +9,7 @@ import type {
 } from "../lib/studentSubmissions";
 import EvidenceQuote, { resolveEvidenceSentence } from "./EvidenceQuote";
 import MissingConcepts from "./MissingConcepts";
+import PdfViewerDialog from "./PdfViewerDialog";
 
 export type ReadingMaterialProps = {
   material?:
@@ -40,6 +42,11 @@ export default function ReadingMaterial({
   evidence,
   missingConcepts,
 }: ReadingMaterialProps) {
+  const [viewer, setViewer] = useState<{
+    documentId: string;
+    page: number;
+    title: string;
+  } | null>(null);
   const hasEvidence = resolveEvidenceSentence(evidence) !== "";
   const hasMissing = (missingConcepts ?? []).length > 0;
   if (!material && !hasEvidence && !hasMissing) return null;
@@ -101,27 +108,66 @@ export default function ReadingMaterial({
                   Sumber Materi ({sources.length})
                 </p>
                 <ul className="space-y-1">
-                  {sources.map((src, index) => (
-                    <li
-                      key={`${src.chunk_id}-${index}`}
-                      className="flex items-center justify-between gap-2 rounded border border-outline-variant/30 bg-surface-container px-3 py-1.5 text-xs"
-                    >
-                      <span className="min-w-0 truncate font-semibold text-on-surface">
-                        {src.document_title || "Sumber tidak dikenal"}
-                      </span>
+                  {sources.map((src, index) => {
+                    const rowClass =
+                      "flex items-center justify-between gap-2 rounded border border-outline-variant/30 bg-surface-container px-3 py-1.5 text-xs";
+                    const pageLabel = (
                       <span className="shrink-0 font-mono-ui text-[10px] text-on-surface-variant">
-                        {typeof src.page === "number"
-                          ? `hal. ${src.page}`
-                          : "—"}
+                        {typeof src.page === "number" ? `hal. ${src.page}` : "—"}
                       </span>
-                    </li>
-                  ))}
+                    );
+                    // Only a cited document can be opened; an unresolved source stays
+                    // the inert row it always was.
+                    if (!src.document_id) {
+                      return (
+                        <li key={`${src.chunk_id}-${index}`} className={rowClass}>
+                          <span className="min-w-0 truncate font-semibold text-on-surface">
+                            {src.document_title || "Sumber tidak dikenal"}
+                          </span>
+                          {pageLabel}
+                        </li>
+                      );
+                    }
+                    const documentId = src.document_id;
+                    const page = src.page ?? 1;
+                    const title = src.document_title ?? "Referensi";
+                    return (
+                      <li key={`${src.chunk_id}-${index}`}>
+                        <button
+                          type="button"
+                          onClick={() => setViewer({ documentId, page, title })}
+                          title={`Buka ${title} hal. ${page}`}
+                          className={`${rowClass} w-full cursor-pointer text-left transition-colors hover:bg-surface-container-high`}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <BookOpen
+                              size={12}
+                              className="shrink-0 text-primary"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 truncate font-semibold text-on-surface">
+                              {src.document_title || "Sumber tidak dikenal"}
+                            </span>
+                          </span>
+                          {pageLabel}
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
           </>
         )}
       </div>
+
+      <PdfViewerDialog
+        open={viewer !== null}
+        onClose={() => setViewer(null)}
+        documentId={viewer?.documentId ?? null}
+        page={viewer?.page ?? null}
+        title={viewer?.title ?? "Referensi"}
+      />
     </div>
   );
 }

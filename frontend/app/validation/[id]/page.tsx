@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   BookMarked,
+  BookOpen,
   BrainCircuit,
   CheckCircle2,
   ClipboardCheck,
@@ -19,6 +20,7 @@ import { useAuth } from "../../components/AuthProvider";
 import AppSelect from "../../components/AppSelect";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
+import PdfViewerDialog from "../../components/PdfViewerDialog";
 import RichTextContent from "../../components/RichTextContent";
 import MathContent from "../../components/MathContent";
 import EvidenceQuote, {
@@ -203,6 +205,13 @@ export default function ValidationDetailPage() {
   const [flagOpen, setFlagOpen] = useState(false);
   const [flagNote, setFlagNote] = useState("");
   const [flagSubmitting, setFlagSubmitting] = useState(false);
+
+  // W1: the reference PDF behind a "Sumber Materi" row, opened at its cited page.
+  const [pdfViewer, setPdfViewer] = useState<{
+    documentId: string;
+    page: number;
+    title: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     if (!analysisId) return;
@@ -808,19 +817,52 @@ export default function ValidationDetailPage() {
                             Sumber Materi ({readingMaterial.sources.length})
                           </p>
                           <ul className="space-y-1">
-                            {readingMaterial.sources.map((src, index) => (
-                              <li
-                                key={`${src.chunk_id}-${index}`}
-                                className="flex items-center justify-between gap-2 rounded border border-outline-variant/30 bg-surface-container-lowest px-3 py-1.5 text-xs"
-                              >
-                                <span className="min-w-0 truncate font-semibold text-on-surface">
-                                  {src.document_title || "Sumber tidak dikenal"}
-                                </span>
+                            {readingMaterial.sources.map((src, index) => {
+                              const rowClass =
+                                "flex items-center justify-between gap-2 rounded border border-outline-variant/30 bg-surface-container-lowest px-3 py-1.5 text-xs";
+                              const pageLabel = (
                                 <span className="shrink-0 font-mono-ui text-[10px] text-on-surface-variant">
                                   {typeof src.page === "number" ? `hal. ${src.page}` : "—"}
                                 </span>
-                              </li>
-                            ))}
+                              );
+                              // A source without a resolved document stays the inert row
+                              // it always was; a cited one opens at its page.
+                              if (!src.document_id) {
+                                return (
+                                  <li key={`${src.chunk_id}-${index}`} className={rowClass}>
+                                    <span className="min-w-0 truncate font-semibold text-on-surface">
+                                      {src.document_title || "Sumber tidak dikenal"}
+                                    </span>
+                                    {pageLabel}
+                                  </li>
+                                );
+                              }
+                              const documentId = src.document_id;
+                              const page = src.page ?? 1;
+                              const title = src.document_title ?? "Referensi";
+                              return (
+                                <li key={`${src.chunk_id}-${index}`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPdfViewer({ documentId, page, title })}
+                                    title={`Buka ${title} hal. ${page}`}
+                                    className={`${rowClass} w-full cursor-pointer text-left transition-colors hover:bg-surface-container-high`}
+                                  >
+                                    <span className="flex min-w-0 items-center gap-1.5">
+                                      <BookOpen
+                                        size={12}
+                                        className="shrink-0 text-primary"
+                                        aria-hidden="true"
+                                      />
+                                      <span className="min-w-0 truncate font-semibold text-on-surface">
+                                        {src.document_title || "Sumber tidak dikenal"}
+                                      </span>
+                                    </span>
+                                    {pageLabel}
+                                  </button>
+                                </li>
+                              );
+                            })}
                           </ul>
                         </div>
                       )}
@@ -1211,6 +1253,13 @@ export default function ValidationDetailPage() {
         open={!!error}
         message={error}
         onClose={() => setError("")}
+      />
+      <PdfViewerDialog
+        open={pdfViewer !== null}
+        onClose={() => setPdfViewer(null)}
+        documentId={pdfViewer?.documentId ?? null}
+        page={pdfViewer?.page ?? null}
+        title={pdfViewer?.title ?? "Referensi"}
       />
     </PageContainer>
   );
