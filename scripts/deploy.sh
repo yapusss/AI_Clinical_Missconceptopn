@@ -73,22 +73,31 @@ echo "${cfg_probe:-PROBE FAILED - backend did not answer; check 'docker compose 
 # whether this host can actually reach the provider, and the difference between config
 # and connectivity has already cost one debugging session. One tiny JSON call (~20
 # tokens) per deploy; the failure text lands in the deploy log instead of prod only.
+# Falls through a short candidate list, so one deploy also answers "which model can this
+# host actually reach" — OpenCode Go has answered 400 "Model is unavailable" here while
+# the same model worked from a dev machine moments earlier.
 llm_smoke=''
 for i in $(seq 1 2); do
   llm_smoke=$(docker compose exec -T backend python manage.py shell 2>&1 <<'PY'
 from api.llm import _call_llm_json, get_active_model_identifier
-m = get_active_model_identifier()
-try:
-    d = _call_llm_json('Balas hanya JSON.', 'Balas JSON: {"ok": true}', m)
-    print('llm smoke: OK ->', d)
-except Exception as e:
-    print('llm smoke: FAILED ->', type(e).__name__, str(e)[:220])
+candidates = [get_active_model_identifier(), 'deepseek-v4-pro', 'glm-5.3', 'kimi-k2.6']
+seen = []
+for m in candidates:
+    if m in seen:
+        continue
+    seen.append(m)
+    try:
+        d = _call_llm_json('Balas hanya JSON.', 'Balas JSON: {"ok": true}', m)
+        print('llm smoke:', m, 'OK ->', d)
+        break
+    except Exception as e:
+        print('llm smoke:', m, 'FAILED ->', type(e).__name__, str(e)[:160])
 PY
 ) && break
   echo "llm smoke attempt $i/2 did not run; retrying in 5s"
   sleep 5
 done
-echo "${llm_smoke:-llm smoke: DID NOT RUN - check 'docker compose logs backend'}" | tail -3
+echo "${llm_smoke:-llm smoke: DID NOT RUN - check 'docker compose logs backend'}" | tail -5
 docker compose exec -T postgres psql -U appuser -d appdb -tAc "SELECT 'knowledge_chunks: '||count(*)||' rows / '||count(embedding)||' embedded' FROM knowledge_chunks;" </dev/null 2>/dev/null || true
 
 # Workers: NO LONGER started here. Since migration 0029 the backend supervises the

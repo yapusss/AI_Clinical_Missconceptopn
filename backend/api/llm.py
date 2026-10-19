@@ -127,6 +127,32 @@ class LlmTransientError(LlmAnalysisError):
 # HTTP statuses that mean "try again later" rather than "this work is bad".
 _TRANSIENT_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 522, 524})
 
+# Gateways wrap their own upstream failures in a 4xx that says nothing about the work.
+# OpenCode Go answers 400 `{'error': {'type': 'server_error', 'message': 'Upstream
+# request failed: Model is unavailable.'}}`; classified as non-transient that burns one
+# of LLM_MAX_RUNS per call, so three provider hiccups park a student's submission as
+# ANALYSIS_FAILED and the lecturer sees "the model isn't working".
+_PROVIDER_SERVER_ERROR_MARKERS = (
+    'server_error',
+    'upstream request failed',
+    'model is unavailable',
+)
+
+
+def _provider_server_error_text(exc) -> str:
+    """Best-effort text of a provider error body, for marker matching."""
+    parts = [str(exc)]
+    body = getattr(exc, 'body', None)
+    if isinstance(body, dict):
+        error = body.get('error')
+        if isinstance(error, dict):
+            parts.extend(str(error.get(k, '')) for k in ('type', 'message', 'code'))
+        else:
+            parts.append(str(body))
+    elif body is not None:
+        parts.append(str(body))
+    return ' '.join(parts).lower()
+
 
 def is_transient_error(exc: BaseException | None) -> bool:
     """True when `exc` is a provider-side, retryable failure.
@@ -141,6 +167,11 @@ def is_transient_error(exc: BaseException | None) -> bool:
     status_code = getattr(exc, 'status_code', None)
     if isinstance(status_code, int) and status_code in _TRANSIENT_STATUSES:
         return True
+    if isinstance(status_code, int) and 400 <= status_code < 500:
+        # A 4xx that is really the gateway's own upstream failure, not our request.
+        text = _provider_server_error_text(exc)
+        if any(marker in text for marker in _PROVIDER_SERVER_ERROR_MARKERS):
+            return True
     # The openai SDK raises APITimeoutError / APIConnectionError without a status code.
     name = type(exc).__name__
     return name in ('RateLimitError', 'APITimeoutError', 'APIConnectionError',

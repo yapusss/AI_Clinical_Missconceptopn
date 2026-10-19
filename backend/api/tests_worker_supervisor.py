@@ -208,6 +208,21 @@ class TransientErrorTests(SimpleTestCase):
         self.assertFalse(llm.is_transient_error(ValueError('LLM output is not valid JSON')))
         self.assertFalse(llm.is_transient_error(None))
 
+    def test_gateway_upstream_failure_in_a_400_is_transient(self):
+        # OpenCode Go reports its own upstream failure as 400 + type=server_error.
+        # Treated as permanent it burns one attempt per call: three provider hiccups
+        # park a submission as ANALYSIS_FAILED ("the model isn't working").
+        exc = self._exc('BadRequestError', 400)
+        exc.body = {'error': {'type': 'server_error',
+                              'message': 'Upstream request failed: Model is unavailable.'}}
+        self.assertTrue(llm.is_transient_error(exc))
+
+    def test_a_genuine_bad_request_stays_permanent(self):
+        exc = self._exc('BadRequestError', 400)
+        exc.body = {'error': {'type': 'invalid_request_error',
+                              'message': "messages[0].content must be a string"}}
+        self.assertFalse(llm.is_transient_error(exc))
+
     def test_transient_error_is_still_an_analysis_error(self):
         # A caller that only catches LlmAnalysisError must not silently start treating a
         # rate limit as a hard failure — subclassing keeps the old behaviour a superset.
