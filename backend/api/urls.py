@@ -6,6 +6,7 @@ from .materials_views import (
     MaterialRetryView,
     ReadingMaterialFlagView,
 )
+from .pdf_export_views import StudentReadingMaterialExportView
 from .validation_views import (
     ModelMetricsView,
     QuestionVersionMisconceptionLinkView,
@@ -118,6 +119,7 @@ urlpatterns = [
     path('student/submissions', StudentSubmissionListView.as_view(), name='student-submission-list'),
     path('student/submission-packages', StudentSubmissionPackageListView.as_view(), name='student-submission-package-list'),
     path('student/submission-packages/<uuid:pk>', StudentSubmissionPackageDetailView.as_view(), name='student-submission-package-detail'),
+    path('student/submission-packages/<uuid:pk>/reading-material.pdf', StudentReadingMaterialExportView.as_view(), name='student-reading-material-export'),
 
     path('validations/queue', ValidationQueueView.as_view(), name='validation-queue'),
     path('validations/tiers', ValidationTiersView.as_view(), name='validation-tiers'),
