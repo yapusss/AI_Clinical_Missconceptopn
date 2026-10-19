@@ -3,6 +3,7 @@ from django.urls import path
 from .materials_views import (
     MaterialDetailView,
     MaterialListCreateView,
+    MaterialRetryView,
     ReadingMaterialFlagView,
 )
 from .validation_views import (
@@ -69,6 +70,7 @@ urlpatterns = [
     path('uploads', MediaUploadView.as_view(), name='media-upload'),
     path('materials', MaterialListCreateView.as_view(), name='material-list-create'),
     path('materials/<uuid:pk>', MaterialDetailView.as_view(), name='material-detail'),
+    path('materials/<uuid:pk>/retry', MaterialRetryView.as_view(), name='material-retry'),
     path('materials/reading/<uuid:pk>/flag', ReadingMaterialFlagView.as_view(), name='reading-material-flag'),
     path('dashboard/summary', DashboardView.as_view(), name='dashboard-summary'),
     path('admin/users/<str:role>', AdminManagedUserListView.as_view(), name='admin-managed-user-list'),

@@ -25,6 +25,7 @@ from rest_framework.views import APIView
 from .authentication import TokenAuthentication
 from .models import UserSubjectRole
 from .views import is_lecturer_for_subject
+from .worker_health import worker_status
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,36 @@ _DOCUMENT_COLUMNS = (
     'id, subject_id, topic_id, title, mime_type, ingest_status, '
     'ingest_error, chunk_count, created_at, file_path'
 )
+
+# Indexes into a `_DOCUMENT_COLUMNS` row, for the reader's sake.
+COL_ID, COL_SUBJECT, COL_STATUS, COL_FILE_PATH = 0, 1, 5, 9
+
+# A document in either state can be re-queued: FAILED is the obvious one, PENDING
+# matters because the drain can be missing entirely (the queue then stays PENDING
+# forever and looks identical to "still working").
+RETRYABLE_STATUSES = ('PENDING', 'FAILED')
+
+# The supervisor ticks every WORKER_SUPERVISOR_INTERVAL (10s) and each worker
+# heartbeats on every tick, so anything older than this means the drain is not
+# running — which is what makes a retry look like it did nothing.
+INGEST_WORKER_STALE_SECONDS = 30
+
+
+def _ingest_worker_state():
+    """`'alive' | 'stale' | 'missing'` — is anything draining the ingest queue?
+
+    Surfaced to the UI on retry: without it a lecturer re-queues a document, sees
+    PENDING again, and has no way to tell "the worker will get to it" from "nothing
+    is consuming this queue at all".
+    """
+    rows = worker_status('ingest')
+    if not rows:
+        return 'missing'
+    try:
+        age = float(rows[0].get('age_seconds'))
+    except (TypeError, ValueError):
+        return 'stale'
+    return 'alive' if age <= INGEST_WORKER_STALE_SECONDS else 'stale'
 
 
 def _valid_uuid(value):
@@ -231,6 +262,68 @@ class MaterialDetailView(APIView):
                 logger.warning('Could not delete stored material %s: %s', file_path, e)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MaterialRetryView(APIView):
+    """Re-queue one reference document (lecturer-scoped) — the fallback for a failed ingest.
+
+    The uploaded file is still on disk, so recovering a document must not require
+    re-uploading it. Nothing is ingested inside this request: the row goes back to
+    `PENDING` and the supervised `ingest_materials --pending --loop` worker picks it
+    up on its next tick, which is why the response is `202` and carries the worker's
+    liveness — the caller needs to know whether anything will actually consume it.
+    """
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        row = _get_document(str(pk))
+        if row is None:
+            return Response({'detail': 'Dokumen tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_lecturer_for_subject(request.user, str(row[COL_SUBJECT])):
+            return Response(
+                {'detail': 'Anda tidak mengajar mata kuliah ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        current = row[COL_STATUS]
+        if current == 'READY':
+            # Re-ingesting a READY document would insert a second copy of every
+            # chunk: `_insert_chunks` only appends. Delete first if you need that.
+            return Response(
+                {'detail': 'Dokumen ini sudah siap dan tidak perlu diproses ulang.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if current not in RETRYABLE_STATUSES:
+            return Response(
+                {'detail': f'Dokumen berstatus {current} tidak dapat diproses ulang.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if not row[COL_FILE_PATH]:
+            return Response(
+                {'detail': 'Berkas dokumen ini tidak tersedia, jadi tidak dapat diproses ulang. '
+                           'Unggah ulang berkasnya.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        with connection.cursor() as cur:
+            # A failed run can leave part of a batch behind (extract → chunk → embed →
+            # insert), and a re-run appends rather than replaces, so clear the slate.
+            cur.execute('DELETE FROM knowledge_chunks WHERE document_id = %s', [str(pk)])
+            cur.execute(
+                """UPDATE knowledge_documents
+                   SET ingest_status = 'PENDING', ingest_error = NULL, chunk_count = NULL
+                   WHERE id = %s""",
+                [str(pk)],
+            )
+
+        logger.info('Material %s re-queued for ingest by user %s', pk, request.user.id)
+
+        payload = _document_payload(_get_document(str(pk)))
+        payload['ingest_worker'] = _ingest_worker_state()
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
 def _material_subject_id(material_id):

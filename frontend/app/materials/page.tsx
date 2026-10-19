@@ -3,9 +3,11 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   BookOpen,
   FileText,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -96,6 +98,10 @@ export function ReferenceMaterials({
   const [uploading, setUploading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Material | null>(null);
   const [error, setError] = useState("");
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  // 'alive' | 'stale' | 'missing' from the retry response: a queued document only
+  // becomes READY if something is actually draining the queue.
+  const [ingestWorker, setIngestWorker] = useState<string | null>(null);
 
   useEffect(() => {
     if (loading) return;
@@ -156,6 +162,38 @@ export function ReferenceMaterials({
   useEffect(() => {
     void load();
   }, [load]);
+
+  const hasPending = materials.some((m) => m.ingest_status === "PENDING");
+
+  useEffect(() => {
+    // PENDING clears on the worker's next tick (10s). Without this the badge only
+    // moves when the lecturer remembers to press "Muat ulang" — which is exactly how
+    // a queue that nothing consumes stayed invisible.
+    if (!hasPending) return;
+    const timer = setInterval(() => {
+      void load();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [hasPending, load]);
+
+  const handleRetry = async (item: Material) => {
+    setError("");
+    setRetryingId(item.id);
+    try {
+      const result = await apiFetch<Material & { ingest_worker?: string }>(
+        `/materials/${item.id}/retry`,
+        { method: "POST" },
+      );
+      setIngestWorker(result.ingest_worker ?? null);
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal memproses ulang materi.",
+      );
+    } finally {
+      setRetryingId(null);
+    }
+  };
 
   const handleUpload = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -343,6 +381,17 @@ export function ReferenceMaterials({
           </header>
 
           <div className="p-5">
+            {ingestWorker && ingestWorker !== "alive" && (
+              <p className="mb-4 flex items-start gap-2 rounded-lg border border-error/40 bg-error-container/20 p-3 text-[11px] leading-relaxed text-error">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  Proses ingest tidak berjalan (
+                  {ingestWorker === "missing" ? "worker tidak ditemukan" : "worker tidak aktif"}
+                  ), jadi dokumen akan tetap PENDING tanpa diproses. Hubungi admin
+                  sebelum materi ini diandalkan.
+                </span>
+              </p>
+            )}
             {fetching && materials.length === 0 ? (
               <p className="text-sm text-on-surface-variant">Memuat materi...</p>
             ) : materials.length === 0 ? (
@@ -378,6 +427,26 @@ export function ReferenceMaterials({
                           <span className={`badge ${meta.cls}`} title={meta.hint}>
                             {meta.label}
                           </span>
+                          {item.ingest_status !== "READY" && (
+                            <button
+                              type="button"
+                              onClick={() => void handleRetry(item)}
+                              disabled={retryingId === item.id}
+                              className="inline-flex items-center gap-1 rounded-lg border border-outline-variant/40 px-2 py-1 text-[11px] font-semibold text-on-surface-variant hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label={`Proses ulang ${item.title}`}
+                              title={
+                                item.ingest_status === "FAILED"
+                                  ? "Proses ulang: jalankan lagi ingest berkas ini"
+                                  : "Antrekan ulang berkas ini bila statusnya tidak berubah"
+                              }
+                            >
+                              <RotateCcw
+                                size={13}
+                                className={retryingId === item.id ? "animate-spin" : ""}
+                              />
+                              Proses ulang
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setPendingDelete(item)}
@@ -394,6 +463,14 @@ export function ReferenceMaterials({
                         <span>chunk: {item.chunk_count ?? "—"}</span>
                         <span>diunggah: {fmtDate(item.created_at)}</span>
                       </div>
+
+                      {item.ingest_status === "PENDING" && (
+                        <p className="mt-2 rounded border border-outline-variant/30 bg-surface-container-lowest p-2 text-[11px] leading-relaxed text-on-surface-variant">
+                          Menunggu antrean ingest — status ini berubah sendiri begitu
+                          berkas selesai diproses. Bila tetap PENDING, tekan tombol proses
+                          ulang.
+                        </p>
+                      )}
 
                       {item.ingest_status === "FAILED" && item.ingest_error && (
                         <p className="mt-2 rounded border border-error/40 bg-error-container/20 p-2 text-[11px] leading-relaxed text-error">
