@@ -675,6 +675,10 @@ function SubmissionPackageDetailPageContent() {
                     : "Materi bacaan tersedia setelah dosen memvalidasi jawaban Anda."
                 }
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:text-white"
+                // Pinned inline, not via a utility: the app's global
+                // `button { color: var(--text-main) }` produced a non-white label in
+                // one theme, and inline beats every stylesheet regardless of layering.
+                style={{ color: "#ffffff" }}
               >
                 {downloading ? (
                   <Loader2 size={16} className="animate-spin" />
