@@ -315,7 +315,7 @@ export default function SubmissionsPage() {
                       color: "var(--primary)",
                     }}
                   >
-                    Skor {row.score.toFixed(2)}%
+                    Skor {row.score.toFixed(2)}
                   </span>
                 )}
                 {row.category ? (

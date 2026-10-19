@@ -259,7 +259,7 @@ export default function ValidationDetailPage() {
         return;
       }
       if (finalPct === "" || Number.isNaN(Number(finalPct))) {
-        setError("Peringatan: Masukkan Skor Akhir (%) berupa angka valid.");
+        setError("Peringatan: Masukkan Skor Akhir berupa angka valid.");
         return;
       }
       const numPct = Number(finalPct);
@@ -1041,7 +1041,7 @@ export default function ValidationDetailPage() {
                       </p>
                       <div className="mt-1 flex items-baseline gap-2">
                         <span className="font-mono-ui text-xl font-extrabold text-primary">
-                          {Number(data.llm.percentage_correct).toFixed(1)}%
+                          {Number(data.llm.percentage_correct).toFixed(1)}
                         </span>
                         <span className="text-xs font-semibold text-on-surface-variant">
                           {data.llm.four_tier_category
@@ -1070,7 +1070,7 @@ export default function ValidationDetailPage() {
                         htmlFor="final-pct-v"
                         className="block text-[11px] font-bold uppercase text-on-surface-variant"
                       >
-                        Skor Akhir (%)
+                        Skor Akhir
                       </label>
                       <input
                         id="final-pct-v"

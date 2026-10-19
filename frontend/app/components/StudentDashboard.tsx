@@ -98,7 +98,7 @@ const fmtDateTime = (value: string | null) => {
 };
 
 const fmtPercent = (value: number | null) =>
-  typeof value === "number" ? `${value.toFixed(1).replace(/\.?0+$/, "")}%` : "-";
+  typeof value === "number" ? value.toFixed(1).replace(/\.?0+$/, "") : "-";
 
 const fmtDate = (value: string | null) => {
   if (!value) return "-";
@@ -247,7 +247,7 @@ function SubjectExamTrendChart({ exams }: { exams: StudentExamTrendPoint[] }) {
                   fontSize={11}
                   fill="var(--text-dim)"
                 >
-                  {tick}%
+                  {tick}
                 </text>
               </g>
             );

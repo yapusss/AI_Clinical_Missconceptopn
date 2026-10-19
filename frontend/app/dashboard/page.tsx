@@ -61,7 +61,7 @@ const ROLE_META: Record<
 };
 
 const fmtPercent = (v: unknown) =>
-  typeof v === "number" ? `${v.toFixed(2).replace(/\.?0+$/, "")}%` : "-";
+  typeof v === "number" ? v.toFixed(2).replace(/\.?0+$/, "") : "-";
 
 type Card = {
   icon: typeof ShieldCheck;
@@ -307,7 +307,7 @@ export default function DashboardPage() {
   const MetaIcon = meta.icon;
 
   return (
-    <PageContainer>
+    <PageContainer style={{ paddingTop: "12px" }}>
       <PageHeader
         className="mb-6"
         title={meta.label}

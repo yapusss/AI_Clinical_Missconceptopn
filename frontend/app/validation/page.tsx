@@ -52,7 +52,7 @@ const TIER_BADGE: Record<number, string> = {
 
 const fmtPct = (v: string) => {
   const n = Number.parseFloat(v);
-  return Number.isNaN(n) ? v : `${n.toFixed(1)}%`;
+  return Number.isNaN(n) ? v : n.toFixed(1);
 };
 
 export default function ValidationQueuePage() {

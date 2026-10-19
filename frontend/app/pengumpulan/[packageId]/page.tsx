@@ -68,7 +68,7 @@ const STUDENT_FRIENDLY_CATEGORIES: Record<
 };
 
 const fmtPct = (num: number) => {
-  return num % 1 === 0 ? `${num.toFixed(0)}%` : `${num.toFixed(1)}%`;
+  return num % 1 === 0 ? num.toFixed(0) : num.toFixed(1);
 };
 
 const SCORE_POLICY_LABEL: Record<string, string> = {

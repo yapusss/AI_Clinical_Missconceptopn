@@ -180,11 +180,10 @@ export default function SubmissionDetailPage() {
                         {Number(
                           data.current_analysis.percentage_correct,
                         ).toFixed(1)}
-                        % · {data.current_analysis.tier_label} · Kepercayaan{" "}
+                        · {data.current_analysis.tier_label} · Kepercayaan{" "}
                         {(
                           Number(data.current_analysis.confidence) * 100
                         ).toFixed(0)}
-                        %
                       </p>
                       {data.current_analysis.validation && (
                         <p className="mt-1 text-sm text-on-surface-variant">

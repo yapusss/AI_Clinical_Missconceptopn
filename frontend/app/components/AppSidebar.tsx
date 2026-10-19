@@ -6,7 +6,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
-  Building2,
   CircleHelp,
   ClipboardList,
   FileSearch,
@@ -168,7 +167,6 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
     <div className="app-shell" style={{ display: "flex", minHeight: "100dvh", background: "var(--bg-main)" }}>
       <header className="mobile-app-header glass-panel">
         <div className="mobile-app-brand">
-          <Building2 size={22} color="var(--primary)" />
           <div>
             <strong>EvalAI Academic</strong>
             <span>AI Clinical Misconception</span>
@@ -203,11 +201,15 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
               borderBottom: "1px solid var(--border-color)",
               marginBottom: "14px",
               display: "flex",
-              alignItems: "center",
-              gap: "10px",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: "8px",
             }}
           >
-            <Building2 size={24} color="var(--primary)" style={{ flexShrink: 0 }} />
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }} aria-label="Logo institusi">
+              <Image src={unsLogo} alt="Universitas Sebelas Maret" width={34} height={34} style={{ width: "34px", height: "34px", objectFit: "contain" }} />
+              <Image src={ubdLogo} alt="Universiti Brunei Darussalam" width={34} height={34} style={{ width: "34px", height: "34px", objectFit: "contain" }} />
+            </div>
             <div>
               <h2 style={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.4px", color: "var(--text-main)", margin: 0, lineHeight: 1.2 }}>
                 EvalAI Academic
@@ -247,26 +249,6 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
               );
             })}
           </nav>
-        </div>
-
-        <div
-          style={{
-            marginTop: "auto",
-            marginBottom: "12px",
-            padding: "12px",
-            borderRadius: "var(--radius-sm)",
-            background: "transparent",
-            border: "1px solid var(--border-color)",
-            boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "14px",
-          }}
-          aria-label="Logo institusi"
-        >
-          <Image src={unsLogo} alt="Universitas Sebelas Maret" width={42} height={42} style={{ width: "42px", height: "42px", objectFit: "contain" }} />
-          <Image src={ubdLogo} alt="Universiti Brunei Darussalam" width={42} height={42} style={{ width: "42px", height: "42px", objectFit: "contain" }} />
         </div>
 
         <div

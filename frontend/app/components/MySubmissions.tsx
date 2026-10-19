@@ -246,7 +246,7 @@ export default function MySubmissions({ compactHeading = false }: Props) {
                         {group.overall_score !== null &&
                           group.overall_score !== undefined && (
                             <span className="whitespace-nowrap rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono-ui text-[11px] font-extrabold text-primary">
-                              Nilai: {group.overall_score.toFixed(0)}%
+                              Nilai: {group.overall_score.toFixed(0)}
                             </span>
                           )}
                       </div>

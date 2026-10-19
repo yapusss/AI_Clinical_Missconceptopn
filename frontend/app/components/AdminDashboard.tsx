@@ -307,7 +307,6 @@ export default function AdminDashboard({
               <CheckCircle2 size={16} className="text-tertiary-container" />
               <p className="mt-2 text-lg font-bold text-on-surface">
                 {dashboard.ai_health.success_rate ?? "-"}
-                {dashboard.ai_health.success_rate !== null ? "%" : ""}
               </p>
               <p className="text-xs text-on-surface-variant">Berhasil</p>
             </div>

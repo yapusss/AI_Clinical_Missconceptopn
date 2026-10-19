@@ -79,7 +79,7 @@ const dateTime = (value: string | null) =>
       })
     : "Tanpa batas waktu";
 const score = (value: number | null) =>
-  value === null ? "-" : `${value.toFixed(1)}%`;
+  value === null ? "-" : value.toFixed(1);
 function SubjectAverageBarChart({
   subjects,
 }: {
@@ -225,7 +225,7 @@ function SubjectMasteryDonut({ dashboard }: { dashboard: Dashboard }) {
                 <strong className="shrink-0 text-sm text-on-surface">
                   {item.value}{" "}
                   <span className="font-normal text-on-surface-variant">
-                    ({total ? Math.round((item.value / total) * 100) : 0}%)
+                    ({total ? Math.round((item.value / total) * 100) : 0})
                   </span>
                 </strong>
               </li>
