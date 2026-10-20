@@ -8,15 +8,19 @@ helpers. Nothing here touches the database, the shared dev DB or the network.
     venv/Scripts/python.exe manage.py test api.tests_material_file -v 2
 """
 
+import os
 import tempfile
+import urllib.parse
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.contrib.auth.models import AnonymousUser
 from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from api import materials_views
 from api.material_access import may_view, resolve_document_file
 from api.materials_views import MaterialFileView
 
@@ -199,3 +203,100 @@ class MayViewTests(SimpleTestCase):
 
     def test_db_error_is_denied_not_raised(self):
         self.assertFalse(self._may_view(fetch_error=True))
+
+
+class MaterialTicketAndPageTests(SimpleTestCase):
+    """The citation viewer's ticket + single-page render.
+
+    A reference PDF here is a whole book (53 MB in the deployed corpus), so the
+    dialog renders ONE page as an image instead of downloading the file. `<img>` and
+    a new tab cannot send `Authorization`, hence the signed ticket. Each test builds
+    its own tiny PDF, so none of this needs Postgres.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import pymupdf
+
+        cls._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        path = os.path.join(cls._tmp.name, 'book.pdf')
+        doc = pymupdf.open()
+        for number in range(1, 4):
+            page = doc.new_page()
+            page.insert_text((72, 72), f'page {number}')
+        doc.save(path)
+        doc.close()
+        cls.pdf_path = path
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+        super().tearDownClass()
+
+    def setUp(self):
+        self.doc_id = str(uuid.uuid4())
+        self.resolve = patch(
+            'api.materials_views.resolve_document_file',
+            return_value=(
+                Path(self.pdf_path),
+                {'subject_id': 's', 'mime_type': 'application/pdf', 'title': 'Book'},
+            ),
+        )
+        self.resolve.start()
+        self.addCleanup(self.resolve.stop)
+
+    def _ticket(self, doc_id=None):
+        return materials_views._mint_ticket(doc_id or self.doc_id)
+
+    def _page_response(self, query):
+        request = APIRequestFactory().get(f'/api/materials/{self.doc_id}/page{query}')
+        return materials_views.MaterialPageView.as_view()(request, pk=self.doc_id)
+
+    def test_ticket_round_trips_the_document_id(self):
+        self.assertEqual(materials_views._ticket_document_id(self._ticket()), self.doc_id)
+
+    def test_ticket_for_another_document_is_rejected(self):
+        other = str(uuid.uuid4())
+        self.assertNotEqual(materials_views._ticket_document_id(self._ticket(other)), self.doc_id)
+
+    def test_garbage_ticket_is_rejected(self):
+        self.assertIsNone(materials_views._ticket_document_id('not-a-signature'))
+
+    def test_expired_ticket_is_rejected(self):
+        # The TTL is read at verification time, so the check must run inside the patch.
+        with patch.object(materials_views, 'TICKET_TTL_SECONDS', -1):
+            expired = materials_views._mint_ticket(self.doc_id)
+            self.assertIsNone(materials_views._ticket_document_id(expired))
+
+    def test_page_requires_a_matching_ticket(self):
+        self.assertEqual(self._page_response('?n=2').status_code, 403)
+
+    def test_page_renders_an_image_for_a_valid_ticket(self):
+        ticket = urllib.parse.quote(self._ticket(), safe='')
+        response = self._page_response(f'?n=2&ticket={ticket}')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(response['Content-Type'], ('image/jpeg', 'image/png'))
+        self.assertGreater(len(response.content), 500)
+        self.assertEqual(response['X-Page-Count'], '3')
+
+    def test_page_out_of_range_is_404(self):
+        ticket = urllib.parse.quote(self._ticket(), safe='')
+        self.assertEqual(self._page_response(f'?n=99&ticket={ticket}').status_code, 404)
+
+    def test_file_endpoint_accepts_a_ticket_without_a_header(self):
+        ticket = urllib.parse.quote(self._ticket(), safe='')
+        request = APIRequestFactory().get(f'/api/materials/{self.doc_id}/file?ticket={ticket}')
+        request.user = AnonymousUser()
+        response = materials_views.MaterialFileView.as_view()(request, pk=self.doc_id)
+        self.assertEqual(response.status_code, 200)
+        # FileResponse keeps the handle open until the body is consumed; teardown
+        # cannot delete the temp directory otherwise (Windows).
+        b''.join(response.streaming_content)
+        response.close()
+
+    def test_file_endpoint_rejects_anonymous_without_a_ticket(self):
+        request = APIRequestFactory().get(f'/api/materials/{self.doc_id}/file')
+        request.user = AnonymousUser()
+        response = materials_views.MaterialFileView.as_view()(request, pk=self.doc_id)
+        self.assertEqual(response.status_code, 403)

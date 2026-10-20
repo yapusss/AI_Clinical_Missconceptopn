@@ -15,10 +15,11 @@ import urllib.parse
 import uuid
 
 from django.conf import settings
+from django.core import signing
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import connection
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -478,12 +479,15 @@ class MaterialFileView(APIView):
 
     `resolve_document_file` decides whether there is anything to serve and where it
     lives (path always from the DB, never the client); `may_view` decides who may
-    read it. The frontend loads the response as a blob, so the bytes stay same-origin
-    to the app and the token never lands in an iframe URL.
+    read it.
+
+    Two callers exist: the app's own fetch, which carries the Bearer token, and a
+    browser tab opened from a ticket URL, which cannot carry a header. A ticket is
+    signed for one document and expires, so the second path stays scoped.
     """
 
     authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
 
     def get(self, request, pk):
         resolved = resolve_document_file(pk)
@@ -491,7 +495,13 @@ class MaterialFileView(APIView):
             return Response({'detail': 'Dokumen tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
         path, meta = resolved
 
-        if not may_view(request.user, pk):
+        if getattr(request.user, 'is_authenticated', False):
+            if not may_view(request.user, pk):
+                return Response(
+                    {'detail': 'Anda tidak memiliki akses ke dokumen ini.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        elif _ticket_document_id(request.query_params.get('ticket')) != str(pk):
             return Response(
                 {'detail': 'Anda tidak memiliki akses ke dokumen ini.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -530,4 +540,143 @@ class MaterialFileView(APIView):
         response['Accept-Ranges'] = 'bytes'
         # The blob path never frames the API, so keep the default DENY.
         response['X-Frame-Options'] = settings.X_FRAME_OPTIONS
+        return response
+
+
+# --- Ticket + single-page preview ------------------------------------------------
+#
+# A reference PDF here is a whole book (the deployed corpus has 53 MB and 63 MB
+# files). Handing the entire file to the browser before it can show anything is a
+# 7-minute spinner on a slow link, so a citation renders exactly ONE page — the
+# cited one — as a JPEG. The image is a few tens of KB, and the full book stays one
+# click away for the reader who wants it.
+
+TICKET_SALT = 'material-file-ticket'
+TICKET_TTL_SECONDS = 300
+
+
+def _mint_ticket(document_id):
+    """A signed, document-scoped, expiring token — safe to put in a URL."""
+    return signing.dumps({'d': str(document_id)}, salt=TICKET_SALT)
+
+
+def _ticket_document_id(ticket):
+    """The document id a ticket was minted for, or None (bad/expired/missing)."""
+    if not ticket:
+        return None
+    try:
+        payload = signing.loads(ticket, salt=TICKET_SALT, max_age=TICKET_TTL_SECONDS)
+    except signing.BadSignature:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get('d')
+    return str(value) if value else None
+
+
+def _pymupdf():
+    import pymupdf  # imported lazily: only the viewer needs it
+    return pymupdf
+
+
+def _page_count(path):
+    try:
+        with _pymupdf().open(path) as doc:
+            return doc.page_count
+    except Exception as e:  # noqa: BLE001 — a broken file must not 500 the ticket
+        logger.warning('Could not read page count for %s: %s', path, e)
+        return None
+
+
+class MaterialTicketView(APIView):
+    """Mint the short-lived URL the browser can use without an auth header.
+
+    `<img src>` and a link opened in a new tab cannot send `Authorization`, so the
+    Bearer token is exchanged for a ticket bound to this one document. The caller
+    must pass the same access check the file endpoint applies.
+    """
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        resolved = resolve_document_file(pk)
+        if resolved is None:
+            return Response({'detail': 'Dokumen tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        path, meta = resolved
+        if not may_view(request.user, pk):
+            return Response(
+                {'detail': 'Anda tidak memiliki akses ke dokumen ini.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if meta['mime_type'] != 'application/pdf':
+            return Response(
+                {'detail': 'Berkas ini tidak dapat ditampilkan sebagai PDF.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({
+            'ticket': _mint_ticket(pk),
+            'expires_in': TICKET_TTL_SECONDS,
+            'pages': _page_count(path),
+        })
+
+
+class MaterialPageView(APIView):
+    """One rendered page of the document, as an image, addressed by ticket."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, pk):
+        if _ticket_document_id(request.query_params.get('ticket')) != str(pk):
+            return Response(
+                {'detail': 'Tautan dokumen sudah kedaluwarsa. Buka ulang sitasinya.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        resolved = resolve_document_file(pk)
+        if resolved is None:
+            return Response({'detail': 'Dokumen tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        path, meta = resolved
+        if meta['mime_type'] != 'application/pdf':
+            return Response(
+                {'detail': 'Berkas ini tidak dapat ditampilkan sebagai PDF.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            number = int(request.query_params.get('n') or '1')
+        except (TypeError, ValueError):
+            number = 1
+        try:
+            dpi = int(request.query_params.get('dpi') or '130')
+        except (TypeError, ValueError):
+            dpi = 130
+        dpi = max(72, min(dpi, 220))
+
+        pymupdf = _pymupdf()
+        try:
+            with pymupdf.open(path) as doc:
+                total = doc.page_count
+                if number < 1 or number > total:
+                    return Response(
+                        {'detail': f'Halaman {number} di luar rentang (dokumen {total} halaman).'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                pixmap = doc[number - 1].get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB)
+                try:
+                    body = pixmap.tobytes('jpeg')
+                    content_type = 'image/jpeg'
+                except Exception:  # noqa: BLE001 — older builds only emit png
+                    body = pixmap.tobytes('png')
+                    content_type = 'image/png'
+        except Exception as e:  # noqa: BLE001
+            logger.warning('Could not render page %s of %s: %s', number, pk, e)
+            return Response(
+                {'detail': 'Halaman ini tidak dapat ditampilkan.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        response = HttpResponse(body, content_type=content_type)
+        response['Cache-Control'] = 'private, max-age=300'
+        response['X-Page-Count'] = str(total)
         return response
