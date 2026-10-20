@@ -28,21 +28,23 @@ type SubQuestionWarning = {
   total_numbers: number;
 };
 
-function subQuestionDescription(warning: SubQuestionWarning) {
-  const parts: string[] = [];
-  if (warning.groups.length > 0) {
-    const detail = warning.groups
-      .map((group) => `nomor ${group.number} (${group.labels.join(", ")})`)
-      .join(", ");
-    parts.push(`Dokumen ini memiliki sub-soal pada ${detail}.`);
+function subQuestionLines(warning: SubQuestionWarning | null | undefined) {
+  if (!warning) return [];
+  const lines: string[] = [];
+  for (const group of warning.groups) {
+    lines.push(
+      `Sub-soal: nomor ${group.number} dipecah menjadi ${group.labels.join(", ")} — setiap baris menjadi soal terpisah.`,
+    );
   }
   if (warning.blank_number_rows > 0) {
-    parts.push(`${warning.blank_number_rows} baris tidak memiliki nomor soal.`);
+    lines.push(
+      `${warning.blank_number_rows} baris tidak memiliki nomor soal dan tetap diimpor sebagai soal terpisah.`,
+    );
   }
-  parts.push(
-    `Setiap baris tetap diimpor sebagai soal terpisah, sehingga totalnya menjadi ${warning.total_rows} soal (nomor unik: ${warning.total_numbers}).`,
+  lines.push(
+    `Total ${warning.total_rows} baris soal (${warning.total_numbers} nomor unik).`,
   );
-  return parts.join(" ");
+  return lines;
 }
 
 export default function QuestionBankImport({
@@ -66,13 +68,30 @@ export default function QuestionBankImport({
   const [isDragging, setIsDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState<string[]>([]);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [warningOpen, setWarningOpen] = useState(false);
+  const [warningDetails, setWarningDetails] = useState<string[]>([]);
+
+  function showError(message: string, details: string[] = []) {
+    setError(message);
+    setErrorDetails(details);
+    if (!message) setImportWarnings([]);
+  }
+
+  function continueAfterWarnings(pkg: PendingPackage, newTopic: boolean) {
+    if (newTopic) {
+      setShowNewTopicConfirm(true);
+      return;
+    }
+    sessionStorage.setItem("imported_package", JSON.stringify(pkg));
+    window.location.assign("/questions/create");
+  }
   const [showNewTopicConfirm, setShowNewTopicConfirm] = useState(false);
   const [detectedTopicName, setDetectedTopicName] = useState("");
   const [pendingPackageData, setPendingPackageData] =
     useState<PendingPackage | null>(null);
   const [pendingNewTopic, setPendingNewTopic] = useState(false);
-  const [subQuestionWarning, setSubQuestionWarning] =
-    useState<SubQuestionWarning | null>(null);
 
   useEffect(() => {
     if (subjectId) {
@@ -91,9 +110,9 @@ export default function QuestionBankImport({
   }, [token, subjectId]);
 
   async function downloadTemplate() {
-    setError("");
+    showError("");
     if (!selectedSubjectId) {
-      setError("Tolong pilih mata kuliah terlebih dahulu.");
+      showError("Tolong pilih mata kuliah terlebih dahulu.");
       return;
     }
 
@@ -115,14 +134,14 @@ export default function QuestionBankImport({
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch {
-      setError("Terjadi error saat mengunduh template Excel.");
+      showError("Terjadi error saat mengunduh template Excel.");
     }
   }
 
   async function downloadWordTemplate() {
-    setError("");
+    showError("");
     if (!selectedSubjectId) {
-      setError("Tolong pilih mata kuliah terlebih dahulu.");
+      showError("Tolong pilih mata kuliah terlebih dahulu.");
       return;
     }
 
@@ -144,7 +163,7 @@ export default function QuestionBankImport({
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch {
-      setError("Terjadi error saat mengunduh template Word.");
+      showError("Terjadi error saat mengunduh template Word.");
     }
   }
 
@@ -152,7 +171,7 @@ export default function QuestionBankImport({
     const targetSubject = selectedSubjectId || pendingPackageData?.subject_id;
     if (!pendingPackageData || !detectedTopicName || !targetSubject) return;
     setBusy(true);
-    setError("");
+    showError("");
 
     try {
       const topicRes = await fetch(
@@ -188,7 +207,7 @@ export default function QuestionBankImport({
       );
       window.location.href = "/questions/create";
     } catch (err) {
-      setError(
+      showError(
         err instanceof Error ? err.message : "Gagal menambahkan topik baru.",
       );
     } finally {
@@ -197,33 +216,27 @@ export default function QuestionBankImport({
     }
   }
 
-  function proceedWithPackage(pkg: PendingPackage, newTopic: boolean) {
-    if (newTopic) {
-      setShowNewTopicConfirm(true);
+  function proceedWithPackage(
+    pkg: PendingPackage,
+    newTopic: boolean,
+    warnings: string[] = importWarnings,
+    subWarning: SubQuestionWarning | null | undefined = null,
+  ) {
+    const details = [...subQuestionLines(subWarning), ...warnings];
+    if (details.length > 0) {
+      setPendingPackageData(pkg);
+      setPendingNewTopic(newTopic);
+      setWarningDetails(details);
+      setWarningOpen(true);
       return;
     }
-    sessionStorage.setItem("imported_package", JSON.stringify(pkg));
-    window.location.href = "/questions/create";
-  }
-
-  function handleAcceptSubQuestions() {
-    const pkg = pendingPackageData;
-    setSubQuestionWarning(null);
-    if (!pkg) return;
-    proceedWithPackage(pkg, pendingNewTopic);
-  }
-
-  function handleCancelSubQuestions() {
-    setSubQuestionWarning(null);
-    setPendingPackageData(null);
-    setPendingNewTopic(false);
-    setError("Impor dibatalkan karena sub-soal tidak disetujui.");
+    continueAfterWarnings(pkg, newTopic);
   }
 
   async function upload(event: React.FormEvent) {
     event.preventDefault();
     if (!file) {
-      setError(
+      showError(
         importMode === "word"
           ? "Silakan pilih atau tarik file Word (.docx) terlebih dahulu."
           : "Silakan pilih atau tarik file Excel terlebih dahulu.",
@@ -231,11 +244,11 @@ export default function QuestionBankImport({
       return;
     }
     if (importMode === "word" && !file.name.toLowerCase().endsWith(".docx")) {
-      setError("Mode Word hanya menerima file .docx.");
+      showError("Mode Word hanya menerima file .docx.");
       return;
     }
     setBusy(true);
-    setError("");
+    showError("");
 
     const body = new FormData();
     body.append("file", file);
@@ -255,7 +268,13 @@ export default function QuestionBankImport({
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.detail || "Terjadi error saat memproses file.");
+        const issues = Array.isArray(data.issues)
+          ? data.issues
+              .map((issue: { message?: string }) => issue?.message ?? "")
+              .filter(Boolean)
+          : [];
+        showError(data.detail || "Terjadi error saat memproses file.", issues);
+        return;
       }
 
       const pkg: PendingPackage | undefined = data.package;
@@ -263,24 +282,26 @@ export default function QuestionBankImport({
         throw new Error("Tidak ada soal yang dapat dibaca dari file ini.");
       }
 
+      const warnings = Array.isArray(data.warnings)
+        ? data.warnings
+            .map((warning: { message?: string }) => warning?.message ?? "")
+            .filter(Boolean)
+        : [];
+      setImportWarnings(warnings);
+
       const newTopic = Boolean(data.new_topic_detected);
       setDetectedTopicName(data.detected_topic_name ?? "");
       setPendingPackageData(pkg);
       setPendingNewTopic(newTopic);
 
-      // Sub-soal diperiksa lebih dulu, topik baru menyusul setelah disetujui.
-      if (data.sub_question_warning) {
-        setSubQuestionWarning(data.sub_question_warning);
-        return;
-      }
-
-      proceedWithPackage(pkg, newTopic);
+      // Satu dialog peringatan: sub-soal + semua peringatan impor.
+      proceedWithPackage(pkg, newTopic, warnings, data.sub_question_warning);
     } catch (caught) {
       const msg =
         caught instanceof Error
           ? caught.message
           : "Terjadi error saat memproses file.";
-      setError(msg.startsWith("Terjadi error") ? msg : `Terjadi error: ${msg}`);
+      showError(msg.startsWith("Terjadi error") ? msg : `Terjadi error: ${msg}`);
     } finally {
       setBusy(false);
     }
@@ -307,7 +328,7 @@ export default function QuestionBankImport({
               value={selectedSubjectId}
               onValueChange={(val) => {
                 setSelectedSubjectId(val);
-                setError("");
+                showError("");
               }}
               className="w-48 text-xs"
               ariaLabel="Pilih Mata Kuliah"
@@ -356,7 +377,7 @@ export default function QuestionBankImport({
             onClick={() => {
               setImportMode("standard");
               setFile(null);
-              setError("");
+              showError("");
             }}
             className={`import-mode-tab flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
               importMode === "standard"
@@ -373,7 +394,7 @@ export default function QuestionBankImport({
             onClick={() => {
               setImportMode("word");
               setFile(null);
-              setError("");
+              showError("");
             }}
             className={`import-mode-tab flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
               importMode === "word"
@@ -410,7 +431,7 @@ export default function QuestionBankImport({
             setIsDragging(false);
             if (e.dataTransfer.files?.[0]) {
               setFile(e.dataTransfer.files[0]);
-              setError("");
+              showError("");
             }
           }}
           className={`relative flex flex-col items-center justify-center min-h-[220px] w-full rounded-2xl border-2 border-dashed p-6 text-center cursor-pointer transition-colors ${
@@ -429,7 +450,7 @@ export default function QuestionBankImport({
             onChange={(e) => {
               if (e.target.files?.[0]) {
                 setFile(e.target.files[0]);
-                setError("");
+                showError("");
               }
             }}
             className="hidden"
@@ -475,14 +496,23 @@ export default function QuestionBankImport({
       </form>
 
       <ConfirmDialog
-        open={Boolean(subQuestionWarning)}
-        title="Peringatan: Sub-Soal Terdeteksi"
-        description={
-          subQuestionWarning ? subQuestionDescription(subQuestionWarning) : ""
-        }
+        open={warningOpen}
+        title="Peringatan: Periksa Sebelum Impor"
+        description={`File berhasil dibaca dengan ${warningDetails.length} peringatan. Periksa daftar berikut sebelum impor dilanjutkan.`}
+        details={warningDetails}
         confirmLabel="Ya, Lanjutkan Impor"
-        onCancel={handleCancelSubQuestions}
-        onConfirm={handleAcceptSubQuestions}
+        onCancel={() => {
+          setWarningOpen(false);
+          setPendingPackageData(null);
+          setPendingNewTopic(false);
+          showError("Impor dibatalkan.");
+        }}
+        onConfirm={() => {
+          setWarningOpen(false);
+          if (pendingPackageData) {
+            continueAfterWarnings(pendingPackageData, pendingNewTopic);
+          }
+        }}
       />
       <ConfirmDialog
         open={showNewTopicConfirm}
@@ -492,14 +522,15 @@ export default function QuestionBankImport({
         onCancel={() => {
           setShowNewTopicConfirm(false);
           setPendingPackageData(null);
-          setError("Impor dibatalkan karena topik baru tidak disetujui.");
+          showError("Impor dibatalkan karena topik baru tidak disetujui.");
         }}
         onConfirm={handleConfirmNewTopic}
       />
       <FeedbackModal
         open={Boolean(error)}
         message={error}
-        onClose={() => setError("")}
+        details={errorDetails}
+        onClose={() => showError("")}
       />
     </div>
   );

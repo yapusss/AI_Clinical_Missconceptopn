@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import os
 import re
 import tempfile
@@ -27,14 +28,17 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from .serializers import FourTierPackageSubmissionSerializer, TimedAutoSubmissionSerializer
 
+logger = logging.getLogger(__name__)
+
 from .authentication import TokenAuthentication
 from .reading_materials import enqueue_reading_material, lecturer_category
 from .docx_template import build_instrument_template
 from .question_bank import (
+    InstrumentParseError,
     cell_to_paragraphs,
     detect_sub_questions,
     needs_rich_html,
-    parse_instrument_docx,
+    parse_instrument,
 )
 from .models import (
     AuthToken,
@@ -1183,16 +1187,26 @@ def _resolve_import_subject(request):
     return Subject.objects.filter(id__in=user_subjects, is_active=True).first()
 
 
+def _format_mb(size):
+    value = f'{size / (1024 * 1024):.1f}'.rstrip('0').rstrip('.')
+    return f'{value} MB'.replace('.', ',')
+
+
 def _read_docx_instrument(upload):
-    """Parse a TOPIK .docx upload into `(declared_topic, rows)`.
+    """Parse a TOPIK .docx upload into an `InstrumentParse`.
 
     The parser needs a path (a .docx is a zip), so the upload is spooled to a
     temporary file. The docx limit is 25 MB because TOPIK 2 carries enough figures
-    to exceed the 10 MB Excel cap.
+    to exceed the 10 MB Excel cap. The temp path stays in the server log; the
+    lecturer only sees where inside the document the problem is.
     """
-    if getattr(upload, 'size', 0) > DOCX_IMPORT_MAX_BYTES:
-        raise ValueError('File Word maksimal 25 MB. Kompres gambar di dalam dokumen '
-                         'lalu coba lagi.')
+    size = getattr(upload, 'size', 0) or 0
+    if size > DOCX_IMPORT_MAX_BYTES:
+        raise InstrumentParseError(
+            'file_too_large',
+            f'File Word maksimal {_format_mb(DOCX_IMPORT_MAX_BYTES)} (file Anda '
+            f'{_format_mb(size)}). Kompres gambar di dalam dokumen lalu coba lagi.',
+        )
     if hasattr(upload, 'seek'):
         upload.seek(0)
     suffix = os.path.splitext(getattr(upload, 'name', '') or '')[1].lower() or '.docx'
@@ -1201,12 +1215,18 @@ def _read_docx_instrument(upload):
         with os.fdopen(handle, 'wb') as temp:
             for chunk in upload.chunks():
                 temp.write(chunk)
-        return parse_instrument_docx(path)
-    except ValueError as exc:
-        raise ValueError(f'File Word tidak dapat dibaca: {exc}') from exc
-    except Exception as exc:
-        raise ValueError('File Word tidak dapat dibaca. Pastikan file .docx valid '
-                         'dan memiliki tabel instrumen.') from exc
+        try:
+            return parse_instrument(path)
+        except InstrumentParseError:
+            raise
+        except Exception as exc:
+            logger.warning('docx import parse failed (%s): %s', path, exc,
+                           exc_info=True)
+            raise InstrumentParseError(
+                'unreadable',
+                'File Word tidak dapat dibaca. Pastikan file .docx valid dan '
+                'memiliki tabel instrumen.',
+            ) from exc
     finally:
         try:
             os.unlink(path)
@@ -1218,8 +1238,8 @@ def _docx_import_response(request, upload):
     """Preview a TOPIK .docx as the package shape `/questions/create` expects.
 
     The topic is always the one declared in the document (the lecturer's topic
-    selection is ignored for Word imports). A topic that does not exist yet is
-    reported so the UI can ask before creating it.
+    selection is ignored for Word imports). Every problem found while parsing is
+    reported with its table/row location so the lecturer can fix the file.
     """
     subject = _resolve_import_subject(request)
     if not subject:
@@ -1230,23 +1250,18 @@ def _docx_import_response(request, upload):
         )
 
     try:
-        declared_topic, rows = _read_docx_instrument(upload)
-    except ValueError as exc:
-        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        parsed = _read_docx_instrument(upload)
+    except InstrumentParseError as exc:
+        logger.warning('docx import rejected (%s): %s', exc.code, exc.detail)
+        return Response(exc.as_payload(), status=status.HTTP_400_BAD_REQUEST)
 
-    topic_name = (declared_topic or '').strip()
-    if not topic_name:
-        return Response(
-            {'detail': 'Topik tidak ditemukan di dalam file Word. Tambahkan baris '
-                       '"Topik: ..." di bagian atas dokumen.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    topic_name = (parsed.topic or '').strip()
 
     matched_topic = Topic.objects.filter(subject=subject, name__iexact=topic_name).first()
 
     questions, skipped = [], 0
     order_labels = []
-    for row in rows:
+    for row in parsed.rows:
         soal = (row.get('soal') or '').strip()
         if not soal:
             skipped += 1
@@ -1282,7 +1297,10 @@ def _docx_import_response(request, upload):
 
     if not questions:
         return Response(
-            {'detail': 'Tidak ada butir soal yang dapat dibaca dari file Word.'},
+            {
+                'detail': 'Tidak ada butir soal yang dapat dibaca dari file Word.',
+                'issues': parsed.warnings[:8],
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -1300,6 +1318,7 @@ def _docx_import_response(request, upload):
         'new_topic_detected': matched_topic is None,
         'detected_topic_name': topic_name,
         'skipped_rows': skipped,
+        'warnings': parsed.warnings,
         'sub_question_warning': detect_sub_questions(order_labels),
         'package': {
             'subject_id': str(subject.id),

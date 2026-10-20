@@ -7,6 +7,8 @@ import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 type Props = {
   open: boolean;
   message: string;
+  /** Optional located details, rendered as a list under the message. */
+  details?: string[];
   variant?: "error" | "warning" | "success";
   onClose: () => void;
 };
@@ -14,6 +16,7 @@ type Props = {
 export default function FeedbackModal({
   open,
   message,
+  details,
   variant = "error",
   onClose,
 }: Props) {
@@ -28,6 +31,18 @@ export default function FeedbackModal({
     : variant === "warning"
       ? "Peringatan"
       : "Terjadi kesalahan";
+
+  const iconClass = isSuccess
+    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+    : variant === "warning"
+      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+      : "bg-error-container text-error";
+
+  const borderClass = isSuccess
+    ? "border-emerald-500/30"
+    : variant === "warning"
+      ? "border-amber-500/30"
+      : "border-error/30";
 
   useEffect(() => setMounted(true), []);
 
@@ -69,13 +84,9 @@ export default function FeedbackModal({
         }
       }}
     >
-      <div className={`w-full max-w-md rounded-2xl border bg-surface-container-lowest p-6 shadow-2xl ${
-        isSuccess ? "border-emerald-500/30" : "border-error/30"
-      }`}>
+      <div className={`w-full max-w-lg rounded-2xl border bg-surface-container-lowest p-6 shadow-2xl ${borderClass}`}>
         <div className="flex items-start gap-3">
-          <span className={`rounded-full p-2 ${
-            isSuccess ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-error-container text-error"
-          }`}>
+          <span className={`rounded-full p-2 ${iconClass}`}>
             {isSuccess ? (
               <CheckCircle2 size={20} aria-hidden="true" />
             ) : (
@@ -95,6 +106,19 @@ export default function FeedbackModal({
             >
               {message}
             </p>
+            {details && details.length > 0 && (
+              <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1 text-left text-sm leading-6 text-on-surface-variant">
+                {details.map((detail, index) => (
+                  <li key={`${index}-${detail}`} className="flex gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="mt-2.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-60"
+                    />
+                    <span className="min-w-0">{detail}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <button
             ref={closeButtonRef}

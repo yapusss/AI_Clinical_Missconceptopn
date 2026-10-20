@@ -10,7 +10,19 @@ from pathlib import Path
 from django.test import SimpleTestCase
 
 from api.docx_template import build_instrument_template
+from api.docx_test_fixtures import (
+    INSTRUMENT_HEADER,
+    cell,
+    cell_with_table,
+    instrument_document,
+    instrument_row,
+    para,
+    review_table,
+    table,
+    write_docx,
+)
 from api.question_bank import (
+    InstrumentParseError,
     M,
     cell_to_html,
     cell_to_paragraphs,
@@ -18,6 +30,7 @@ from api.question_bank import (
     detect_sub_questions,
     has_math,
     needs_rich_html,
+    parse_instrument,
     parse_instrument_docx,
 )
 
@@ -168,3 +181,185 @@ class TemplateRoundTripTests(SimpleTestCase):
         self.assertIn(r'$v = \frac{s}{t}$', row['soal'])
         self.assertIn(r'$v = \frac{s}{t} = \frac{120}{15} = 8$ m/s', row['alasan'])
         path.unlink()
+
+
+class DocxDiagnosticsTests(SimpleTestCase):
+    """Every rejection and warning must say WHERE in the document it happened."""
+
+    def _parse(self, blocks):
+        path = write_docx(blocks)
+        try:
+            return parse_instrument(path)
+        finally:
+            path.unlink()
+
+    def _error(self, blocks):
+        with self.assertRaises(InstrumentParseError) as caught:
+            self._parse(blocks)
+        return caught.exception
+
+    def test_clean_document_has_no_warnings(self):
+        blocks = instrument_document([
+            instrument_row(no='1'),
+            instrument_row(no='2'),
+        ])
+        parsed = self._parse(blocks)
+        self.assertEqual(parsed.topic, 'Kalor dan Perpindahan Kalor')
+        self.assertEqual(parsed.topic_source, 'label')
+        self.assertEqual(len(parsed.rows), 2)
+        self.assertEqual(parsed.warnings, [])
+
+    def test_misspelled_header_names_the_column_and_the_cell(self):
+        header = [
+            cell('No'), cell('Tujuan Pembelajaran'), cell('No Soal'),
+            cell('Level Soal'), cell('Soal'), cell('Jawaban'), cell('Alasan Jawabn'),
+        ]
+        error = self._error([para('Topik: Kalor'), table([header])])
+        self.assertEqual(error.code, 'header_missing')
+        self.assertIn('Alasan jawaban', error.detail)
+        message = error.issues[0]['message']
+        self.assertIn('Tabel 1 baris 1', message)
+        self.assertIn('Alasan Jawabn', message)
+        self.assertEqual(error.issues[0]['location'], {'table': 1, 'row': 1})
+
+    def test_unknown_tables_are_listed_with_their_headers(self):
+        error = self._error([review_table(), review_table()])
+        self.assertEqual(error.code, 'no_instrument_table')
+        self.assertIn('Tabel 1', error.issues[0]['message'])
+        self.assertIn('Miskonsepsi', error.issues[0]['message'])
+        self.assertIn('Tabel 2', error.issues[1]['message'])
+
+    def test_second_instrument_is_rejected(self):
+        header = [[cell(name) for name in INSTRUMENT_HEADER]]
+        blocks = instrument_document(
+            [instrument_row()],
+            extra=[table(header + [instrument_row(no='1')])],
+        )
+        error = self._error(blocks)
+        self.assertEqual(error.code, 'second_instrument')
+        self.assertIn('satu topik', error.detail)
+        self.assertEqual(error.issues[0]['location']['table'], 2)
+
+    def test_section_after_instrument_is_reported_not_absorbed(self):
+        legacy = table([
+            [cell('2'), cell('Tujuan lama'), cell(''), cell(''), cell('Soal lama'),
+             cell(''), cell('')],
+            [cell(''), cell(''), cell(''), cell(''), cell('Soal lama 2'),
+             cell(''), cell('')],
+        ])
+        blocks = instrument_document(
+            [instrument_row(no='1')],
+            extra=[para('YANG LAMA'), legacy],
+        )
+        parsed = self._parse(blocks)
+        self.assertEqual(len(parsed.rows), 1)
+        section = [w for w in parsed.warnings if w['code'] == 'section_ignored']
+        self.assertEqual(len(section), 1)
+        self.assertIn('YANG LAMA', section[0]['message'])
+        self.assertIn('tabel 2', section[0]['message'])
+        self.assertEqual(section[0]['location']['table'], 2)
+
+    def test_merged_answer_cell_is_split_by_headings(self):
+        merged = cell('Soal panjang\nJawaban: J singkat\nAlasan: A panjang', span=3)
+        blocks = instrument_document([
+            [cell(''), cell('Tujuan'), cell('1'), cell('C4'), merged],
+        ])
+        parsed = self._parse(blocks)
+        row = parsed.rows[0]
+        self.assertEqual(row['soal'], 'Soal panjang')
+        self.assertEqual(row['jawaban'], 'J singkat')
+        self.assertEqual(row['alasan'], 'A panjang')
+        codes = [w['code'] for w in parsed.warnings]
+        self.assertNotIn('merged_cell_split', codes)
+
+    def test_swapped_number_and_level_are_corrected(self):
+        blocks = instrument_document([
+            instrument_row(no='1'),
+            instrument_row(no='C4\nC5', level='7'),
+        ])
+        parsed = self._parse(blocks)
+        self.assertEqual(parsed.rows[1]['no_soal'], '7')
+        self.assertEqual(parsed.rows[1]['level'], 'C4\nC5')
+        mismatch = [w for w in parsed.warnings if w['code'] == 'column_order_mismatch']
+        self.assertEqual(len(mismatch), 1)
+        self.assertIn('Tabel 1 baris 3', mismatch[0]['message'])
+
+    def test_placeholder_and_missing_answer_are_reported(self):
+        blocks = instrument_document([
+            instrument_row(no='1', soal='Soal lengkap'),
+            instrument_row(no='2', soal='Soal tanpa jawaban', jawaban='', alasan=''),
+            [cell(''), cell(''), cell('3'), cell(''), cell(''), cell(''), cell('')],
+        ])
+        parsed = self._parse(blocks)
+        self.assertEqual(len(parsed.rows), 3)
+        codes = [w['code'] for w in parsed.warnings]
+        self.assertIn('rows_incomplete', codes)
+        self.assertIn('placeholder_rows', codes)
+        placeholder = next(w for w in parsed.warnings
+                           if w['code'] == 'placeholder_rows')
+        self.assertIn('No 3', placeholder['message'])
+        incomplete = next(w for w in parsed.warnings
+                          if w['code'] == 'rows_incomplete')
+        self.assertIn('Tabel 1', incomplete['message'])
+        self.assertIn('No 2', incomplete['message'])
+        self.assertIn('jawaban dan alasan', incomplete['message'])
+
+    def test_nested_table_is_flattened_not_dropped(self):
+        blocks = instrument_document([[
+            cell(''), cell('Tujuan'), cell('1'), cell('C4'),
+            cell_with_table('Perhatikan data berikut:', [
+                ['Sampel', 'Massa (g)', 'Kalor (J)'],
+                ['A', '100', '900'],
+                ['B', '200', '1.800'],
+            ]),
+            cell('Jawaban'), cell('Alasan'),
+        ]])
+        parsed = self._parse(blocks)
+        row = parsed.rows[0]
+        self.assertIn('Perhatikan data berikut:', row['soal'])
+        self.assertIn('Sampel | Massa (g) | Kalor (J)', row['soal'])
+        self.assertIn('B | 200 | 1.800', row['soal'])
+        codes = [w['code'] for w in parsed.warnings]
+        self.assertNotIn('nested_table_flattened', codes)
+
+    def test_nested_table_in_answer_keeps_its_text(self):
+        blocks = instrument_document([[
+            cell(''), cell('Tujuan'), cell('1'), cell('C4'), cell('Soal'),
+            cell_with_table('Dengan data, diperoleh:', [
+                ['Sampel', 'Kapasitas'],
+                ['A', '90'],
+            ]),
+            cell('Alasan'),
+        ]])
+        parsed = self._parse(blocks)
+        self.assertIn('Dengan data, diperoleh:', parsed.rows[0]['jawaban'])
+        self.assertIn('A | 90', parsed.rows[0]['jawaban'])
+        codes = [w['code'] for w in parsed.warnings]
+        self.assertNotIn('nested_table_flattened', codes)
+
+    def test_bare_paragraph_topic_is_flagged(self):
+        blocks = [
+            para('Perubahan Wujud dan Kekekalan Massa'),
+            table([[cell(name) for name in INSTRUMENT_HEADER], instrument_row()]),
+        ]
+        parsed = self._parse(blocks)
+        self.assertEqual(parsed.topic_source, 'paragraph')
+        codes = [w['code'] for w in parsed.warnings]
+        self.assertIn('topic_guessed', codes)
+
+    def test_missing_topic_is_an_error(self):
+        error = self._error([
+            table([[cell(name) for name in INSTRUMENT_HEADER], instrument_row()]),
+        ])
+        self.assertEqual(error.code, 'no_topic')
+        self.assertIn('Topik:', error.detail)
+
+    def test_document_without_tables_is_an_error(self):
+        error = self._error([para('Topik: Kalor')])
+        self.assertEqual(error.code, 'no_tables')
+
+    def test_no_temp_path_leaks_into_messages(self):
+        error = self._error([review_table()])
+        payload = str(error.as_payload())
+        self.assertNotIn(tempfile.gettempdir(), payload)
+        self.assertNotIn('/tmp/', payload)
