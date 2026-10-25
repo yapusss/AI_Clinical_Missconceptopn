@@ -206,9 +206,9 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
               gap: "8px",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }} aria-label="Logo institusi">
-              <Image src={unsLogo} alt="Universitas Sebelas Maret" width={34} height={34} style={{ width: "34px", height: "34px", objectFit: "contain" }} />
-              <Image src={ubdLogo} alt="Universiti Brunei Darussalam" width={34} height={34} style={{ width: "34px", height: "34px", objectFit: "contain" }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }} aria-label="Logo institusi">
+              <Image src={unsLogo} alt="Universitas Sebelas Maret" width={96} height={48} style={{ width: "96px", height: "48px", objectFit: "contain" }} />
+              <Image src={ubdLogo} alt="Universiti Brunei Darussalam" width={72} height={48} style={{ width: "72px", height: "48px", objectFit: "contain" }} />
             </div>
             <div>
               <h2 style={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.4px", color: "var(--text-main)", margin: 0, lineHeight: 1.2 }}>
