@@ -25,7 +25,7 @@ import ThemeToggle from "./ThemeToggle";
 import Breadcrumb from "./Breadcrumb";
 import { hideMathKeyboard } from "./mathLiveLoader";
 import unsLogo from "../../assets/UNS-LOGO.png";
-import ubdLogo from "../../assets/Universiti_Brunei_Darussalam_logo.png";
+import ubdLogo from "../../assets/Universiti_Brunei_Darussalam_logo.jpeg";
 
 type AppRole = "ADMIN" | "LECTURER" | "STUDENT" | "GENERAL";
 

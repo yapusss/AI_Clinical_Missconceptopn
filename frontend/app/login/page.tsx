@@ -11,7 +11,7 @@ import {
   UserRound,
 } from "lucide-react";
 import unsLogo from "../../assets/UNS-LOGO.png";
-import ubdLogo from "../../assets/Universiti_Brunei_Darussalam_logo.png";
+import ubdLogo from "../../assets/Universiti_Brunei_Darussalam_logo.jpeg";
 
 import { useAuth } from "../components/AuthProvider";
 import ThemeToggle from "../components/ThemeToggle";
