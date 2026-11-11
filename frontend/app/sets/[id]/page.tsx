@@ -223,7 +223,7 @@ function AnswerSetContent() {
 
   // 1. Load Data Soal & Pulihkan Jawaban
   const load = useCallback(async () => {
-    if (!code) {
+    if (!code && !setId) {
       setFetching(false);
       setError("Kode soal tidak ditemukan pada tautan.");
       return;
@@ -277,8 +277,11 @@ function AnswerSetContent() {
       const password = passwordKey
         ? (sessionStorage.getItem(passwordKey) ?? "")
         : "";
+      const lookup = code
+        ? `code=${encodeURIComponent(code)}`
+        : `id=${encodeURIComponent(setId ?? "")}`;
       const res = await apiFetch<StudentSet>(
-        `/student/sets?code=${encodeURIComponent(code)}&password=${encodeURIComponent(password)}`,
+        `/student/sets?${lookup}&password=${encodeURIComponent(password)}`,
       );
       hydrate(res);
       if (payloadCacheKey) {
@@ -317,7 +320,7 @@ function AnswerSetContent() {
     } finally {
       setFetching(false);
     }
-  }, [code, storageKey, passwordKey, payloadCacheKey]);
+  }, [code, setId, storageKey, passwordKey, payloadCacheKey]);
 
   useEffect(() => {
     if (loading) return;
@@ -540,6 +543,15 @@ function AnswerSetContent() {
       return;
     }
     setStarted(true);
+  };
+
+  const handleResumeExam = async () => {
+    const resumed = await proctor.resume();
+    if (!resumed) {
+      setError(
+        "Layar penuh gagal diaktifkan. Klik halaman ujian sekali, lalu coba lagi. Jika tetap gagal, muat ulang halaman dan masuk kembali.",
+      );
+    }
   };
 
   const autoSubmit = useCallback(async () => {
@@ -1186,7 +1198,7 @@ function AnswerSetContent() {
         message={proctor.lockMessage}
         mobile={Boolean(proctor.environment?.mobile)}
         reducedAssurance={proctor.reducedAssurance}
-        onResume={proctor.resume}
+        onResume={handleResumeExam}
       />
     </>
   );

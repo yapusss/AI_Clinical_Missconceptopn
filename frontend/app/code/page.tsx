@@ -71,7 +71,12 @@ export default function SoalPage() {
       setShowModal(false);
       if (password)
         sessionStorage.setItem(`exam_package_password_${data.id}`, password);
-      router.push(`/sets/${data.id}?code=${encodeURIComponent(data.code)}`);
+      // Full document navigation, not a client-side route change: after a deploy
+      // the old tab can hold stale Next.js chunks, which is what produced the
+      // "This page couldn't load" screen when entering the exam.
+      window.location.assign(
+        `/sets/${data.id}?code=${encodeURIComponent(data.code)}`,
+      );
     } catch (err) {
       setError(errMsg(err));
     } finally {

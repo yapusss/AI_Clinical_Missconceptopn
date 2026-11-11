@@ -15,6 +15,7 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from datetime import timedelta
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.exceptions import ValidationError
 from django.utils.text import slugify
 from django.utils.html import strip_tags
 from django.db import connection, transaction
@@ -3588,17 +3589,21 @@ class StudentSetLookupView(APIView):
 
     def get(self, request):
         code = (request.query_params.get('code') or '').strip()
-        if not code:
+        package_id = (request.query_params.get('id') or '').strip()
+        if not code and not package_id:
             return Response(
-                {'detail': 'Parameter kode wajib diisi.'},
+                {'detail': 'Parameter kode atau id paket wajib diisi.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            package = ExamPackage.objects.select_related('subject', 'created_by').get(code__iexact=code)
-        except ExamPackage.DoesNotExist:
+            if code:
+                package = ExamPackage.objects.select_related('subject', 'created_by').get(code__iexact=code)
+            else:
+                package = ExamPackage.objects.select_related('subject', 'created_by').get(pk=package_id)
+        except (ExamPackage.DoesNotExist, ValidationError, ValueError):
             return Response(
-                {'detail': 'Kode paket ujian tidak ditemukan.'},
+                {'detail': 'Paket ujian tidak ditemukan.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 

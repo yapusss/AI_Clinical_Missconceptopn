@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -388,13 +387,17 @@ function SubmissionPackageDetailPageContent() {
                         evaluasi.
                       </p>
                     </div>
-                    <Link
-                      href={`/sets/${group.package_id}?code=${encodeURIComponent(group.code)}`}
+                    <a
+                      href={
+                        group.code
+                          ? `/sets/${group.package_id}?code=${encodeURIComponent(group.code)}`
+                          : `/sets/${group.package_id}`
+                      }
                       className="btn-primary shrink-0 no-underline"
                     >
                       <PenLine size={16} />
                       Kerjakan Sekarang
-                    </Link>
+                    </a>
                   </div>
                 ) : (
                   <article className="mt-3 rounded-xl border border-outline-variant/30 bg-surface-container-low p-4 sm:p-5 space-y-4">

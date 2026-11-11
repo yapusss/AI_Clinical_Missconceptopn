@@ -418,13 +418,17 @@ function ActiveExamBanner({ exam }: { exam: StudentActiveExam }) {
             </p>
           </div>
         </div>
-        <Link
-          href={`/sets/${exam.package_id}?code=${encodeURIComponent(exam.package_code)}`}
+        <a
+          href={
+            exam.package_code
+              ? `/sets/${exam.package_id}?code=${encodeURIComponent(exam.package_code)}`
+              : `/sets/${exam.package_id}`
+          }
           className="btn-primary inline-flex shrink-0 items-center gap-2"
         >
           <Play size={16} />
           Lanjutkan Ujian
-        </Link>
+        </a>
       </div>
     </section>
   );
