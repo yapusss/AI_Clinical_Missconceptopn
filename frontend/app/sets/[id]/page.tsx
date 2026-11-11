@@ -207,6 +207,9 @@ function AnswerSetContent() {
   const answersRef = useRef<Record<string, QuestionAnswer>>({});
   const draftDirtyRef = useRef<Set<string>>(new Set());
   const lastDraftSignatureRef = useRef<Record<string, string>>({});
+  const draftFlushingRef = useRef(false);
+  const draftFlushAgainRef = useRef(false);
+  const flushDraftRef = useRef<((keepalive?: boolean) => Promise<void>) | null>(null);
   const proctor = useExamProctoring(data?.attempt_id ?? null);
 
   // Kembali ke atas setiap kali nomor soal berubah (prev/next/pill/submit-advance)
@@ -346,6 +349,13 @@ function AnswerSetContent() {
     async (keepalive = false) => {
       const attemptId = data?.attempt_id;
       if (!attemptId || draftDirtyRef.current.size === 0) return;
+      if (draftFlushingRef.current) {
+        // Serialize writes: a navigation flush must not race an in-flight
+        // answer-change flush and overwrite newer answers with older ones.
+        draftFlushAgainRef.current = true;
+        return;
+      }
+      draftFlushingRef.current = true;
       const ids = Array.from(draftDirtyRef.current);
       const payload = ids.flatMap((questionId) => {
         const answer = answersRef.current[questionId];
@@ -362,6 +372,7 @@ function AnswerSetContent() {
       });
       if (payload.length === 0) {
         draftDirtyRef.current.clear();
+        draftFlushingRef.current = false;
         return;
       }
       try {
@@ -387,10 +398,20 @@ function AnswerSetContent() {
         ids.forEach((questionId) => draftDirtyRef.current.delete(questionId));
       } catch {
         // Keep the dirty set; the retry timer/online listener flushes again.
+      } finally {
+        draftFlushingRef.current = false;
+        if (draftFlushAgainRef.current) {
+          draftFlushAgainRef.current = false;
+          void flushDraftRef.current?.();
+        }
       }
     },
     [data?.attempt_id],
   );
+
+  useEffect(() => {
+    flushDraftRef.current = flushDraft;
+  }, [flushDraft]);
 
   useEffect(() => {
     if (!started || !data?.attempt_id) return;
@@ -619,6 +640,7 @@ function AnswerSetContent() {
 
   const handleNextOrFinish = () => {
     if (!data || !activeQuestion || !currentAnswer || expired) return;
+    void flushDraft();
 
     if (!hasAnswerText(currentAnswer.t1_answer)) {
       setError("Harap isi kesimpulan jawaban Anda terlebih dahulu.");
@@ -1026,6 +1048,7 @@ function AnswerSetContent() {
                     type="button"
                     disabled={activeIndex === 0}
                     onClick={() => {
+                      void flushDraft();
                       setError("");
                       setActiveIndex((idx) => Math.max(0, idx - 1));
                     }}
@@ -1080,6 +1103,7 @@ function AnswerSetContent() {
                         key={q.question_id}
                         type="button"
                         onClick={() => {
+                          void flushDraft();
                           setError("");
                           setActiveIndex(idx);
                         }}
