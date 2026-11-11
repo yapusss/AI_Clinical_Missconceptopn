@@ -58,6 +58,18 @@ type QuestionAnswer = {
   flagged?: boolean;
 };
 
+const normalizeAnswer = (
+  raw: Partial<QuestionAnswer> | null | undefined,
+): QuestionAnswer => ({
+  t1_answer: typeof raw?.t1_answer === "string" ? raw.t1_answer : "",
+  t2_confidence:
+    typeof raw?.t2_confidence === "number" ? raw.t2_confidence : null,
+  t3_reason: typeof raw?.t3_reason === "string" ? raw.t3_reason : "",
+  t4_confidence:
+    typeof raw?.t4_confidence === "number" ? raw.t4_confidence : null,
+  flagged: Boolean(raw?.flagged),
+});
+
 const CONFIDENCE_LEVELS = [
   { val: 1, label: "1", desc: "Sangat Ragu", type: "TY" },
   { val: 2, label: "2", desc: "Tidak Yakin", type: "TY" },
@@ -229,6 +241,9 @@ function AnswerSetContent() {
       return;
     }
     const hydrate = (res: StudentSet) => {
+      if (!Array.isArray(res.questions)) {
+        throw new Error("Respons soal tidak valid. Muat ulang halaman.");
+      }
       setData(res);
       autoSubmissionStarted.current = false;
       draftDirtyRef.current.clear();
@@ -237,12 +252,7 @@ function AnswerSetContent() {
 
       const initial: Record<string, QuestionAnswer> = {};
       res.questions.forEach((q) => {
-        initial[q.question_id] = {
-          t1_answer: "",
-          t2_confidence: null,
-          t3_reason: "",
-          t4_confidence: null,
-        };
+        initial[q.question_id] = normalizeAnswer(null);
       });
 
       if (storageKey) {
@@ -254,7 +264,10 @@ function AnswerSetContent() {
         }
         if (saved) {
           try {
-            const parsed = JSON.parse(saved);
+            const parsed = JSON.parse(saved) as Record<
+              string,
+              Partial<QuestionAnswer>
+            >;
             Object.assign(initial, parsed);
             setResumeAvailable(true);
           } catch {}
@@ -266,6 +279,14 @@ function AnswerSetContent() {
       if (res.draft_answers && Object.keys(res.draft_answers).length > 0) {
         Object.assign(initial, res.draft_answers);
         setResumeAvailable(true);
+      }
+
+      // Normalize old/partial localStorage or server drafts: a missing
+      // t1_answer used to crash the first render at t1_answer.length.
+      for (const question of res.questions) {
+        initial[question.question_id] = normalizeAnswer(
+          initial[question.question_id],
+        );
       }
 
       setAnswers(initial);
@@ -487,29 +508,19 @@ function AnswerSetContent() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [started, submitting]);
 
-  const activeQuestion = data?.questions[activeIndex];
+  const activeQuestion = data?.questions?.[activeIndex];
   const currentAnswer = activeQuestion
-    ? answers[activeQuestion.question_id] || {
-        t1_answer: "",
-        t2_confidence: null,
-        t3_reason: "",
-        t4_confidence: null,
-      }
+    ? normalizeAnswer(answers[activeQuestion.question_id])
     : null;
 
   const updateCurrent = (patch: Partial<QuestionAnswer>) => {
     if (!activeQuestion || expired) return;
     setAnswers((prev) => ({
       ...prev,
-      [activeQuestion.question_id]: {
-        ...(prev[activeQuestion.question_id] || {
-          t1_answer: "",
-          t2_confidence: null,
-          t3_reason: "",
-          t4_confidence: null,
-        }),
+      [activeQuestion.question_id]: normalizeAnswer({
+        ...normalizeAnswer(prev[activeQuestion.question_id]),
         ...patch,
-      },
+      }),
     }));
   };
 
@@ -521,13 +532,12 @@ function AnswerSetContent() {
   );
 
   const isQuestionComplete = (qId: string) => {
-    const a = answers[qId];
-    if (!a) return false;
+    const a = normalizeAnswer(answers[qId]);
     return (
       hasAnswerText(a.t1_answer) &&
-      a.t2_confidence !== null &&
+      typeof a.t2_confidence === "number" &&
       hasAnswerText(a.t3_reason) &&
-      a.t4_confidence !== null
+      typeof a.t4_confidence === "number"
     );
   };
 
@@ -573,9 +583,9 @@ function AnswerSetContent() {
         return [
           {
             question_id: question.question_id,
-            tier1_answer: answer.t1_answer.trim(),
+            tier1_answer: (answer.t1_answer ?? "").trim(),
             tier2_confidence: answer.t2_confidence,
-            tier3_reason: answer.t3_reason.trim(),
+            tier3_reason: (answer.t3_reason ?? "").trim(),
             tier4_confidence: answer.t4_confidence,
           },
         ];
@@ -697,7 +707,7 @@ function AnswerSetContent() {
 
     try {
       const payloadAnswers = data.questions.map((q) => {
-        const a = answers[q.question_id];
+        const a = normalizeAnswer(answers[q.question_id]);
         return {
           question_id: q.question_id,
           tier1_answer: a.t1_answer.trim(),
