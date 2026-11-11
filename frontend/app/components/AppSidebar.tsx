@@ -228,7 +228,17 @@ export default function AppSidebar({ children }: { children: React.ReactNode }) 
                 <Link
                   key={item.path}
                   href={item.path}
-                  onClick={() => setMobileNavOpen(false)}
+                  prefetch={false}
+                  onClick={(event) => {
+                    setMobileNavOpen(false);
+                    // Leaving an active exam is exactly when a stale client
+                    // bundle causes "This page couldn't load". Force a full
+                    // document load so the dashboard uses the current build.
+                    if (pathname.startsWith("/sets/") && item.path !== pathname) {
+                      event.preventDefault();
+                      window.location.assign(item.path);
+                    }
+                  }}
                   style={{
                     padding: "8px 12px",
                     borderRadius: "var(--radius-sm)",
