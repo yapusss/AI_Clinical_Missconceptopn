@@ -219,6 +219,9 @@ class FourTierSubmissionItemSerializer(serializers.Serializer):
 
 class FourTierPackageSubmissionSerializer(serializers.Serializer):
     answers = FourTierSubmissionItemSerializer(many=True, allow_empty=False)
+    # Client-generated idempotency key: a lost response must not create a second
+    # attempt when the student retries.
+    client_submission_id = serializers.UUIDField(required=False, allow_null=True)
 
     def validate_answers(self, answers):
         q_ids = [a['question_id'] for a in answers]
@@ -229,12 +232,75 @@ class FourTierPackageSubmissionSerializer(serializers.Serializer):
 
 class TimedAutoSubmissionSerializer(serializers.Serializer):
     answers = FourTierSubmissionItemSerializer(many=True, allow_empty=True)
+    client_submission_id = serializers.UUIDField(required=False, allow_null=True)
 
     def validate_answers(self, answers):
         q_ids = [answer['question_id'] for answer in answers]
         if len(q_ids) != len(set(q_ids)):
             raise serializers.ValidationError("Setiap pertanyaan hanya boleh dijawab satu kali.")
         return answers
+
+
+class DraftAnswerItemSerializer(serializers.Serializer):
+    """One partially filled answer.  Unlike the submit serializer, blanks are valid."""
+
+    question_id = serializers.UUIDField()
+    tier1_answer = serializers.CharField(max_length=1000, allow_blank=True, required=False, default='')
+    tier2_confidence = serializers.IntegerField(min_value=1, max_value=6, allow_null=True, required=False)
+    tier3_reason = serializers.CharField(max_length=10000, allow_blank=True, required=False, default='')
+    tier4_confidence = serializers.IntegerField(min_value=1, max_value=6, allow_null=True, required=False)
+
+
+class DraftSyncSerializer(serializers.Serializer):
+    answers = DraftAnswerItemSerializer(many=True, allow_empty=True)
+
+    def validate_answers(self, answers):
+        q_ids = [answer['question_id'] for answer in answers]
+        if len(q_ids) != len(set(q_ids)):
+            raise serializers.ValidationError('Setiap pertanyaan hanya boleh muncul satu kali.')
+        return answers
+
+
+PROCTOR_EVENT_TYPES = (
+    'EXAM_STARTED',
+    'HEARTBEAT',
+    'TAB_HIDDEN',
+    'TAB_VISIBLE',
+    'WINDOW_BLUR',
+    'WINDOW_FOCUS',
+    'FULLSCREEN_ENTER',
+    'FULLSCREEN_EXIT',
+    'PAGE_HIDE',
+    'COPY_ATTEMPT',
+    'PASTE_ATTEMPT',
+    'CONTEXT_MENU',
+    'DEVTOOLS_SHORTCUT',
+    'MULTI_MONITOR',
+    'AUTOMATION_SIGNAL',
+    'VM_SIGNAL',
+    'SECOND_SESSION',
+    'SESSION_CHANGED',
+    'MOBILE_DEVICE',
+    'REDUCED_ASSURANCE',
+    'NETWORK_OFFLINE',
+    'NETWORK_ONLINE',
+    'SUBMIT',
+    'AUTO_SUBMITTED_SERVER',
+    'NO_DRAFT_AT_EXPIRY',
+)
+
+
+class ProctorEventItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=PROCTOR_EVENT_TYPES)
+    at = serializers.DateTimeField(required=False, allow_null=True)
+    meta = serializers.JSONField(required=False, default=dict)
+
+
+class ProctorEventBatchSerializer(serializers.Serializer):
+    session_id = serializers.UUIDField()
+    events = ProctorEventItemSerializer(many=True, allow_empty=True)
+
 
 # ============================================================================
 # SPRINT 3: STUDENT SUBMISSION SERIALIZERS (UC-01 / P3)

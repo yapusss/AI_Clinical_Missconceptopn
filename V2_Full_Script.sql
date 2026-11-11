@@ -180,10 +180,41 @@ CREATE TABLE exam_package_attempts (
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     submitted_at TIMESTAMPTZ,
+    submission_request_id UUID,
+    submitted_via VARCHAR(20),
+    last_seen_at TIMESTAMPTZ,
     CONSTRAINT uq_exam_package_attempt_number UNIQUE (exam_package_id, student_id, attempt_number)
 );
 
 CREATE INDEX idx_exam_package_attempts_student_package ON exam_package_attempts (student_id, exam_package_id, attempt_number DESC);
+
+-- Latest server-visible answer draft.  The browser still autosaves locally, but
+-- this copy lets the server finalize an AUTO_SUBMIT attempt after the deadline
+-- even when the student is offline.
+CREATE TABLE exam_attempt_drafts (
+    attempt_id UUID PRIMARY KEY REFERENCES exam_package_attempts(id) ON DELETE CASCADE,
+    answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Browser integrity telemetry.  `client_event_id` makes retries idempotent;
+-- `recorded_at` is the server clock and is the audit source of truth.
+CREATE TABLE exam_attempt_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    attempt_id UUID NOT NULL REFERENCES exam_package_attempts(id) ON DELETE CASCADE,
+    client_event_id UUID NOT NULL,
+    session_id UUID,
+    event_type VARCHAR(40) NOT NULL,
+    severity SMALLINT NOT NULL DEFAULT 1,
+    occurred_at TIMESTAMPTZ,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT uq_exam_attempt_event UNIQUE (attempt_id, client_event_id)
+);
+
+CREATE INDEX idx_exam_attempt_events_attempt ON exam_attempt_events (attempt_id, recorded_at);
+CREATE INDEX idx_exam_attempt_events_type ON exam_attempt_events (attempt_id, event_type);
+CREATE INDEX idx_exam_attempt_events_recorded ON exam_attempt_events (recorded_at DESC);
 
 CREATE TABLE questions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

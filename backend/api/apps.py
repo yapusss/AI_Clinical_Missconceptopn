@@ -14,3 +14,9 @@ class ApiConfig(AppConfig):
         from api.worker_supervisor import start_supervisor
 
         start_supervisor()
+
+        # AUTO_SUBMIT must not depend on the student being online at the deadline.
+        # This worker finalizes from the server-side draft and only needs Postgres.
+        from api.exam_finalizer import start_finalizer
+
+        start_finalizer()

@@ -254,10 +254,61 @@ class ExamPackageAttempt(models.Model):
     attempt_number = models.PositiveIntegerField()
     started_at = models.DateTimeField(auto_now_add=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
+    # Migration 0036: idempotency key for a lost submit response, the audit marker
+    # for who closed the attempt, and the last proctoring heartbeat.
+    submission_request_id = models.UUIDField(null=True, blank=True)
+    submitted_via = models.CharField(max_length=20, null=True, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'exam_package_attempts'
         managed = False
+
+
+class ExamAttemptDraft(models.Model):
+    """Latest server-visible draft for an attempt (migration 0036).
+
+    The browser still owns the fast local copy; this row is what lets the server
+    finalize an AUTO_SUBMIT attempt even when the student is offline at the deadline.
+    """
+
+    attempt = models.OneToOneField(
+        ExamPackageAttempt,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        db_column='attempt_id',
+        related_name='draft',
+    )
+    answers = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'exam_attempt_drafts'
+        managed = False
+
+
+class ExamAttemptEvent(models.Model):
+    """Immutable browser proctoring signal (migration 0036)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    attempt = models.ForeignKey(
+        ExamPackageAttempt,
+        on_delete=models.CASCADE,
+        db_column='attempt_id',
+        related_name='proctor_events',
+    )
+    client_event_id = models.UUIDField()
+    session_id = models.UUIDField(null=True, blank=True)
+    event_type = models.CharField(max_length=40)
+    severity = models.SmallIntegerField(default=1)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = 'exam_attempt_events'
+        managed = False
+        unique_together = (('attempt', 'client_event_id'),)
 
 
 class Question(models.Model):

@@ -9,16 +9,19 @@ import {
   HelpCircle,
   Send,
   Timer,
+  WifiOff,
   X,
 } from "lucide-react";
 
 import { useAuth } from "../../components/AuthProvider";
-import { apiFetch } from "../../lib/api";
+import { apiFetch, getAuthToken } from "../../lib/api";
 import PageContainer from "../../components/PageContainer";
 import PageHeader from "../../components/PageHeader";
 import RichTextContent from "../../components/RichTextContent";
 import FeedbackModal from "../../components/FeedbackModal";
 import RichTextEditor from "../../components/RichTextEditor";
+import ExamProctorOverlay from "../../components/ExamProctorOverlay";
+import { useExamProctoring } from "../../lib/useExamProctoring";
 
 /** Max characters accepted by the backend for the Tier 1 conclusion. */
 const TIER1_MAX_LENGTH = 1000;
@@ -39,9 +42,11 @@ type StudentSet = {
   subject_id: string;
   subject_name: string;
   is_active: boolean;
+  attempt_id: string;
   attempt_deadline: string | null;
   server_time: string;
   expiry_behavior: "REJECT" | "AUTO_SUBMIT";
+  draft_answers?: Record<string, QuestionAnswer>;
   questions: StudentQuestion[];
 };
 
@@ -155,6 +160,29 @@ const htmlToPlain = (value: string) =>
 const hasAnswerText = (value: string | undefined) =>
   htmlToPlain(value ?? "").length > 0;
 
+const draftSignature = (answer: QuestionAnswer) =>
+  JSON.stringify([
+    answer.t1_answer,
+    answer.t2_confidence ?? null,
+    answer.t3_reason,
+    answer.t4_confidence ?? null,
+  ]);
+
+function submissionRequestIdFor(setId: string, userId: string): string {
+  const key = `exam_submit_request_${setId}_${userId}`;
+  try {
+    let requestId = sessionStorage.getItem(key);
+    if (!requestId) {
+      requestId = crypto.randomUUID();
+      sessionStorage.setItem(key, requestId);
+    }
+    return requestId;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+
 function AnswerSetContent() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -171,9 +199,15 @@ function AnswerSetContent() {
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [started, setStarted] = useState(false);
+  const [resumeAvailable, setResumeAvailable] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const autoSubmissionStarted = useRef(false);
+  const autoSubmitRef = useRef<(() => Promise<void>) | null>(null);
+  const answersRef = useRef<Record<string, QuestionAnswer>>({});
+  const draftDirtyRef = useRef<Set<string>>(new Set());
+  const lastDraftSignatureRef = useRef<Record<string, string>>({});
+  const proctor = useExamProctoring(data?.attempt_id ?? null);
 
   // Kembali ke atas setiap kali nomor soal berubah (prev/next/pill/submit-advance)
   useEffect(() => {
@@ -182,6 +216,7 @@ function AnswerSetContent() {
 
   const storageKey = setId && user ? `exam_response_${setId}_${user.id}` : null;
   const passwordKey = setId ? `exam_package_password_${setId}` : null;
+  const payloadCacheKey = setId ? `exam_payload_${setId}` : null;
 
   // 1. Load Data Soal & Pulihkan Jawaban
   const load = useCallback(async () => {
@@ -190,17 +225,12 @@ function AnswerSetContent() {
       setError("Kode soal tidak ditemukan pada tautan.");
       return;
     }
-    setFetching(true);
-    setError("");
-    try {
-      const password = passwordKey
-        ? (sessionStorage.getItem(passwordKey) ?? "")
-        : "";
-      const res = await apiFetch<StudentSet>(
-        `/student/sets?code=${encodeURIComponent(code)}&password=${encodeURIComponent(password)}`,
-      );
+    const hydrate = (res: StudentSet) => {
       setData(res);
       autoSubmissionStarted.current = false;
+      draftDirtyRef.current.clear();
+      lastDraftSignatureRef.current = {};
+      setResumeAvailable(false);
 
       const initial: Record<string, QuestionAnswer> = {};
       res.questions.forEach((q) => {
@@ -213,23 +243,78 @@ function AnswerSetContent() {
       });
 
       if (storageKey) {
-        const saved = localStorage.getItem(storageKey);
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem(storageKey);
+        } catch {
+          // Storage unavailable; fall back to the server draft below.
+        }
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
             Object.assign(initial, parsed);
-            setStarted(true);
+            setResumeAvailable(true);
           } catch {}
         }
       }
 
+      // Server-side draft is the fallback when localStorage was cleared or the
+      // student switched devices.  It is also what the offline finalizer uses.
+      if (res.draft_answers && Object.keys(res.draft_answers).length > 0) {
+        Object.assign(initial, res.draft_answers);
+        setResumeAvailable(true);
+      }
+
       setAnswers(initial);
+    };
+
+    setFetching(true);
+    setError("");
+    try {
+      const password = passwordKey
+        ? (sessionStorage.getItem(passwordKey) ?? "")
+        : "";
+      const res = await apiFetch<StudentSet>(
+        `/student/sets?code=${encodeURIComponent(code)}&password=${encodeURIComponent(password)}`,
+      );
+      hydrate(res);
+      if (payloadCacheKey) {
+        try {
+          localStorage.setItem(
+            payloadCacheKey,
+            JSON.stringify({ cached_at: Date.now(), data: res }),
+          );
+        } catch {
+          // Private mode/quota: continue without the offline payload cache.
+        }
+      }
     } catch (err) {
+      // A refresh while offline can still resume from the last payload; adjust its
+      // server timestamp by the time elapsed since the cache was written.
+      if (payloadCacheKey) {
+        try {
+          const cached = JSON.parse(
+            localStorage.getItem(payloadCacheKey) ?? "",
+          ) as { cached_at: number; data: StudentSet };
+          if (cached?.data?.questions) {
+            const elapsed = Date.now() - cached.cached_at;
+            hydrate({
+              ...cached.data,
+              server_time: new Date(
+                Date.parse(cached.data.server_time) + elapsed,
+              ).toISOString(),
+            });
+            return;
+          }
+        } catch {
+          // Fall through to the normal error.
+        }
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setFetching(false);
     }
-  }, [code, storageKey, passwordKey]);
+  }, [code, storageKey, passwordKey, payloadCacheKey]);
 
   useEffect(() => {
     if (loading) return;
@@ -240,11 +325,113 @@ function AnswerSetContent() {
     void load();
   }, [user, loading, router, load]);
 
+  // Keep a synchronous view of answers for pagehide/visibility flushes.
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
   // 2. Simpan Progres Otomatis
   useEffect(() => {
     if (!storageKey || Object.keys(answers).length === 0) return;
-    localStorage.setItem(storageKey, JSON.stringify(answers));
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(answers));
+    } catch {
+      // Private mode/quota: the server draft is still the fallback.
+    }
   }, [answers, storageKey]);
+
+  // 2b. Server-side draft sync. This is what makes AUTO_SUBMIT work when the
+  // student is offline at the deadline.
+  const flushDraft = useCallback(
+    async (keepalive = false) => {
+      const attemptId = data?.attempt_id;
+      if (!attemptId || draftDirtyRef.current.size === 0) return;
+      const ids = Array.from(draftDirtyRef.current);
+      const payload = ids.flatMap((questionId) => {
+        const answer = answersRef.current[questionId];
+        if (!answer) return [];
+        return [
+          {
+            question_id: questionId,
+            tier1_answer: answer.t1_answer || "",
+            tier2_confidence: answer.t2_confidence,
+            tier3_reason: answer.t3_reason || "",
+            tier4_confidence: answer.t4_confidence,
+          },
+        ];
+      });
+      if (payload.length === 0) {
+        draftDirtyRef.current.clear();
+        return;
+      }
+      try {
+        const token = getAuthToken();
+        const response = await fetch(
+          `/api/student/attempts/${attemptId}/draft`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ answers: payload }),
+            keepalive,
+          },
+        );
+        if (response.status === 409) {
+          // Deadline passed or attempt already submitted: stop retrying drafts.
+          ids.forEach((questionId) => draftDirtyRef.current.delete(questionId));
+          return;
+        }
+        if (!response.ok) throw new Error(`draft ${response.status}`);
+        ids.forEach((questionId) => draftDirtyRef.current.delete(questionId));
+      } catch {
+        // Keep the dirty set; the retry timer/online listener flushes again.
+      }
+    },
+    [data?.attempt_id],
+  );
+
+  useEffect(() => {
+    if (!started || !data?.attempt_id) return;
+    for (const [questionId, answer] of Object.entries(answers)) {
+      const signature = draftSignature(answer);
+      if (lastDraftSignatureRef.current[questionId] !== signature) {
+        lastDraftSignatureRef.current[questionId] = signature;
+        draftDirtyRef.current.add(questionId);
+      }
+    }
+    if (draftDirtyRef.current.size === 0) return;
+    const timer = window.setTimeout(() => void flushDraft(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [answers, data?.attempt_id, flushDraft, started]);
+
+  useEffect(() => {
+    if (!started) return;
+    const retry = () => {
+      if (draftDirtyRef.current.size > 0) void flushDraft();
+    };
+    const timer = window.setInterval(retry, 15000);
+    window.addEventListener("online", retry);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+    };
+  }, [flushDraft, started]);
+
+  useEffect(() => {
+    if (!started) return;
+    const handleHide = () => void flushDraft(true);
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") handleHide();
+    };
+    window.addEventListener("pagehide", handleHide);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("pagehide", handleHide);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [flushDraft, started]);
 
   useEffect(() => {
     if (!data?.attempt_deadline || !data.server_time) {
@@ -269,6 +456,7 @@ function AnswerSetContent() {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (started && !submitting) {
         e.preventDefault();
+        e.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -321,8 +509,20 @@ function AnswerSetContent() {
 
   const expired = remainingSeconds === 0 && Boolean(data?.attempt_deadline);
 
+  const handleStartExam = async () => {
+    if (expired) return;
+    const startedOk = await proctor.start();
+    if (!startedOk) {
+      setError(
+        "Mode layar penuh diperlukan untuk memulai ujian. Gunakan Chrome/Edge di laptop atau desktop, lalu izinkan layar penuh.",
+      );
+      return;
+    }
+    setStarted(true);
+  };
+
   const autoSubmit = useCallback(async () => {
-    if (!data || !setId) return;
+    if (!data || !setId || !user) return;
     setSubmitting(true);
     setShowConfirmModal(false);
     try {
@@ -347,20 +547,38 @@ function AnswerSetContent() {
           },
         ];
       });
-      await apiFetch(`/student/sets/${setId}/auto-submit`, {
-        method: "POST",
-        body: JSON.stringify({ answers: completedAnswers }),
-      });
+      const requestId = submissionRequestIdFor(setId, user.id);
+      const result = await apiFetch<{ already_submitted?: boolean }>(
+        `/student/sets/${setId}/auto-submit`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            answers: completedAnswers,
+            client_submission_id: requestId,
+          }),
+        },
+      );
+      if (!result?.already_submitted) {
+        sessionStorage.removeItem(`exam_submit_request_${setId}_${user.id}`);
+      }
       if (storageKey) localStorage.removeItem(storageKey);
+      if (payloadCacheKey) localStorage.removeItem(payloadCacheKey);
+      proctor.stop();
       router.replace("/code#pengumpulan");
     } catch (err) {
+      // Allow the online listener/timer to retry after a network failure.
+      autoSubmissionStarted.current = false;
       setError(
         `Waktu habis. Pengumpulan otomatis gagal: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
       setSubmitting(false);
     }
-  }, [answers, data, router, setId, storageKey]);
+  }, [answers, data, payloadCacheKey, proctor, router, setId, storageKey, user]);
+
+  useEffect(() => {
+    autoSubmitRef.current = autoSubmit;
+  }, [autoSubmit]);
 
   useEffect(() => {
     if (
@@ -371,8 +589,27 @@ function AnswerSetContent() {
       return;
     }
     autoSubmissionStarted.current = true;
-    void autoSubmit();
-  }, [autoSubmit, data?.expiry_behavior, expired]);
+    void autoSubmitRef.current?.();
+  }, [data?.expiry_behavior, expired]);
+
+  // If the auto-submit failed because the connection dropped, retry when the
+  // network returns and periodically while the page is still alive.  The server
+  // finalizer is the backstop; this is the fast path.
+  useEffect(() => {
+    if (!expired || data?.expiry_behavior !== "AUTO_SUBMIT") return;
+    const retry = () => {
+      if (!autoSubmissionStarted.current) {
+        autoSubmissionStarted.current = true;
+        void autoSubmitRef.current?.();
+      }
+    };
+    window.addEventListener("online", retry);
+    const timer = window.setInterval(retry, 30000);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.clearInterval(timer);
+    };
+  }, [data?.expiry_behavior, expired]);
 
   useEffect(() => {
     if (!expired || data?.expiry_behavior !== "REJECT") return;
@@ -419,7 +656,7 @@ function AnswerSetContent() {
   };
 
   const executeSubmit = async () => {
-    if (!data || !setId) return;
+    if (!data || !setId || !user) return;
     setShowConfirmModal(false);
     setError("");
     setSubmitting(true);
@@ -436,6 +673,7 @@ function AnswerSetContent() {
         };
       });
 
+      proctor.log("SUBMIT", {});
       await apiFetch(`/student/sets/${setId}/submissions`, {
         method: "POST",
         body: JSON.stringify({
@@ -443,12 +681,16 @@ function AnswerSetContent() {
           password: passwordKey
             ? (sessionStorage.getItem(passwordKey) ?? "")
             : "",
+          client_submission_id: submissionRequestIdFor(setId, user.id),
         }),
       });
 
       if (storageKey) {
         localStorage.removeItem(storageKey);
       }
+      if (payloadCacheKey) localStorage.removeItem(payloadCacheKey);
+      sessionStorage.removeItem(`exam_submit_request_${setId}_${user.id}`);
+      proctor.stop();
 
       router.replace("/code#pengumpulan");
     } catch (err) {
@@ -484,6 +726,16 @@ function AnswerSetContent() {
                 : `Sisa waktu: ${formatRemainingTime(remainingSeconds ?? 0)}`}
             </div>
           )}
+          {proctor.offline && (
+            <div
+              role="status"
+              className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-700 dark:text-amber-300"
+            >
+              <WifiOff size={17} />
+              Koneksi terputus. Anda masih dapat melanjutkan dari data yang
+              tersimpan; jawaban akan disinkronkan saat koneksi kembali.
+            </div>
+          )}
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 text-sm text-on-surface space-y-3">
             <h3 className="font-bold text-primary flex items-center gap-2">
               <ClipboardList size={18} /> Petunjuk Pengisian Soal:
@@ -516,13 +768,45 @@ function AnswerSetContent() {
             </ul>
           </div>
 
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-on-surface space-y-3">
+            <h3 className="font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2">
+              <AlertTriangle size={18} /> Ketentuan Selama Ujian:
+            </h3>
+            <ul className="list-disc pl-5 space-y-2 text-xs text-on-surface-variant leading-relaxed">
+              <li>
+                Ujian berjalan dalam <strong>mode layar penuh</strong>. Jika Anda
+                keluar dari layar penuh, berpindah tab, atau berpindah aplikasi,
+                tampilan soal akan dikunci dan kejadian tersebut dicatat.
+              </li>
+              <li>
+                Menyalin soal dan menempelkan jawaban dari luar tidak diizinkan.
+              </li>
+              <li>
+                Waktu tetap berjalan saat ujian dijeda. Kembali ke layar penuh
+                untuk melanjutkan.
+              </li>
+              <li>
+                Gunakan laptop/desktop dengan Chrome atau Edge. Ponsel dapat
+                digunakan, tetapi pemeriksaan layar penuh lebih terbatas.
+              </li>
+            </ul>
+          </div>
+
+          {resumeAvailable && (
+            <p className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-xs font-semibold text-primary">
+              Jawaban sebelumnya ditemukan. Tekan tombol di bawah untuk
+              melanjutkan; waktu tetap mengikuti server.
+            </p>
+          )}
+
           <button
             type="button"
-            onClick={() => setStarted(true)}
+            onClick={() => void handleStartExam()}
             disabled={expired}
             className="btn-primary mt-4 cursor-pointer"
           >
-            Mulai Pengerjaan <Send size={16} />
+            {resumeAvailable ? "Lanjutkan Pengerjaan" : "Mulai Pengerjaan"}{" "}
+            <Send size={16} />
           </button>
         </section>
       </PageContainer>
@@ -534,7 +818,22 @@ function AnswerSetContent() {
     : 0;
 
   return (
-    <PageContainer>
+    <>
+      <PageContainer>
+        {proctor.offline && (
+          <div
+            role="status"
+            className="mb-4 flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-700 dark:text-amber-300"
+          >
+            <WifiOff size={17} />
+            Koneksi terputus. Jawaban tersimpan di perangkat ini dan ujian tetap
+            berjalan. Pengumpulan otomatis akan dicoba lagi saat koneksi kembali.
+          </div>
+        )}
+        <div
+          inert={proctor.locked || undefined}
+          className={proctor.locked ? "pointer-events-none select-none blur-sm transition" : undefined}
+        >
       <div className="mb-5 flex flex-wrap items-center gap-3 max-[900px]:sticky max-[900px]:top-[72px] max-[900px]:z-30 max-[900px]:-mx-4 max-[900px]:border-b max-[900px]:border-outline-variant/30 max-[900px]:bg-[var(--bg-main)] max-[900px]:px-4 max-[900px]:py-2 max-[900px]:backdrop-blur lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
         <div className="flex min-w-0 flex-1 flex-row items-center gap-3 sm:justify-end">
           {activeQuestion && (
@@ -581,7 +880,10 @@ function AnswerSetContent() {
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_13rem] lg:items-start">
             <div className="min-w-0 flex-1 space-y-5">
               {/* Teks Pertanyaan Konseptual */}
-              <section className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6">
+              <section
+                data-exam-protected="true"
+                className="rounded-xl border border-primary/30 border-l-4 border-l-primary bg-primary-fixed p-5 shadow-sm sm:p-6"
+              >
                 <div className="flex items-start gap-3">
                   <RichTextContent
                     html={activeQuestion.prompt}
@@ -802,6 +1104,7 @@ function AnswerSetContent() {
           </div>
         </fieldset>
       )}
+        </div>
 
       {/* Modal Konfirmasi Pengumpulan Akhir */}
       {showConfirmModal && (
@@ -853,7 +1156,15 @@ function AnswerSetContent() {
         message={error}
         onClose={() => setError("")}
       />
-    </PageContainer>
+      </PageContainer>
+      <ExamProctorOverlay
+        open={proctor.locked}
+        message={proctor.lockMessage}
+        mobile={Boolean(proctor.environment?.mobile)}
+        reducedAssurance={proctor.reducedAssurance}
+        onResume={proctor.resume}
+      />
+    </>
   );
 }
 

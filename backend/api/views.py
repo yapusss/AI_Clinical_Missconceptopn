@@ -1,4 +1,7 @@
 import csv
+import hashlib
+import hmac
+import html
 import io
 import json
 import logging
@@ -44,6 +47,8 @@ from .models import (
     AuthToken,
     AiModelChange,
     AiRuntimeSettings,
+    ExamAttemptDraft,
+    ExamAttemptEvent,
     ExamPackage,
     ExamPackageAttempt,
     ExamPackageQuestion,
@@ -71,7 +76,9 @@ from .serializers import (
     AdminManagedUserSerializer,
     AiModelActivationSerializer,
     LoginSerializer,
+    DraftSyncSerializer,
     ExamPackageCreateSerializer,
+    ProctorEventBatchSerializer,
     QuestionSetCreateSerializer,
     QuestionSetUpdateSerializer,
     PackageSubmissionCreateSerializer,
@@ -2992,6 +2999,99 @@ def package_attempt_deadline(package, attempt):
     return attempt.started_at + timedelta(minutes=package.duration_minutes)
 
 
+def attempt_question_order_key(attempt_id, question_id):
+    """Stable, server-selected permutation key for one attempt + question.
+
+    HMAC keeps the order deterministic across refreshes without storing a second
+    copy of the question list, and a new attempt gets a new order.  The frontend
+    still receives sequential 1..N display indexes, so it needs no special casing.
+    """
+    return hmac.new(
+        settings.SECRET_KEY.encode(),
+        f'{attempt_id}:{question_id}'.encode(),
+        hashlib.sha256,
+    ).digest()
+
+
+def attempt_answer_has_text(value):
+    """True when a rich-text answer contains visible text, not just markup."""
+    plain = html.unescape(strip_tags(value or '')).replace('\xa0', ' ')
+    return bool(plain.strip())
+
+
+def attempt_draft_answer_complete(answer):
+    return bool(
+        answer
+        and attempt_answer_has_text(answer.get('tier1_answer'))
+        and answer.get('tier2_confidence') is not None
+        and attempt_answer_has_text(answer.get('tier3_reason'))
+        and answer.get('tier4_confidence') is not None
+    )
+
+
+PROCTOR_EVENT_SEVERITY = {
+    'EXAM_STARTED': 1,
+    'HEARTBEAT': 1,
+    'TAB_HIDDEN': 3,
+    'TAB_VISIBLE': 1,
+    'WINDOW_BLUR': 2,
+    'WINDOW_FOCUS': 1,
+    'FULLSCREEN_ENTER': 1,
+    'FULLSCREEN_EXIT': 3,
+    'PAGE_HIDE': 2,
+    'COPY_ATTEMPT': 2,
+    'PASTE_ATTEMPT': 3,
+    'CONTEXT_MENU': 1,
+    'DEVTOOLS_SHORTCUT': 2,
+    'MULTI_MONITOR': 1,
+    'AUTOMATION_SIGNAL': 3,
+    'VM_SIGNAL': 1,
+    'SECOND_SESSION': 3,
+    'SESSION_CHANGED': 3,
+    'MOBILE_DEVICE': 1,
+    'REDUCED_ASSURANCE': 1,
+    'NETWORK_OFFLINE': 1,
+    'NETWORK_ONLINE': 1,
+    'SUBMIT': 1,
+    'AUTO_SUBMITTED_SERVER': 1,
+    'NO_DRAFT_AT_EXPIRY': 2,
+}
+
+
+def record_server_attempt_event(attempt, event_type, metadata=None, session_id=None):
+    return ExamAttemptEvent.objects.create(
+        id=uuid.uuid4(),
+        attempt_id=attempt.id,
+        client_event_id=uuid.uuid4(),
+        session_id=session_id,
+        event_type=event_type,
+        severity=PROCTOR_EVENT_SEVERITY.get(event_type, 1),
+        occurred_at=timezone.now(),
+        metadata=metadata or {},
+    )
+
+
+def owned_attempt(user, attempt_id):
+    return ExamPackageAttempt.objects.select_related('exam_package').filter(
+        pk=attempt_id, student=user,
+    ).first()
+
+
+def attempt_time_is_up(attempt):
+    deadline = package_attempt_deadline(attempt.exam_package, attempt)
+    return bool(deadline and timezone.now() >= deadline)
+
+
+def latest_auto_submitted_attempt(package, student):
+    return ExamPackageAttempt.objects.filter(
+        exam_package=package,
+        student=student,
+        submitted_at__isnull=False,
+        submitted_via__in=('AUTO_SERVER', 'NO_DRAFT'),
+    ).order_by('-attempt_number').first()
+
+
+
 def start_or_get_package_attempt(package, student, password=None):
     """Resume an existing attempt by its timer; closing time only blocks new attempts."""
     attempt = ExamPackageAttempt.objects.filter(
@@ -3249,8 +3349,33 @@ class ExamPackageReviewView(APIView):
         items = list(ExamPackageQuestion.objects.filter(exam_package=package).select_related('question_version').order_by('order_index'))
         version_ids = [item.question_version_id for item in items]
         submissions = list(Submission.objects.filter(exam_package=package, question_version_id__in=version_ids).order_by('-submitted_at', '-attempt_no'))
+        attempts = list(
+            ExamPackageAttempt.objects.filter(exam_package=package)
+            .select_related('student').order_by('student_id', '-attempt_number')
+        )
+        latest_attempt_by_student = {}
+        for attempt in attempts:
+            latest_attempt_by_student.setdefault(attempt.student_id, attempt)
+        attempt_ids = [attempt.id for attempt in latest_attempt_by_student.values()]
+        event_counts = {}
+        for row in (
+            ExamAttemptEvent.objects.filter(attempt_id__in=attempt_ids)
+            .values('attempt_id', 'event_type').annotate(count=Count('id'))
+        ):
+            event_counts.setdefault(row['attempt_id'], {})[row['event_type']] = row['count']
+        session_counts = {}
+        for row in (
+            ExamAttemptEvent.objects.filter(attempt_id__in=attempt_ids)
+            .exclude(session_id__isnull=True).values('attempt_id', 'session_id').distinct()
+        ):
+            session_counts[row['attempt_id']] = session_counts.get(row['attempt_id'], 0) + 1
+        no_draft_student_ids = {
+            attempt.student_id for attempt in latest_attempt_by_student.values()
+            if attempt.submitted_via == 'NO_DRAFT'
+        }
         students = list(User.objects.filter(
-            id__in={submission.student_id for submission in submissions}, is_active=True,
+            id__in={submission.student_id for submission in submissions} | no_draft_student_ids,
+            is_active=True,
             userrole__role=UserRole.Role.STUDENT,
         ).order_by('full_name', 'email').distinct())
         allowed_student_ids = {student.id for student in students}
@@ -3280,12 +3405,33 @@ class ExamPackageReviewView(APIView):
                     'analysis_id': str(analysis.id) if analysis else None,
                     'validation_status': validation.status if validation else None,
                 })
+            attempt = latest_attempt_by_student.get(student.id)
+            counts = event_counts.get(attempt.id, {}) if attempt else {}
+            serious_count = sum(
+                count for event_type, count in counts.items()
+                if PROCTOR_EVENT_SEVERITY.get(event_type, 1) >= 3
+            )
             rows.append({
                 'student_id': str(student.id), 'student_name': student.full_name, 'student_email': student.email,
                 'answered_count': len({submission.question_version_id for submission in student_submissions}),
                 'published_question_count': len(items),
                 'total_attempts_count': len({submission.attempt_no for submission in student_submissions}),
                 'all_submissions': all_submissions,
+                'proctor': {
+                    'serious_count': serious_count,
+                    'tab_switches': counts.get('TAB_HIDDEN', 0),
+                    'focus_losses': counts.get('WINDOW_BLUR', 0),
+                    'fullscreen_exits': counts.get('FULLSCREEN_EXIT', 0),
+                    'copy_paste_attempts': counts.get('COPY_ATTEMPT', 0) + counts.get('PASTE_ATTEMPT', 0),
+                    'multi_monitor': counts.get('MULTI_MONITOR', 0) > 0,
+                    'vm_signal': counts.get('VM_SIGNAL', 0) > 0,
+                    'second_session': counts.get('SECOND_SESSION', 0) + counts.get('SESSION_CHANGED', 0) > 0,
+                    'mobile': counts.get('MOBILE_DEVICE', 0) > 0,
+                    'reduced_assurance': counts.get('REDUCED_ASSURANCE', 0) > 0,
+                    'session_count': session_counts.get(attempt.id, 0) if attempt else 0,
+                    'last_seen_at': attempt.last_seen_at if attempt else None,
+                    'submitted_via': attempt.submitted_via if attempt else None,
+                } if attempt else None,
             })
         return Response({
             'id': str(package.id), 'code': package.code, 'title': package.title,
@@ -3293,6 +3439,50 @@ class ExamPackageReviewView(APIView):
             'subject_name': package.subject.name, 'is_active': package.is_active,
             'published_question_count': len(items), 'roster_scope': 'submitted_students',
             'unsubmitted_roster_available': False, 'students': rows,
+        })
+
+
+class ExamPackageAttemptProctorView(APIView):
+    """Read-only proctoring timeline for the lecturer's student detail panel."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, student_id):
+        try:
+            package = ExamPackage.objects.select_related('subject').get(pk=pk)
+        except ExamPackage.DoesNotExist:
+            return Response({'detail': 'Paket ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_lecturer_for_subject(request.user, package.subject_id):
+            return Response({'detail': 'Anda tidak berwenang mengakses paket ini.'}, status=status.HTTP_403_FORBIDDEN)
+
+        attempt = ExamPackageAttempt.objects.filter(
+            exam_package=package, student_id=student_id,
+        ).order_by('-attempt_number').first()
+        if not attempt:
+            return Response({'detail': 'Percobaan ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        events = list(
+            ExamAttemptEvent.objects.filter(attempt_id=attempt.id)
+            .order_by('recorded_at')[:1000]
+        )
+        return Response({
+            'attempt_id': str(attempt.id),
+            'attempt_number': attempt.attempt_number,
+            'submitted_at': attempt.submitted_at,
+            'submitted_via': attempt.submitted_via,
+            'last_seen_at': attempt.last_seen_at,
+            'events': [
+                {
+                    'id': str(event.id),
+                    'type': event.event_type,
+                    'severity': event.severity,
+                    'occurred_at': event.occurred_at,
+                    'recorded_at': event.recorded_at,
+                    'metadata': event.metadata or {},
+                }
+                for event in events
+            ],
         })
 
 
@@ -3418,6 +3608,17 @@ class StudentSetLookupView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        has_active_attempt = ExamPackageAttempt.objects.filter(
+            exam_package=package, student=request.user, submitted_at__isnull=True,
+        ).exists()
+        if not has_active_attempt:
+            latest_auto = latest_auto_submitted_attempt(package, request.user)
+            if latest_auto and (attempt_time_is_up(latest_auto) or package_is_closed(package)):
+                return Response(
+                    {'detail': 'Paket ujian ini sudah dikumpulkan otomatis.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
         attempt, access_error = start_or_get_package_attempt(
             package, request.user, request.query_params.get('password'),
         )
@@ -3431,11 +3632,18 @@ class StudentSetLookupView(APIView):
             role=UserSubjectRole.Role.STUDENT,
         )
 
+        package_items = list(
+            ExamPackageQuestion.objects.select_related('question', 'question_version')
+            .filter(exam_package=package)
+            .order_by('order_index')
+        )
+        # Shuffle per attempt, not per request: a refresh must not reorder the exam.
+        package_items.sort(
+            key=lambda item: attempt_question_order_key(attempt.id, item.question_id)
+        )
+
         items = []
-        for position, item in enumerate(
-            ExamPackageQuestion.objects.select_related('question', 'question_version').filter(exam_package=package).order_by('order_index'),
-            start=1,
-        ):
+        for position, item in enumerate(package_items, start=1):
             q = item.question
             version = item.question_version
             latest_sub = Submission.objects.filter(
@@ -3455,6 +3663,7 @@ class StudentSetLookupView(APIView):
                 } if latest_sub else None,
             })
 
+        draft = ExamAttemptDraft.objects.filter(attempt_id=attempt.id).first()
         return Response({
             'id': str(package.id),
             'code': package.code,
@@ -3466,11 +3675,155 @@ class StudentSetLookupView(APIView):
             'closes_at': package.closes_at,
             'duration_minutes': package.duration_minutes,
             'max_attempts': package.max_attempts,
+            'attempt_id': str(attempt.id),
             'attempt_number': attempt.attempt_number,
             'attempt_deadline': package_attempt_deadline(package, attempt),
             'server_time': timezone.now(),
             'expiry_behavior': package.expiry_behavior,
+            'draft_answers': (draft.answers if draft else {}),
             'questions': items,
+        })
+
+
+class StudentAttemptDraftView(APIView):
+    """Persist the latest draft so server-side AUTO_SUBMIT works while offline."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, attempt_id):
+        attempt = owned_attempt(request.user, attempt_id)
+        if not attempt:
+            return Response({'detail': 'Percobaan ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+        if attempt.submitted_at:
+            return Response({'detail': 'Percobaan ujian sudah dikumpulkan.'}, status=status.HTTP_409_CONFLICT)
+        if attempt_time_is_up(attempt):
+            return Response({'detail': 'Batas waktu pengerjaan telah berakhir.'}, status=status.HTTP_409_CONFLICT)
+
+        serializer = DraftSyncSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        answers = serializer.validated_data['answers']
+        if len(answers) > 200:
+            return Response({'detail': 'Terlalu banyak jawaban dalam satu sinkronisasi.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed_question_ids = set(
+            ExamPackageQuestion.objects.filter(exam_package=attempt.exam_package)
+            .values_list('question_id', flat=True)
+        )
+        unknown = [str(item['question_id']) for item in answers if item['question_id'] not in allowed_question_ids]
+        if unknown:
+            return Response(
+                {'detail': 'Jawaban memuat pertanyaan yang tidak ada dalam paket.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+        with transaction.atomic():
+            attempt = ExamPackageAttempt.objects.select_for_update().select_related('exam_package').get(pk=attempt.id)
+            if attempt.submitted_at:
+                return Response({'detail': 'Percobaan ujian sudah dikumpulkan.'}, status=status.HTTP_409_CONFLICT)
+            if attempt_time_is_up(attempt):
+                return Response({'detail': 'Batas waktu pengerjaan telah berakhir.'}, status=status.HTTP_409_CONFLICT)
+
+            draft = ExamAttemptDraft.objects.select_for_update().filter(attempt_id=attempt.id).first()
+            if draft is None:
+                draft = ExamAttemptDraft(attempt_id=attempt.id, answers={})
+            merged = dict(draft.answers or {})
+            for item in answers:
+                merged[str(item['question_id'])] = {
+                    'tier1_answer': item.get('tier1_answer') or '',
+                    'tier2_confidence': item.get('tier2_confidence'),
+                    'tier3_reason': item.get('tier3_reason') or '',
+                    'tier4_confidence': item.get('tier4_confidence'),
+                }
+            draft.answers = merged
+            draft.updated_at = now
+            draft.save()
+            attempt.last_seen_at = now
+            attempt.save(update_fields=['last_seen_at'])
+
+        return Response({
+            'ok': True,
+            'updated_at': draft.updated_at,
+            'answer_count': len(draft.answers or {}),
+        })
+
+
+class StudentAttemptProctorEventView(APIView):
+    """Append browser proctoring signals; retries are idempotent by client_event_id."""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, attempt_id):
+        attempt = owned_attempt(request.user, attempt_id)
+        if not attempt:
+            return Response({'detail': 'Percobaan ujian tidak ditemukan.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ProctorEventBatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        events = serializer.validated_data['events']
+        if len(events) > 100:
+            return Response({'detail': 'Terlalu banyak event dalam satu permintaan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        session_id = serializer.validated_data['session_id']
+        now = timezone.now()
+        max_future = now + timedelta(minutes=5)
+
+        existing_sessions = set(
+            ExamAttemptEvent.objects.filter(attempt_id=attempt.id)
+            .exclude(session_id__isnull=True)
+            .values_list('session_id', flat=True)
+        )
+        rows = []
+        for event in events:
+            meta = event.get('meta') or {}
+            if len(json.dumps(meta, separators=(',', ':'))) > 4096:
+                return Response({'detail': 'Metadata event terlalu besar.'}, status=status.HTTP_400_BAD_REQUEST)
+            occurred_at = event.get('at')
+            if occurred_at and occurred_at > max_future:
+                occurred_at = now
+            rows.append(ExamAttemptEvent(
+                id=uuid.uuid4(),
+                attempt_id=attempt.id,
+                client_event_id=event['id'],
+                session_id=session_id,
+                event_type=event['type'],
+                severity=PROCTOR_EVENT_SEVERITY.get(event['type'], 1),
+                occurred_at=occurred_at,
+                metadata=meta,
+            ))
+
+        if existing_sessions and session_id not in existing_sessions:
+            rows.append(ExamAttemptEvent(
+                id=uuid.uuid4(),
+                attempt_id=attempt.id,
+                client_event_id=uuid.uuid4(),
+                session_id=session_id,
+                event_type='SESSION_CHANGED',
+                severity=PROCTOR_EVENT_SEVERITY['SESSION_CHANGED'],
+                occurred_at=now,
+                metadata={'previous_session_count': len(existing_sessions)},
+            ))
+
+        with transaction.atomic():
+            ExamAttemptEvent.objects.bulk_create(rows, ignore_conflicts=True)
+            ExamPackageAttempt.objects.filter(pk=attempt.id).update(last_seen_at=now)
+
+        counts = {
+            row['event_type']: row['count']
+            for row in ExamAttemptEvent.objects.filter(attempt_id=attempt.id)
+            .values('event_type').annotate(count=Count('id'))
+        }
+        serious_count = sum(
+            count for event_type, count in counts.items()
+            if PROCTOR_EVENT_SEVERITY.get(event_type, 1) >= 3
+        )
+        return Response({
+            'ok': True,
+            'counts': counts,
+            'serious_count': serious_count,
+            'last_seen_at': now,
         })
 
 
@@ -3611,6 +3964,7 @@ class StudentPackageSubmissionCreateView(APIView):
             answer['question_id']: answer
             for answer in serializer.validated_data['answers']
         }
+        client_submission_id = serializer.validated_data.get('client_submission_id')
 
         try:
             with transaction.atomic():
@@ -3627,6 +3981,31 @@ class StudentPackageSubmissionCreateView(APIView):
                         {'detail': 'Akun mahasiswa aktif diperlukan.'},
                         status=status.HTTP_403_FORBIDDEN,
                     )
+
+                if client_submission_id:
+                    existing = ExamPackageAttempt.objects.filter(
+                        exam_package=package,
+                        student=request.user,
+                        submission_request_id=client_submission_id,
+                        submitted_at__isnull=False,
+                    ).first()
+                    if existing:
+                        return Response({
+                            'package_id': str(package.id),
+                            'already_submitted': True,
+                            'detail': 'Jawaban sudah dikumpulkan.',
+                        })
+
+                has_active_attempt = ExamPackageAttempt.objects.filter(
+                    exam_package=package, student=request.user, submitted_at__isnull=True,
+                ).exists()
+                if not has_active_attempt:
+                    latest_auto = latest_auto_submitted_attempt(package, request.user)
+                    if latest_auto and (attempt_time_is_up(latest_auto) or package_is_closed(package)):
+                        return Response(
+                            {'detail': 'Paket ujian ini sudah dikumpulkan otomatis.'},
+                            status=status.HTTP_409_CONFLICT,
+                        )
 
                 attempt, access_error = start_or_get_package_attempt(
                     package, request.user, request.data.get('password'),
@@ -3683,7 +4062,10 @@ class StudentPackageSubmissionCreateView(APIView):
                     Submission.objects.filter(pk=submission_id).update(exam_package=package)
                     submission_ids.append((question, version, submission_id))
                 attempt.submitted_at = timezone.now()
-                attempt.save(update_fields=['submitted_at'])
+                attempt.submitted_via = 'STUDENT'
+                attempt.submission_request_id = client_submission_id
+                attempt.save(update_fields=['submitted_at', 'submitted_via', 'submission_request_id'])
+                ExamAttemptDraft.objects.filter(attempt_id=attempt.id).delete()
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3722,6 +4104,7 @@ class StudentTimedAutoSubmissionView(APIView):
             answer['question_id']: answer
             for answer in serializer.validated_data['answers']
         }
+        client_submission_id = serializer.validated_data.get('client_submission_id')
 
         try:
             with transaction.atomic():
@@ -3734,10 +4117,34 @@ class StudentTimedAutoSubmissionView(APIView):
                 if package.expiry_behavior != ExamPackage.ExpiryBehavior.AUTO_SUBMIT:
                     return Response({'detail': 'Paket ini tidak menggunakan pengumpulan otomatis.'}, status=status.HTTP_403_FORBIDDEN)
 
+                if client_submission_id:
+                    existing = ExamPackageAttempt.objects.filter(
+                        exam_package=package,
+                        student=request.user,
+                        submission_request_id=client_submission_id,
+                        submitted_at__isnull=False,
+                    ).first()
+                    if existing:
+                        return Response({
+                            'package_id': str(package.id),
+                            'already_submitted': True,
+                            'detail': 'Jawaban sudah dikumpulkan otomatis.',
+                        })
+
                 attempt = ExamPackageAttempt.objects.select_for_update().filter(
                     exam_package=package, student=request.user, submitted_at__isnull=True,
                 ).order_by('-attempt_number').first()
                 if not attempt:
+                    # The server-side finalizer may have already closed the attempt
+                    # while the student was offline.  Treat that as success.
+                    if ExamPackageAttempt.objects.filter(
+                        exam_package=package, student=request.user, submitted_at__isnull=False,
+                    ).exists():
+                        return Response({
+                            'package_id': str(package.id),
+                            'already_submitted': True,
+                            'detail': 'Jawaban sudah dikumpulkan otomatis.',
+                        })
                     return Response({'detail': 'Percobaan ujian aktif tidak ditemukan.'}, status=status.HTTP_409_CONFLICT)
                 deadline = package_attempt_deadline(package, attempt)
                 if not deadline or timezone.now() < deadline:
@@ -3781,7 +4188,10 @@ class StudentTimedAutoSubmissionView(APIView):
                     submission_ids.append(submission_id)
 
                 attempt.submitted_at = timezone.now()
-                attempt.save(update_fields=['submitted_at'])
+                attempt.submitted_via = 'AUTO_CLIENT'
+                attempt.submission_request_id = client_submission_id
+                attempt.save(update_fields=['submitted_at', 'submitted_via', 'submission_request_id'])
+                ExamAttemptDraft.objects.filter(attempt_id=attempt.id).delete()
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 

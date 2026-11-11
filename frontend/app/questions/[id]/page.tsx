@@ -7,6 +7,8 @@ import {
   ArrowRight,
   ClipboardList,
   GraduationCap,
+  ShieldAlert,
+  X,
 } from "lucide-react";
 
 import { useAuth } from "../../components/AuthProvider";
@@ -37,6 +39,21 @@ type StudentProgress = {
   all_submissions: StudentSubmissionItem[];
   validation_state?: "PENDING" | "VALIDATED";
   roster_member?: boolean;
+  proctor?: {
+    serious_count: number;
+    tab_switches: number;
+    focus_losses: number;
+    fullscreen_exits: number;
+    copy_paste_attempts: number;
+    multi_monitor: boolean;
+    vm_signal: boolean;
+    second_session: boolean;
+    mobile: boolean;
+    reduced_assurance: boolean;
+    session_count: number;
+    last_seen_at: string | null;
+    submitted_via: string | null;
+  } | null;
 };
 
 type QuestionSetReview = {
@@ -51,6 +68,24 @@ type QuestionSetReview = {
   roster_scope?: string;
   unsubmitted_roster_available?: boolean;
   students: StudentProgress[];
+};
+
+type ProctorEventItem = {
+  id: string;
+  type: string;
+  severity: number;
+  occurred_at: string | null;
+  recorded_at: string;
+  metadata: Record<string, unknown>;
+};
+
+type ProctorTimeline = {
+  attempt_id: string;
+  attempt_number: number;
+  submitted_at: string | null;
+  submitted_via: string | null;
+  last_seen_at: string | null;
+  events: ProctorEventItem[];
 };
 
 type ValidationTabId = "PENDING" | "VALIDATED" | "ALL";
@@ -130,6 +165,9 @@ export default function QuestionSetReviewPage({
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<ValidationTabId>("PENDING");
   const [page, setPage] = useState(1);
+  const [proctorStudent, setProctorStudent] = useState<StudentProgress | null>(null);
+  const [proctorTimeline, setProctorTimeline] = useState<ProctorTimeline | null>(null);
+  const [proctorLoading, setProctorLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!setId) return;
@@ -160,6 +198,31 @@ export default function QuestionSetReviewPage({
     }
     void load();
   }, [loading, user, router, load]);
+
+  const openProctor = useCallback(
+    async (student: StudentProgress) => {
+      if (!examPackage || !setId) return;
+      setProctorStudent(student);
+      setProctorTimeline(null);
+      setProctorLoading(true);
+      try {
+        setProctorTimeline(
+          await apiFetch<ProctorTimeline>(
+            `/exam-packages/${setId}/students/${student.student_id}/proctor`,
+          ),
+        );
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Gagal memuat jejak integritas.",
+        );
+      } finally {
+        setProctorLoading(false);
+      }
+    },
+    [examPackage, setId],
+  );
 
   if (loading || !user) return null;
 
@@ -273,12 +336,13 @@ export default function QuestionSetReviewPage({
             ) : (
               <section className="overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-left text-sm">
+                  <table className="w-full min-w-[920px] text-left text-sm">
                     <thead className="bg-surface-container-low text-xs font-semibold uppercase text-on-surface-variant">
                       <tr>
                         <th className="px-5 py-3">Mahasiswa</th>
                         <th className="px-5 py-3">Jawaban</th>
                         <th className="px-5 py-3">Status</th>
+                        <th className="px-5 py-3">Integritas</th>
                         <th className="px-5 py-3">Percobaan</th>
                         <th className="px-5 py-3 text-right">Aksi</th>
                       </tr>
@@ -311,6 +375,57 @@ export default function QuestionSetReviewPage({
                               <span className={`badge ${statusMeta.badge}`}>
                                 {statusMeta.label}
                               </span>
+                            </td>
+                            <td className="px-5 py-4">
+                              {student.proctor ? (
+                                <div className="space-y-1">
+                                  <span
+                                    className={`badge ${
+                                      student.proctor.serious_count > 0
+                                        ? "badge-revoked"
+                                        : student.proctor.multi_monitor ||
+                                            student.proctor.vm_signal ||
+                                            student.proctor.second_session
+                                          ? "badge-review"
+                                          : "badge-active"
+                                    }`}
+                                  >
+                                    <ShieldAlert size={12} className="mr-1 inline" />
+                                    {student.proctor.serious_count > 0
+                                      ? `${student.proctor.serious_count} sinyal`
+                                      : "Tercatat"}
+                                  </span>
+                                  <p className="text-[11px] text-on-surface-variant">
+                                    {student.proctor.tab_switches} tab ·{" "}
+                                    {student.proctor.fullscreen_exits} layar ·{" "}
+                                    {student.proctor.copy_paste_attempts} salin/tempel
+                                  </p>
+                                  {student.proctor.submitted_via === "NO_DRAFT" && (
+                                    <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                                      Tanpa draf tersinkron
+                                    </p>
+                                  )}
+                                  {student.proctor.mobile && (
+                                    <p className="text-[11px] text-on-surface-variant">
+                                      Ponsel
+                                      {student.proctor.reduced_assurance
+                                        ? " · assurance terbatas"
+                                        : ""}
+                                    </p>
+                                  )}
+                                  {examPackage && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void openProctor(student)}
+                                      className="text-[11px] font-semibold text-primary hover:underline"
+                                    >
+                                      Lihat jejak
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="badge badge-role">—</span>
+                              )}
                             </td>
                             <td className="px-5 py-4">
                               <span className="badge badge-role font-mono-ui">
@@ -361,6 +476,121 @@ export default function QuestionSetReviewPage({
           </div>
         )
       )}
+      {proctorStudent && (
+        <div
+          className="fixed inset-0 z-[400] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="proctor-timeline-title"
+        >
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-outline-variant/50 bg-surface-container-lowest p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  id="proctor-timeline-title"
+                  className="font-display text-base font-bold text-on-surface"
+                >
+                  Jejak Integritas · {proctorStudent.student_name}
+                </h3>
+                <p className="mt-1 text-xs text-on-surface-variant">
+                  Sinyal browser dicatat sebagai bukti untuk ditinjau, bukan
+                  keputusan otomatis.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setProctorStudent(null);
+                  setProctorTimeline(null);
+                }}
+                className="text-on-surface-variant hover:text-on-surface"
+                aria-label="Tutup jejak integritas"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {proctorLoading ? (
+              <p className="py-10 text-center text-sm text-on-surface-variant">
+                Memuat jejak integritas...
+              </p>
+            ) : proctorTimeline ? (
+              <div className="mt-4 min-h-0 space-y-3 overflow-y-auto pr-1">
+                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  <div className="rounded-lg border border-outline-variant/40 p-2">
+                    <p className="text-on-surface-variant">Percobaan</p>
+                    <p className="font-mono-ui font-bold">
+                      {proctorTimeline.attempt_number}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-outline-variant/40 p-2">
+                    <p className="text-on-surface-variant">Event</p>
+                    <p className="font-mono-ui font-bold">
+                      {proctorTimeline.events.length}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-outline-variant/40 p-2">
+                    <p className="text-on-surface-variant">Ditutup via</p>
+                    <p className="font-mono-ui font-bold">
+                      {proctorTimeline.submitted_via ?? "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-outline-variant/40 p-2">
+                    <p className="text-on-surface-variant">Terakhir aktif</p>
+                    <p className="font-mono-ui font-bold">
+                      {proctorTimeline.last_seen_at
+                        ? new Date(proctorTimeline.last_seen_at).toLocaleString(
+                            "id-ID",
+                          )
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+
+                {proctorTimeline.events.length === 0 ? (
+                  <p className="rounded-lg border border-outline-variant/40 p-4 text-center text-sm text-on-surface-variant">
+                    Belum ada sinyal proctoring untuk percobaan ini.
+                  </p>
+                ) : (
+                  <ol className="space-y-2">
+                    {proctorTimeline.events.map((event) => (
+                      <li
+                        key={event.id}
+                        className={`rounded-lg border p-3 text-xs ${
+                          event.severity >= 3
+                            ? "border-error/40 bg-error-container/30"
+                            : event.severity === 2
+                              ? "border-amber-500/30 bg-amber-500/10"
+                              : "border-outline-variant/40"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-mono-ui font-bold text-on-surface">
+                            {event.type.replaceAll("_", " ")}
+                          </span>
+                          <span className="text-on-surface-variant">
+                            {new Date(event.recorded_at).toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                        {Object.keys(event.metadata).length > 0 && (
+                          <p className="mt-1 break-words font-mono-ui text-[11px] text-on-surface-variant">
+                            {JSON.stringify(event.metadata).slice(0, 240)}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            ) : (
+              <p className="py-10 text-center text-sm text-on-surface-variant">
+                Jejak integritas tidak tersedia.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <FeedbackModal
         open={!!error}
         message={error}

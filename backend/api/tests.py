@@ -12,6 +12,8 @@ from rest_framework.test import APIClient
 from .models import (
     AuthToken,
     ConceptIndicator,
+    ExamAttemptDraft,
+    ExamAttemptEvent,
     ExamPackage,
     ExamPackageAttempt,
     ExamPackageQuestion,
@@ -747,6 +749,241 @@ class StudentSubmissionAPITests(TransactionTestCase):
         self.assertEqual(self._submit_package(answers).status_code, 201)
         self.assertEqual(self._submit_package(answers).status_code, 403)
         self.assertEqual(ExamPackageAttempt.objects.filter(exam_package=self.exam_package, student=self.student, submitted_at__isnull=False).count(), 1)
+
+    # ------------------------------------------------------ proctoring/drafts
+
+    def test_question_order_is_stable_per_attempt_and_shuffled_between_students(self):
+        for index in range(2, 9):
+            self._add_published_question(
+                order_index=index, prompt=f'Pertanyaan {index}?'
+            )
+        UserRole.objects.create(user=self.other, role=UserRole.Role.STUDENT)
+        UserSubjectRole.objects.create(
+            user=self.other, subject=self.subject, role=UserSubjectRole.Role.STUDENT,
+        )
+
+        self._auth(self.student)
+        first = self._lookup(code=self.exam_package.code).json()['questions']
+        second = self._lookup(code=self.exam_package.code).json()['questions']
+        self.assertEqual(
+            [item['question_id'] for item in first],
+            [item['question_id'] for item in second],
+        )
+        self.assertEqual([item['order_index'] for item in first], list(range(1, 9)))
+
+        self._auth(self.other)
+        other_order = [item['question_id'] for item in self._lookup(code=self.exam_package.code).json()['questions']]
+        self.assertEqual(set(other_order), {item['question_id'] for item in first})
+        self.assertNotEqual(other_order, [item['question_id'] for item in first])
+
+    def test_lookup_exposes_attempt_id_and_saved_draft(self):
+        self._auth(self.student)
+        attempt_id = self._lookup(code=self.exam_package.code).json()['attempt_id']
+        ExamAttemptDraft.objects.create(
+            attempt_id=attempt_id,
+            answers={
+                str(self.question.id): {
+                    'tier1_answer': 'Draf kesimpulan',
+                    'tier2_confidence': 3,
+                    'tier3_reason': 'Draf alasan',
+                    'tier4_confidence': 4,
+                }
+            },
+        )
+
+        body = self._lookup(code=self.exam_package.code).json()
+        self.assertEqual(body['attempt_id'], attempt_id)
+        self.assertEqual(
+            body['draft_answers'][str(self.question.id)]['tier1_answer'],
+            'Draf kesimpulan',
+        )
+
+    def test_draft_sync_merges_and_rejects_foreign_question(self):
+        self._auth(self.student)
+        attempt_id = self._lookup(code=self.exam_package.code).json()['attempt_id']
+        url = reverse('student-attempt-draft', kwargs={'attempt_id': attempt_id})
+        response = self.client.patch(
+            url,
+            {
+                'answers': [{
+                    'question_id': str(self.question.id),
+                    'tier1_answer': 'Kesimpulan draf',
+                    'tier2_confidence': 4,
+                    'tier3_reason': 'Alasan draf',
+                    'tier4_confidence': 5,
+                }],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        draft = ExamAttemptDraft.objects.get(attempt_id=attempt_id)
+        self.assertEqual(
+            draft.answers[str(self.question.id)]['tier3_reason'], 'Alasan draf',
+        )
+
+        foreign = self.client.patch(
+            url,
+            {
+                'answers': [{
+                    'question_id': str(uuid.uuid4()),
+                    'tier1_answer': 'X',
+                }],
+            },
+            format='json',
+        )
+        self.assertEqual(foreign.status_code, 400)
+
+    def test_proctor_events_are_idempotent_and_counted(self):
+        self._auth(self.student)
+        attempt_id = self._lookup(code=self.exam_package.code).json()['attempt_id']
+        url = reverse('student-attempt-proctor-events', kwargs={'attempt_id': attempt_id})
+        event = {
+            'id': str(uuid.uuid4()),
+            'type': 'TAB_HIDDEN',
+            'at': timezone.now().isoformat(),
+            'meta': {'visible': False},
+        }
+        payload = {
+            'session_id': str(uuid.uuid4()),
+            'events': [event],
+        }
+        first = self.client.post(url, payload, format='json')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()['serious_count'], 1)
+
+        second = self.client.post(url, payload, format='json')
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(
+            ExamAttemptEvent.objects.filter(attempt_id=attempt_id).count(), 1,
+        )
+
+    def test_lecturer_can_read_proctor_timeline(self):
+        self._auth(self.student)
+        attempt_id = self._lookup(code=self.exam_package.code).json()['attempt_id']
+        url = reverse('student-attempt-proctor-events', kwargs={'attempt_id': attempt_id})
+        self.client.post(
+            url,
+            {
+                'session_id': str(uuid.uuid4()),
+                'events': [{
+                    'id': str(uuid.uuid4()),
+                    'type': 'TAB_HIDDEN',
+                    'at': timezone.now().isoformat(),
+                    'meta': {'visible': False},
+                }],
+            },
+            format='json',
+        )
+
+        lecturer = User.objects.create(
+            id=uuid.uuid4(),
+            email=f'lecturer_proctor_{uuid.uuid4().hex[:8]}@acm.local',
+            full_name='Lecturer Proctor',
+            password_hash='!',
+            is_active=True,
+            is_superuser=False,
+        )
+        UserSubjectRole.objects.create(
+            user=lecturer, subject=self.subject, role=UserSubjectRole.Role.LECTURER,
+        )
+        UserRole.objects.create(user=lecturer, role=UserRole.Role.LECTURER)
+        self._auth(lecturer)
+
+        response = self.client.get(reverse('exam-package-student-proctor', kwargs={
+            'pk': self.exam_package.id, 'student_id': self.student.id,
+        }))
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['attempt_id'], attempt_id)
+        self.assertEqual(body['events'][-1]['type'], 'TAB_HIDDEN')
+
+    def test_submit_is_idempotent_after_lost_response(self):
+        self._auth(self.student)
+        client_submission_id = str(uuid.uuid4())
+        payload = {
+            'answers': [{
+                'question_id': str(self.question.id),
+                'tier1_answer': 'Kesimpulan',
+                'tier2_confidence': 4,
+                'tier3_reason': 'Alasan lengkap',
+                'tier4_confidence': 4,
+            }],
+            'client_submission_id': client_submission_id,
+        }
+        url = reverse('student-package-submission-create', kwargs={'pk': self.exam_package.id})
+        first = self.client.post(url, payload, format='json')
+        self.assertEqual(first.status_code, 201)
+        second = self.client.post(url, payload, format='json')
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.json()['already_submitted'])
+        self.assertEqual(Submission.objects.filter(student=self.student).count(), 1)
+
+    def test_server_finalizer_submits_expired_draft(self):
+        from .exam_finalizer import finalize_expired_attempts
+
+        self.exam_package.expiry_behavior = ExamPackage.ExpiryBehavior.AUTO_SUBMIT
+        self.exam_package.duration_minutes = 30
+        self.exam_package.save(update_fields=['expiry_behavior', 'duration_minutes'])
+        attempt = ExamPackageAttempt.objects.create(
+            id=uuid.uuid4(),
+            exam_package=self.exam_package,
+            student=self.student,
+            attempt_number=1,
+        )
+        ExamPackageAttempt.objects.filter(pk=attempt.pk).update(
+            started_at=timezone.now() - timedelta(minutes=31),
+        )
+        ExamAttemptDraft.objects.create(
+            attempt_id=attempt.id,
+            answers={
+                str(self.question.id): {
+                    'tier1_answer': 'Kesimpulan',
+                    'tier2_confidence': 4,
+                    'tier3_reason': 'Alasan lengkap',
+                    'tier4_confidence': 4,
+                }
+            },
+        )
+
+        processed = finalize_expired_attempts()
+        self.assertGreaterEqual(processed, 1)
+        attempt.refresh_from_db()
+        self.assertIsNotNone(attempt.submitted_at)
+        self.assertEqual(attempt.submitted_via, 'AUTO_SERVER')
+        self.assertEqual(Submission.objects.filter(student=self.student).count(), 1)
+        self.assertFalse(ExamAttemptDraft.objects.filter(attempt_id=attempt.id).exists())
+        self.assertTrue(
+            ExamAttemptEvent.objects.filter(
+                attempt_id=attempt.id, event_type='AUTO_SUBMITTED_SERVER',
+            ).exists()
+        )
+
+    def test_server_finalizer_flags_expired_attempt_without_draft(self):
+        from .exam_finalizer import finalize_expired_attempts
+
+        self.exam_package.expiry_behavior = ExamPackage.ExpiryBehavior.AUTO_SUBMIT
+        self.exam_package.duration_minutes = 30
+        self.exam_package.save(update_fields=['expiry_behavior', 'duration_minutes'])
+        attempt = ExamPackageAttempt.objects.create(
+            id=uuid.uuid4(),
+            exam_package=self.exam_package,
+            student=self.student,
+            attempt_number=1,
+        )
+        ExamPackageAttempt.objects.filter(pk=attempt.pk).update(
+            started_at=timezone.now() - timedelta(minutes=31),
+        )
+
+        finalize_expired_attempts()
+        attempt.refresh_from_db()
+        self.assertIsNotNone(attempt.submitted_at)
+        self.assertEqual(attempt.submitted_via, 'NO_DRAFT')
+        self.assertEqual(Submission.objects.filter(student=self.student).count(), 0)
+        self.assertTrue(
+            ExamAttemptEvent.objects.filter(
+                attempt_id=attempt.id, event_type='NO_DRAFT_AT_EXPIRY',
+            ).exists()
+        )
 
 
 class ExamPackageDuplicateTests(TransactionTestCase):
