@@ -3607,6 +3607,24 @@ class StudentSetLookupView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if package_id and not code:
+            # The UUID link is a resume shortcut, not a public entry point.
+            # A student who has never entered the code must use the code.
+            has_active_for_resume = ExamPackageAttempt.objects.filter(
+                exam_package=package, student=request.user, submitted_at__isnull=True,
+            ).exists()
+            if not has_active_for_resume:
+                latest_auto = latest_auto_submitted_attempt(package, request.user)
+                if latest_auto and (attempt_time_is_up(latest_auto) or package_is_closed(package)):
+                    return Response(
+                        {'detail': 'Paket ujian ini sudah dikumpulkan otomatis.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                return Response(
+                    {'detail': 'Gunakan kode paket ujian untuk memulai ujian.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         if not is_active_student(request.user):
             return Response(
                 {'detail': 'Akun mahasiswa aktif diperlukan.'},
