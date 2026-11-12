@@ -88,6 +88,164 @@ type ProctorTimeline = {
   events: ProctorEventItem[];
 };
 
+// Plain-language supervision notes for lecturers. These describe what the
+// browser observed in everyday Indonesian; they are never an automatic
+// verdict, so the wording stays factual instead of accusatory.
+type IntegrityNote = { text: string; tone: "danger" | "warn" | "info" | "ok" };
+
+const integrityNotes = (
+  proctor: NonNullable<StudentProgress["proctor"]>,
+): IntegrityNote[] => {
+  const notes: IntegrityNote[] = [];
+  if (proctor.fullscreen_exits > 0)
+    notes.push({
+      text: `Keluar dari layar penuh ${proctor.fullscreen_exits} kali`,
+      tone: "danger",
+    });
+  if (proctor.second_session)
+    notes.push({
+      text: "Ujian dibuka di lebih dari satu sesi",
+      tone: "danger",
+    });
+  if (proctor.submitted_via === "NO_DRAFT")
+    notes.push({
+      text: "Waktu habis tanpa jawaban tersimpan",
+      tone: "warn",
+    });
+  if (proctor.tab_switches > 0)
+    notes.push({ text: `Pindah tab ${proctor.tab_switches} kali`, tone: "warn" });
+  if (proctor.focus_losses > 0)
+    notes.push({
+      text: `Berpindah aplikasi ${proctor.focus_losses} kali`,
+      tone: "warn",
+    });
+  if (proctor.copy_paste_attempts > 0)
+    notes.push({
+      text: `Mencoba menyalin/menempel ${proctor.copy_paste_attempts} kali`,
+      tone: "warn",
+    });
+  if (proctor.multi_monitor)
+    notes.push({ text: "Terdeteksi lebih dari satu layar", tone: "warn" });
+  if (proctor.vm_signal)
+    notes.push({ text: "Terdeteksi mesin virtual", tone: "warn" });
+  if (proctor.mobile)
+    notes.push({
+      text: proctor.reduced_assurance
+        ? "Dikerjakan dari ponsel (pengawasan terbatas)"
+        : "Dikerjakan dari ponsel",
+      tone: "info",
+    });
+  if (proctor.submitted_via === "AUTO_SERVER")
+    notes.push({
+      text: "Dikumpulkan otomatis karena waktu habis",
+      tone: "info",
+    });
+  if (notes.length === 0)
+    notes.push({ text: "Tidak ada kejadian mencurigakan", tone: "ok" });
+  return notes;
+};
+
+const integrityBadge = (
+  proctor: NonNullable<StudentProgress["proctor"]>,
+): { label: string; className: string } => {
+  if (proctor.serious_count > 0)
+    return { label: "Perlu ditinjau", className: "badge-revoked" };
+  if (
+    proctor.tab_switches > 0 ||
+    proctor.focus_losses > 0 ||
+    proctor.copy_paste_attempts > 0 ||
+    proctor.multi_monitor ||
+    proctor.vm_signal
+  )
+    return { label: "Ada catatan", className: "badge-review" };
+  if (proctor.mobile || proctor.submitted_via === "AUTO_SERVER")
+    return { label: "Tercatat", className: "badge-review" };
+  return { label: "Aman", className: "badge-active" };
+};
+
+const PROCTOR_EVENT_LABEL: Record<string, string> = {
+  EXAM_STARTED: "Mulai mengerjakan",
+  HEARTBEAT: "Ujian masih terbuka",
+  WINDOW_BLUR: "Berpindah ke aplikasi lain",
+  WINDOW_FOCUS: "Kembali ke halaman ujian",
+  FULLSCREEN_ENTER: "Masuk layar penuh",
+  FULLSCREEN_EXIT: "Keluar dari layar penuh",
+  TAB_HIDDEN: "Pindah ke tab lain",
+  TAB_VISIBLE: "Kembali ke tab ujian",
+  COPY_ATTEMPT: "Mencoba menyalin teks",
+  PASTE_ATTEMPT: "Mencoba menempel teks",
+  CONTEXT_MENU: "Membuka menu klik kanan",
+  DEVTOOLS_SHORTCUT: "Membuka alat pengembang browser",
+  MULTI_MONITOR: "Terdeteksi lebih dari satu layar",
+  VM_SIGNAL: "Terdeteksi mesin virtual",
+  AUTOMATION_SIGNAL: "Terdeteksi otomatisasi browser",
+  SECOND_SESSION: "Ujian dibuka di sesi lain",
+  SESSION_CHANGED: "Sesi berganti (perangkat/tab lain)",
+  MOBILE_DEVICE: "Mengerjakan dari ponsel",
+  REDUCED_ASSURANCE: "Pengawasan terbatas",
+  NETWORK_OFFLINE: "Koneksi terputus",
+  NETWORK_ONLINE: "Koneksi kembali",
+  PAGE_HIDE: "Halaman ditinggalkan",
+  SUBMIT: "Mengumpulkan jawaban",
+  AUTO_SUBMITTED_SERVER: "Dikumpulkan otomatis karena waktu habis",
+  NO_DRAFT_AT_EXPIRY: "Waktu habis tanpa jawaban tersimpan",
+};
+
+type TimelineRow = {
+  key: string;
+  label: string;
+  note: string | null;
+  at: string;
+  severity: number;
+};
+
+// One row per event, in the order it happened — the lecturer sees the student's
+// actual session, not counts. Heartbeats are dropped (they are just keep-alives)
+// and the raw event code/metadata are translated into everyday Indonesian.
+const eventNote = (event: ProctorEventItem): string | null => {
+  const meta = event.metadata ?? {};
+  if (event.type === "EXAM_STARTED") {
+    const device = meta.mobile ? "dari ponsel" : "dari komputer";
+    const fullscreen =
+      meta.fullscreen === true ? "layar penuh aktif" : "tanpa layar penuh";
+    return `${device}, ${fullscreen}`;
+  }
+  if (event.type === "AUTO_SUBMITTED_SERVER") {
+    const count = Number(meta.submitted_count ?? 0);
+    return `${count} jawaban terkumpul otomatis`;
+  }
+  if (event.type === "NO_DRAFT_AT_EXPIRY") {
+    return "tidak ada jawaban yang tersimpan sebelum waktu habis";
+  }
+  if (event.type === "SESSION_CHANGED") {
+    const previous = Number(meta.previous_session_count ?? 0);
+    return previous > 0 ? `sebelumnya ${previous} sesi aktif` : null;
+  }
+  return null;
+};
+
+const timelineRows = (events: ProctorEventItem[]): TimelineRow[] =>
+  events
+    .filter((event) => event.type !== "HEARTBEAT")
+    .map((event) => ({
+      key: event.id,
+      label:
+        PROCTOR_EVENT_LABEL[event.type] ??
+        event.type.replaceAll("_", " ").toLowerCase(),
+      note: eventNote(event),
+      at: event.occurred_at ?? event.recorded_at,
+      severity: event.severity,
+    }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+
+const closingLabel = (submittedVia: string | null) => {
+  if (!submittedVia) return "Belum dikumpulkan";
+  if (submittedVia === "AUTO_SERVER") return "Otomatis oleh sistem";
+  if (submittedVia === "NO_DRAFT") return "Waktu habis, tanpa jawaban";
+  return "Dikumpulkan mahasiswa";
+};
+
+
 type ValidationTabId = "PENDING" | "VALIDATED" | "ALL";
 const STUDENTS_PER_PAGE = 10;
 
@@ -215,7 +373,7 @@ export default function QuestionSetReviewPage({
         setError(
           caught instanceof Error
             ? caught.message
-            : "Gagal memuat jejak integritas.",
+            : "Gagal memuat catatan pengawasan.",
         );
       } finally {
         setProctorLoading(false);
@@ -342,7 +500,7 @@ export default function QuestionSetReviewPage({
                         <th className="px-5 py-3">Mahasiswa</th>
                         <th className="px-5 py-3">Jawaban</th>
                         <th className="px-5 py-3">Status</th>
-                        <th className="px-5 py-3">Integritas</th>
+                        <th className="px-5 py-3">Catatan Pengawasan</th>
                         <th className="px-5 py-3">Percobaan</th>
                         <th className="px-5 py-3 text-right">Aksi</th>
                       </tr>
@@ -376,50 +534,42 @@ export default function QuestionSetReviewPage({
                                 {statusMeta.label}
                               </span>
                             </td>
-                            <td className="px-5 py-4">
+                            <td className="px-5 py-4 align-top">
                               {student.proctor ? (
-                                <div className="space-y-1">
+                                <div className="max-w-[17rem] space-y-1.5">
                                   <span
-                                    className={`badge ${
-                                      student.proctor.serious_count > 0
-                                        ? "badge-revoked"
-                                        : student.proctor.multi_monitor ||
-                                            student.proctor.vm_signal ||
-                                            student.proctor.second_session
-                                          ? "badge-review"
-                                          : "badge-active"
-                                    }`}
+                                    className={`badge ${integrityBadge(student.proctor).className}`}
                                   >
                                     <ShieldAlert size={12} className="mr-1 inline" />
-                                    {student.proctor.serious_count > 0
-                                      ? `${student.proctor.serious_count} sinyal`
-                                      : "Tercatat"}
+                                    {integrityBadge(student.proctor).label}
                                   </span>
-                                  <p className="text-[11px] text-on-surface-variant">
-                                    {student.proctor.tab_switches} tab ·{" "}
-                                    {student.proctor.fullscreen_exits} layar ·{" "}
-                                    {student.proctor.copy_paste_attempts} salin/tempel
-                                  </p>
-                                  {student.proctor.submitted_via === "NO_DRAFT" && (
-                                    <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                                      Tanpa draf tersinkron
-                                    </p>
-                                  )}
-                                  {student.proctor.mobile && (
-                                    <p className="text-[11px] text-on-surface-variant">
-                                      Ponsel
-                                      {student.proctor.reduced_assurance
-                                        ? " · assurance terbatas"
-                                        : ""}
-                                    </p>
-                                  )}
+                                  <ul className="space-y-0.5 text-[11px] leading-snug text-on-surface-variant">
+                                    {integrityNotes(student.proctor)
+                                      .slice(0, 3)
+                                      .map((note) => (
+                                        <li
+                                          key={note.text}
+                                          className={
+                                            note.tone === "danger"
+                                              ? "font-semibold text-error"
+                                              : note.tone === "warn"
+                                                ? "text-amber-600 dark:text-amber-400"
+                                                : note.tone === "ok"
+                                                  ? "text-emerald-600 dark:text-emerald-400"
+                                                  : ""
+                                          }
+                                        >
+                                          {note.text}
+                                        </li>
+                                      ))}
+                                  </ul>
                                   {examPackage && (
                                     <button
                                       type="button"
                                       onClick={() => void openProctor(student)}
                                       className="text-[11px] font-semibold text-primary hover:underline"
                                     >
-                                      Lihat jejak
+                                      Lihat rincian
                                     </button>
                                   )}
                                 </div>
@@ -490,11 +640,11 @@ export default function QuestionSetReviewPage({
                   id="proctor-timeline-title"
                   className="font-display text-base font-bold text-on-surface"
                 >
-                  Jejak Integritas · {proctorStudent.student_name}
+                  Catatan pengawasan · {proctorStudent.student_name}
                 </h3>
                 <p className="mt-1 text-xs text-on-surface-variant">
-                  Sinyal browser dicatat sebagai bukti untuk ditinjau, bukan
-                  keputusan otomatis.
+                  Apa yang terjadi selama ujian. Catatan ini hanya untuk
+                  ditinjau — tidak otomatis menggagalkan ujian.
                 </p>
               </div>
               <button
@@ -504,7 +654,7 @@ export default function QuestionSetReviewPage({
                   setProctorTimeline(null);
                 }}
                 className="text-on-surface-variant hover:text-on-surface"
-                aria-label="Tutup jejak integritas"
+                aria-label="Tutup catatan pengawasan"
               >
                 <X size={18} />
               </button>
@@ -512,7 +662,7 @@ export default function QuestionSetReviewPage({
 
             {proctorLoading ? (
               <p className="py-10 text-center text-sm text-on-surface-variant">
-                Memuat jejak integritas...
+                Memuat catatan pengawasan...
               </p>
             ) : proctorTimeline ? (
               <div className="mt-4 min-h-0 space-y-3 overflow-y-auto pr-1">
@@ -520,63 +670,75 @@ export default function QuestionSetReviewPage({
                   <div className="rounded-lg border border-outline-variant/40 p-2">
                     <p className="text-on-surface-variant">Percobaan</p>
                     <p className="font-mono-ui font-bold">
-                      {proctorTimeline.attempt_number}
+                      ke-{proctorTimeline.attempt_number}
                     </p>
                   </div>
                   <div className="rounded-lg border border-outline-variant/40 p-2">
-                    <p className="text-on-surface-variant">Event</p>
+                    <p className="text-on-surface-variant">Catatan</p>
                     <p className="font-mono-ui font-bold">
-                      {proctorTimeline.events.length}
+                      {timelineRows(proctorTimeline.events).length}
                     </p>
                   </div>
                   <div className="rounded-lg border border-outline-variant/40 p-2">
-                    <p className="text-on-surface-variant">Ditutup via</p>
-                    <p className="font-mono-ui font-bold">
-                      {proctorTimeline.submitted_via ?? "—"}
+                    <p className="text-on-surface-variant">Pengumpulan</p>
+                    <p className="font-semibold">
+                      {closingLabel(proctorTimeline.submitted_via)}
                     </p>
                   </div>
                   <div className="rounded-lg border border-outline-variant/40 p-2">
                     <p className="text-on-surface-variant">Terakhir aktif</p>
-                    <p className="font-mono-ui font-bold">
+                    <p className="font-semibold">
                       {proctorTimeline.last_seen_at
                         ? new Date(proctorTimeline.last_seen_at).toLocaleString(
                             "id-ID",
+                            {
+                              day: "2-digit",
+                              month: "short",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            },
                           )
                         : "—"}
                     </p>
                   </div>
                 </div>
 
-                {proctorTimeline.events.length === 0 ? (
+                {timelineRows(proctorTimeline.events).length === 0 ? (
                   <p className="rounded-lg border border-outline-variant/40 p-4 text-center text-sm text-on-surface-variant">
-                    Belum ada sinyal proctoring untuk percobaan ini.
+                    Tidak ada catatan mencurigakan selama ujian.
                   </p>
                 ) : (
                   <ol className="space-y-2">
-                    {proctorTimeline.events.map((event) => (
+                    {timelineRows(proctorTimeline.events).map((row) => (
                       <li
-                        key={event.id}
-                        className={`rounded-lg border p-3 text-xs ${
-                          event.severity >= 3
+                        key={row.key}
+                        className={`flex flex-wrap items-start justify-between gap-2 rounded-lg border p-3 text-xs ${
+                          row.severity >= 3
                             ? "border-error/40 bg-error-container/30"
-                            : event.severity === 2
+                            : row.severity === 2
                               ? "border-amber-500/30 bg-amber-500/10"
                               : "border-outline-variant/40"
                         }`}
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-mono-ui font-bold text-on-surface">
-                            {event.type.replaceAll("_", " ")}
-                          </span>
-                          <span className="text-on-surface-variant">
-                            {new Date(event.recorded_at).toLocaleString("id-ID")}
-                          </span>
-                        </div>
-                        {Object.keys(event.metadata).length > 0 && (
-                          <p className="mt-1 break-words font-mono-ui text-[11px] text-on-surface-variant">
-                            {JSON.stringify(event.metadata).slice(0, 240)}
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-on-surface">
+                            {row.label}
                           </p>
-                        )}
+                          {row.note && (
+                            <p className="mt-0.5 text-[11px] text-on-surface-variant">
+                              {row.note}
+                            </p>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-[11px] text-on-surface-variant">
+                          {new Date(row.at).toLocaleString("id-ID", {
+                            day: "2-digit",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          })}
+                        </span>
                       </li>
                     ))}
                   </ol>
@@ -584,7 +746,7 @@ export default function QuestionSetReviewPage({
               </div>
             ) : (
               <p className="py-10 text-center text-sm text-on-surface-variant">
-                Jejak integritas tidak tersedia.
+                Catatan pengawasan tidak tersedia.
               </p>
             )}
           </div>
