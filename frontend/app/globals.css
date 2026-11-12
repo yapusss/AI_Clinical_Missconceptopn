@@ -776,6 +776,26 @@ math-field.math-field-input.ML__focused::part(virtual-keyboard-toggle) {
   min-width: 0;
 }
 
+/* Exam mode: once the student starts, the navigation chrome is removed on every
+   form factor. The page content gets the full viewport, including when the
+   browser is in reduced-assurance mode instead of real fullscreen. */
+body.exam-active .app-sidebar,
+body.exam-active .mobile-app-header,
+body.exam-active .mobile-nav-overlay {
+  display: none !important;
+}
+
+body.exam-active .app-main {
+  margin-left: 0 !important;
+  width: 100% !important;
+}
+
+@media (max-width: 900px) {
+  body.exam-active .app-main {
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+
 /* Mobile Header & Overlay */
 .mobile-app-header {
   display: none;

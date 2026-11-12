@@ -46,8 +46,23 @@ type StudentSet = {
   attempt_deadline: string | null;
   server_time: string;
   expiry_behavior: "REJECT" | "AUTO_SUBMIT";
-  draft_answers?: Record<string, QuestionAnswer>;
+  draft_answers?: Record<string, ServerDraftAnswer>;
   questions: StudentQuestion[];
+};
+
+// Drafts are stored by the API with serializer field names (tier1_answer ...)
+// while the editor state uses t1_answer ...; both shapes are accepted so a
+// server restore can never silently drop every answer.
+type ServerDraftAnswer = {
+  tier1_answer?: string | null;
+  tier2_confidence?: number | null;
+  tier3_reason?: string | null;
+  tier4_confidence?: number | null;
+  t1_answer?: string | null;
+  t2_confidence?: number | null;
+  t3_reason?: string | null;
+  t4_confidence?: number | null;
+  flagged?: boolean;
 };
 
 type QuestionAnswer = {
@@ -69,6 +84,25 @@ const normalizeAnswer = (
     typeof raw?.t4_confidence === "number" ? raw.t4_confidence : null,
   flagged: Boolean(raw?.flagged),
 });
+
+const fromServerAnswer = (
+  raw: ServerDraftAnswer | null | undefined,
+): QuestionAnswer =>
+  normalizeAnswer({
+    t1_answer: raw?.t1_answer ?? raw?.tier1_answer ?? "",
+    t2_confidence: raw?.t2_confidence ?? raw?.tier2_confidence ?? null,
+    t3_reason: raw?.t3_reason ?? raw?.tier3_reason ?? "",
+    t4_confidence: raw?.t4_confidence ?? raw?.tier4_confidence ?? null,
+    flagged: Boolean(raw?.flagged),
+  });
+
+// An answer counts as started once any tier has content, even if the question
+// is not complete yet (used for the yellow "partially filled" state).
+const hasAnswerContent = (answer: QuestionAnswer) =>
+  hasAnswerText(answer.t1_answer) ||
+  hasAnswerText(answer.t3_reason) ||
+  typeof answer.t2_confidence === "number" ||
+  typeof answer.t4_confidence === "number";
 
 const CONFIDENCE_LEVELS = [
   { val: 1, label: "1", desc: "Sangat Ragu", type: "TY" },
@@ -212,6 +246,7 @@ function AnswerSetContent() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [started, setStarted] = useState(false);
   const [resumeAvailable, setResumeAvailable] = useState(false);
+  const [draftSyncWarning, setDraftSyncWarning] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const autoSubmissionStarted = useRef(false);
@@ -223,6 +258,24 @@ function AnswerSetContent() {
   const draftFlushAgainRef = useRef(false);
   const flushDraftRef = useRef<((keepalive?: boolean) => Promise<void>) | null>(null);
   const proctor = useExamProctoring(data?.attempt_id ?? null);
+
+  useEffect(() => {
+    if (!started) return;
+    document.body.classList.add("exam-active");
+    return () => document.body.classList.remove("exam-active");
+  }, [started]);
+
+  useEffect(() => {
+    if (!started || !data?.attempt_id) return;
+    try {
+      localStorage.setItem(
+        `exam_progress_${data.attempt_id}`,
+        String(activeIndex),
+      );
+    } catch {
+      // Private mode/quota: progress persistence is best-effort.
+    }
+  }, [activeIndex, data?.attempt_id, started]);
 
   // Kembali ke atas setiap kali nomor soal berubah (prev/next/pill/submit-advance)
   useEffect(() => {
@@ -255,30 +308,47 @@ function AnswerSetContent() {
         initial[q.question_id] = normalizeAnswer(null);
       });
 
+      let localAnswers: Record<string, Partial<QuestionAnswer>> | null = null;
       if (storageKey) {
         let saved: string | null = null;
         try {
           saved = localStorage.getItem(storageKey);
         } catch {
-          // Storage unavailable; fall back to the server draft below.
+          // Storage unavailable; the server draft below is authoritative.
         }
         if (saved) {
           try {
-            const parsed = JSON.parse(saved) as Record<
+            localAnswers = JSON.parse(saved) as Record<
               string,
               Partial<QuestionAnswer>
             >;
-            Object.assign(initial, parsed);
-            setResumeAvailable(true);
           } catch {}
         }
       }
 
-      // Server-side draft is the fallback when localStorage was cleared or the
-      // student switched devices.  It is also what the offline finalizer uses.
-      if (res.draft_answers && Object.keys(res.draft_answers).length > 0) {
-        Object.assign(initial, res.draft_answers);
+      // The server draft is authoritative on reload. localStorage is only a
+      // fallback for offline use, or for question IDs the server has never seen.
+      const serverDraft = res.draft_answers ?? {};
+      let restoredFromServer = false;
+      for (const [questionId, answer] of Object.entries(serverDraft)) {
+        const mapped = fromServerAnswer(answer);
+        initial[questionId] = mapped;
+        if (hasAnswerContent(mapped)) restoredFromServer = true;
+      }
+      if (restoredFromServer) {
         setResumeAvailable(true);
+      }
+      if (localAnswers) {
+        // Server draft is authoritative, but answers the server has never seen
+        // (e.g. typed while offline) are still worth restoring. A completely
+        // empty local copy must not trigger the start gate again.
+        let restoredFromLocal = false;
+        for (const [questionId, answer] of Object.entries(localAnswers)) {
+          const mapped = normalizeAnswer(answer);
+          if (!(questionId in serverDraft)) initial[questionId] = mapped;
+          if (hasAnswerContent(mapped)) restoredFromLocal = true;
+        }
+        if (restoredFromLocal) setResumeAvailable(true);
       }
 
       // Normalize old/partial localStorage or server drafts: a missing
@@ -287,6 +357,23 @@ function AnswerSetContent() {
         initial[question.question_id] = normalizeAnswer(
           initial[question.question_id],
         );
+      }
+
+      // Restore the last question position for this exact attempt, not for the
+      // package: a new attempt should always begin at question 1.
+      try {
+        const savedIndex = Number(
+          localStorage.getItem(`exam_progress_${res.attempt_id}`),
+        );
+        setActiveIndex(
+          Number.isInteger(savedIndex) &&
+            savedIndex >= 0 &&
+            savedIndex < res.questions.length
+            ? savedIndex
+            : 0,
+        );
+      } catch {
+        setActiveIndex(0);
       }
 
       setAnswers(initial);
@@ -379,24 +466,32 @@ function AnswerSetContent() {
         draftFlushAgainRef.current = true;
         return;
       }
+      if (!navigator.onLine) {
+        setDraftSyncWarning(true);
+        return;
+      }
       draftFlushingRef.current = true;
       const ids = Array.from(draftDirtyRef.current);
-      const payload = ids.flatMap((questionId) => {
-        const answer = answersRef.current[questionId];
-        if (!answer) return [];
-        return [
-          {
-            question_id: questionId,
-            tier1_answer: answer.t1_answer || "",
-            tier2_confidence: answer.t2_confidence,
-            tier3_reason: answer.t3_reason || "",
-            tier4_confidence: answer.t4_confidence,
-          },
-        ];
-      });
+      // Send the whole current answer set, not only changed IDs. The server is
+      // then the authoritative copy and can replay it on any device.
+      const payload = Object.entries(answersRef.current).flatMap(
+        ([questionId, answer]) => {
+          if (!answer) return [];
+          return [
+            {
+              question_id: questionId,
+              tier1_answer: answer.t1_answer || "",
+              tier2_confidence: answer.t2_confidence,
+              tier3_reason: answer.t3_reason || "",
+              tier4_confidence: answer.t4_confidence,
+            },
+          ];
+        },
+      );
       if (payload.length === 0) {
         draftDirtyRef.current.clear();
         draftFlushingRef.current = false;
+        setDraftSyncWarning(false);
         return;
       }
       try {
@@ -416,12 +511,15 @@ function AnswerSetContent() {
         if (response.status === 409) {
           // Deadline passed or attempt already submitted: stop retrying drafts.
           ids.forEach((questionId) => draftDirtyRef.current.delete(questionId));
+          setDraftSyncWarning(false);
           return;
         }
         if (!response.ok) throw new Error(`draft ${response.status}`);
         ids.forEach((questionId) => draftDirtyRef.current.delete(questionId));
+        setDraftSyncWarning(false);
       } catch {
         // Keep the dirty set; the retry timer/online listener flushes again.
+        setDraftSyncWarning(true);
       } finally {
         draftFlushingRef.current = false;
         if (draftFlushAgainRef.current) {
@@ -541,6 +639,9 @@ function AnswerSetContent() {
     );
   };
 
+  const isQuestionStarted = (qId: string) =>
+    hasAnswerContent(normalizeAnswer(answers[qId]));
+
   const expired = remainingSeconds === 0 && Boolean(data?.attempt_deadline);
 
   const handleStartExam = async () => {
@@ -606,6 +707,9 @@ function AnswerSetContent() {
       }
       if (storageKey) localStorage.removeItem(storageKey);
       if (payloadCacheKey) localStorage.removeItem(payloadCacheKey);
+      if (data?.attempt_id) {
+        localStorage.removeItem(`exam_progress_${data.attempt_id}`);
+      }
       proctor.stop();
       router.replace("/code#pengumpulan");
     } catch (err) {
@@ -663,40 +767,26 @@ function AnswerSetContent() {
   const handleNextOrFinish = () => {
     if (!data || !activeQuestion || !currentAnswer || expired) return;
     void flushDraft();
-
-    if (!hasAnswerText(currentAnswer.t1_answer)) {
-      setError("Harap isi kesimpulan jawaban Anda terlebih dahulu.");
-      return;
-    }
-    if (currentAnswer.t2_confidence === null) {
-      setError("Pilih tingkat keyakinan terhadap kesimpulan jawaban Anda.");
-      return;
-    }
-    if (!hasAnswerText(currentAnswer.t3_reason)) {
-      setError("Harap isi alasan / penalaran ilmiah Anda terlebih dahulu.");
-      return;
-    }
-    if (currentAnswer.t4_confidence === null) {
-      setError("Pilih tingkat keyakinan terhadap alasan Anda.");
-      return;
-    }
-
     setError("");
+
+    // Navigation is free. A student may intentionally skip a question and
+    // return to it later; only final submission requires every answer.
     if (activeIndex < data.questions.length - 1) {
       setActiveIndex((idx) => idx + 1);
-    } else {
-      const incomplete = data.questions.find(
-        (q) => !isQuestionComplete(q.question_id),
-      );
-      if (incomplete) {
-        setError(
-          `Pertanyaan nomor ${data.questions.indexOf(incomplete) + 1} belum diselesaikan secara lengkap.`,
-        );
-        setActiveIndex(data.questions.indexOf(incomplete));
-        return;
-      }
-      setShowConfirmModal(true);
+      return;
     }
+
+    const incomplete = data.questions.find(
+      (q) => !isQuestionComplete(q.question_id),
+    );
+    if (incomplete) {
+      setError(
+        `Pertanyaan nomor ${data.questions.indexOf(incomplete) + 1} belum diselesaikan secara lengkap.`,
+      );
+      setActiveIndex(data.questions.indexOf(incomplete));
+      return;
+    }
+    setShowConfirmModal(true);
   };
 
   const executeSubmit = async () => {
@@ -733,6 +823,9 @@ function AnswerSetContent() {
         localStorage.removeItem(storageKey);
       }
       if (payloadCacheKey) localStorage.removeItem(payloadCacheKey);
+      if (data?.attempt_id) {
+        localStorage.removeItem(`exam_progress_${data.attempt_id}`);
+      }
       sessionStorage.removeItem(`exam_submit_request_${setId}_${user.id}`);
       proctor.stop();
 
@@ -770,14 +863,15 @@ function AnswerSetContent() {
                 : `Sisa waktu: ${formatRemainingTime(remainingSeconds ?? 0)}`}
             </div>
           )}
-          {proctor.offline && (
+          {(proctor.offline || draftSyncWarning) && (
             <div
               role="status"
               className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-700 dark:text-amber-300"
             >
               <WifiOff size={17} />
-              Koneksi terputus. Anda masih dapat melanjutkan dari data yang
-              tersimpan; jawaban akan disinkronkan saat koneksi kembali.
+              {proctor.offline
+                ? "Koneksi terputus. Anda masih dapat melanjutkan dari data yang tersimpan; jawaban akan disinkronkan saat koneksi kembali."
+                : "Jawaban terakhir belum tersimpan ke server. Jangan tutup halaman sampai koneksi kembali."}
             </div>
           )}
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 text-sm text-on-surface space-y-3">
@@ -864,21 +958,22 @@ function AnswerSetContent() {
   return (
     <>
       <PageContainer>
-        {proctor.offline && (
+        {(proctor.offline || draftSyncWarning) && (
           <div
             role="status"
             className="mb-4 flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-700 dark:text-amber-300"
           >
             <WifiOff size={17} />
-            Koneksi terputus. Jawaban tersimpan di perangkat ini dan ujian tetap
-            berjalan. Pengumpulan otomatis akan dicoba lagi saat koneksi kembali.
+            {proctor.offline
+              ? "Koneksi terputus. Jawaban tersimpan di perangkat ini dan ujian tetap berjalan. Pengumpulan otomatis akan dicoba lagi saat koneksi kembali."
+              : "Jawaban terakhir belum tersimpan ke server. Jangan tutup halaman sampai koneksi kembali."}
           </div>
         )}
         <div
           inert={proctor.locked || undefined}
           className={proctor.locked ? "pointer-events-none select-none blur-sm transition" : undefined}
         >
-      <div className="mb-5 flex flex-wrap items-center gap-3 max-[900px]:sticky max-[900px]:top-[72px] max-[900px]:z-30 max-[900px]:-mx-4 max-[900px]:border-b max-[900px]:border-outline-variant/30 max-[900px]:bg-[var(--bg-main)] max-[900px]:px-4 max-[900px]:py-2 max-[900px]:backdrop-blur lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
+      <div className="mb-5 flex flex-wrap items-center gap-3 max-[900px]:sticky max-[900px]:top-0 max-[900px]:z-30 max-[900px]:-mx-4 max-[900px]:border-b max-[900px]:border-outline-variant/30 max-[900px]:bg-[var(--bg-main)] max-[900px]:px-4 max-[900px]:pb-2 max-[900px]:pt-3 max-[900px]:shadow-sm max-[900px]:backdrop-blur lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-5">
         <div className="flex min-w-0 flex-1 flex-row items-center gap-3 sm:justify-end">
           {activeQuestion && (
             <span className="mr-auto font-display text-xl font-extrabold tracking-tight text-on-surface">
@@ -1115,11 +1210,15 @@ function AnswerSetContent() {
                 <div className="flex flex-wrap items-center gap-2 py-3">
                   {data.questions.map((q, idx) => {
                     const isDone = isQuestionComplete(q.question_id);
+                    const isPartial =
+                      !isDone && isQuestionStarted(q.question_id);
                     const isCurrent = idx === activeIndex;
                     const isFlagged = Boolean(answers[q.question_id]?.flagged);
                     const boxCls = isDone
                       ? "border-emerald-500/60 bg-emerald-500/15 font-bold text-emerald-600 dark:text-emerald-400"
-                      : "border-outline-variant/50 bg-surface-container text-on-surface-variant";
+                      : isPartial
+                        ? "border-amber-500/60 bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400"
+                        : "border-outline-variant/50 bg-surface-container text-on-surface-variant";
                     return (
                       <button
                         key={q.question_id}
@@ -1134,7 +1233,7 @@ function AnswerSetContent() {
                             ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest font-extrabold !text-white !bg-primary !border-primary"
                             : "hover:border-primary/60"
                         }`}
-                        title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi" : "Belum diisi"}${isFlagged ? " · Ditandai untuk dicek kembali" : ""}`}
+                        title={`Soal ${idx + 1}: ${isDone ? "Sudah diisi lengkap" : isPartial ? "Terisi sebagian" : "Belum diisi"}${isFlagged ? " · Ditandai untuk dicek kembali" : ""}`}
                       >
                         {idx + 1}
                         {isFlagged && (
@@ -1143,6 +1242,21 @@ function AnswerSetContent() {
                       </button>
                     );
                   })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-on-surface-variant">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm border border-emerald-500/60 bg-emerald-500/30" />
+                    Lengkap
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm border border-amber-500/60 bg-amber-500/30" />
+                    Sebagian
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm border border-outline-variant/50 bg-surface-container" />
+                    Kosong
+                  </span>
                 </div>
 
               </div>
